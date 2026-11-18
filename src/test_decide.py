@@ -69,6 +69,24 @@ a, why = robot.decide(state(90.0, 100.0), base)
 print("hp 90%% -> %s (%s)" % (a, why))
 
 print()
+print("--- a resisted big number beats a stray tiny one ---")
+# Live regression, 10:21:50: slot 2 dimmed by energy, hand was 120(red) + 1.
+# The old "prefer non-red" filter kept the 1 and switched pets.
+mixed = [milk(1), milk(2, 150, False), milk(3, 120), milk(4, 1)]
+mixed[2]["color"] = "red"
+mixed[3]["color"] = "white"
+a, why = robot.decide(state(100.0, 83.3, mixed),
+                      {"panic_guard": True, "took_damage": False,
+                       "heal_streak": 0, "switch_slot": 2,
+                       "switch_streak": 99})
+ok = a == ("skill", 3)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "120(red) + 1(white) -> attack slot 3",
+    "attack" if ok else str(a), "OK" if ok else "**FAIL**", why))
+
+print()
 if fails:
     print("%d FAILURE(S)" % fails)
     sys.exit(1)

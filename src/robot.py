@@ -664,6 +664,7 @@ def _heal_slot(st):
 
 HEAL_HP = 40          # only heal below this
 HEAL_MAX_STREAK = 3   # never heal more than this many turns in a row
+RETREAT_HP = 25       # below this, and behind on HP, consider switching out
 SWITCH_DMG = 40        # below this, a fresh pet is usually better
 
 
@@ -708,6 +709,17 @@ def decide(st, ctx):
         return ("skill", slot), "heal at %.0f%% (hurt last turn, streak %d)" % (
             my, ctx.get("heal_streak", 0))
 
+    # About to lose this pet for nothing: hand the turn to a fresh one rather
+    # than feeding the current one to the opponent. This is separate from the
+    # "all my numbers are weak" rule below - that one looks at offence, this one
+    # looks at the scoreboard.
+    bench = ctx.get("switch_slot")
+    foe_pct = st["foe_pct"]
+    if (bench and ctx.get("switch_streak", 99) >= 3
+            and my is not None and foe_pct is not None
+            and my < RETREAT_HP and foe_pct > my + 25):
+        return ("switch", bench), "retreat at %.0f%% vs foe %.0f%%" % (my, foe_pct)
+
     damaged = [s for s in usable if s["kind"] == "num" and s["value"] is not None]
     if not damaged:
         if usable:
@@ -717,15 +729,25 @@ def decide(st, ctx):
             return None, "lit cards but unreadable"
         return ("energy",), "nothing affordable, gather energy"
 
-    good = [s for s in damaged if s["color"] != "red"]
-    pool = good if good else damaged
-    pool.sort(key=lambda s: s["value"], reverse=True)
+    # The number on the card is already the damage *after* type effectiveness
+    # (the game prints 140 -> 70 against a resisting target), so the biggest
+    # number is the right pick and colour only breaks ties.
+    #
+    # Preferring "not red" first was a real bug: with slot 2 dimmed by energy
+    # the hand was 120(red) + a stray "1" misread off slot 4, the filter threw
+    # away the 120, kept the 1, and concluded "everything is weak" - so the bot
+    # switched pets for nothing.
+    pool = sorted(damaged, key=lambda s: (s["value"], s["color"] != "red"),
+                  reverse=True)
     best = pool[0]
 
     # Everything on hand is weak: hand the turn to a fresh pet instead of
     # chipping away. The caller supplies the slot of a living bench pet.
+    # Require at least two readable numbers - a single tiny value is usually a
+    # misread, not a weak hand.
     slot = ctx.get("switch_slot")
-    if slot and ctx.get("switch_streak", 99) >= 3 and best["value"] < SWITCH_DMG:
+    if (slot and ctx.get("switch_streak", 99) >= 3
+            and len(damaged) >= 2 and best["value"] < SWITCH_DMG):
         return ("switch", slot), "all skills weak (best %s), switch to slot %d" % (
             best["value"], slot)
 
@@ -782,6 +804,7 @@ class Bot:
         self.match_count = 0
         self.last_state = None
         self.focused_at = 0.0
+        self._titlebar_at = 0.0
 
     def connect(self):
         return self.loop.run_until_complete(self.ble.connect())
@@ -797,31 +820,42 @@ class Bot:
         that is exactly how the bot spent ten minutes at 09:38 clicking through
         a browser dashboard instead of the game.
         """
-        if not self._game_focused():
-            self.ensure_focus()
-            if not self._game_focused():
-                log("FOCUS LOST - key %s dropped" % k)
-                return False
+        if not self._game_focused() and not self.ensure_focus():
+            log("FOCUS LOST - key %s dropped (fg=%s game=%s)"
+                % (k, _UD.GetForegroundWindow(), self.screen.hwnd))
+            return False
         self.loop.run_until_complete(self.ble.key(str(k)))
         return True
 
     def ensure_focus(self):
-        if time.time() - self.focused_at < 3.0:
+        """Return True only if the game really owns the foreground.
+
+        Windows refuses SetForegroundWindow from a background process, and the
+        cache shortcut used to report success without checking anything. Now the
+        fast path requires the focus to actually be ours, and a refused switch
+        falls back to a hardware click on the title bar (real user input is
+        allowed to move focus) plus one retry.
+        """
+        if self._game_focused():
+            self.focused_at = time.time()
             return True
-        ok = focus(self.screen.hwnd) if self.screen.hwnd else False
-        if not ok and self.screen.hwnd:
-            # Windows refuses SetForegroundWindow when another app owns the
-            # foreground (this is how keys ended up going to the editor). A real
-            # hardware click on the title bar gives the game focus without
-            # touching any game content.
+        hwnd = self.screen.hwnd
+        if not hwnd:
+            return False
+        if focus(hwnd):
+            self.focused_at = time.time()
+            return True
+        if time.time() - self._titlebar_at > 2.0:
+            self._titlebar_at = time.time()
             try:
                 r = self.screen.rect
-                self.loop.run_until_complete(
-                    self.ble.click_at(r[0] + 700, r[1] + 18))
-                time.sleep(0.25)
-                ok = focus(self.screen.hwnd)
+                if r:
+                    self.loop.run_until_complete(
+                        self.ble.click_at(r[0] + 700, r[1] + 18))
+                    time.sleep(0.25)
             except Exception:
                 pass
+        ok = focus(hwnd)
         self.focused_at = time.time()
         return ok
 
@@ -1041,17 +1075,24 @@ class Bot:
             self.miss_streak = 0
         self.prev_my_pct = st["my_pct"]
 
-        self.ensure_focus()
+        ok = False
         if action[0] == "skill":
-            self.send_key(action[1])
+            ok = self.send_key(action[1])
         elif action[0] == "energy":
-            self.send_key("f")
+            ok = self.send_key("f")
         elif action[0] == "switch":
-            self.send_key(action[1])
-            time.sleep(1.0)
-            self.send_key("space")
-            self.switch_count += 1
-            self.last_switch_turn = self.turn
+            ok = self.send_key(action[1])
+            if ok:
+                time.sleep(1.0)
+                ok = self.send_key("space")
+            if ok:
+                self.switch_count += 1
+                self.last_switch_turn = self.turn
+        if not ok:
+            # The key never left the board because the game had lost the
+            # foreground. Do not count it as a spent turn: retry on the next
+            # poll instead of burning the whole decision window.
+            return
         self.acted_at = now
         self.last_progress_at = now
         self.turn += 1
@@ -1140,11 +1181,10 @@ class Bot:
         The cursor is moved by the board, so a click while another window is on
         top would land on that window's UI (it did, repeatedly).
         """
-        if not self._game_focused():
-            self.ensure_focus()
-            if not self._game_focused():
-                log("FOCUS LOST - click %d,%d dropped" % (x, y))
-                return False
+        if not self._game_focused() and not self.ensure_focus():
+            log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
+                % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
+            return False
         self.loop.run_until_complete(self.ble.click_at(x, y))
         return True
 
@@ -1265,10 +1305,11 @@ class Bot:
         slot, _pos, spread = pool[self.switch_attempt % len(pool)]
         log("FAINT -> switch slot %d (bar %.2f, attempt %d)"
             % (slot, spread, self.switch_attempt))
-        self.ensure_focus()
-        self.send_key(slot)
+        if not self.send_key(slot):
+            return                      # focus lost: retry, don't burn an attempt
         time.sleep(1.0)
-        self.send_key("space")
+        if not self.send_key("space"):
+            return
         self.switch_attempt += 1
         self.switched_at = now
 
