@@ -141,6 +141,40 @@ pktmon etl2pcap "$env:TEMP\roco.etl" -o "$env:TEMP\roco.pcap"
 
 ---
 
+## 五之二、多线路并行 + 交叉验证
+
+单通道不可信：视觉对某些精灵的 1 号位读 112/112 失败；协议精确但要提权；
+OCR 慢但稳。所以改成**多通道同时读、按字段投票**，分歧本身就是错误信号。
+
+```
+vision  ─┐
+proto   ─┼─→ state_bus（按字段取优先级最高者）
+ocr     ─┤         ├─ 其他通道不一致 → 该字段置信度降到 0.3~0.4 并记冲突
+memory  ─┘         └─ 没人给的字段 = 未知（绝不填 0）
+```
+
+跨通道一致性检查（已实现）：
+
+```
+foe_hp_pct  vs  100 × foe_hp_abs / foe_hp_max
+若相差 > 4 个百分点 → 判为冲突，本回合不允许"闭眼出招"
+```
+
+落盘：`logs/state_conflicts.jsonl`，每条记字段、取值、分歧来源。
+这份数据同时是**感知错误的训练集**——哪一列错、错多少、跟谁冲突。
+
+工具：
+
+```powershell
+python src\verify_channels.py --seconds 60
+# 输出每字段的读取次数、一致率、冲突率
+```
+
+模块：`state_bus.py`（融合与冲突）、`providers.py`（视觉/协议/合成）、
+`test_state_bus.py`（9 条融合用例）。
+
+---
+
 ## 六、路线图
 
 | 阶段 | 内容 | 验收 |
