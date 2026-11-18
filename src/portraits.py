@@ -106,8 +106,14 @@ def score(img_rgb, template):
     return float(r.max())
 
 
-def identify(img_rgb, items=None):
-    """Return (name, score) of the best match, or (None, best_score)."""
+def identify(img_rgb, items=None, target=None):
+    """Return (name, score) of the best match, or (None, best_score).
+
+    `target` is the template size expected inside `img_rgb` (the crop minus
+    the search margin). It lets the same templates work when the game window is
+    not at the reference size: the template is rescaled to the box the HUD
+    should occupy, then slides inside the margin.
+    """
     if img_rgb is None or img_rgb.size == 0:
         return None, -1.0
     if items is None:
@@ -118,6 +124,8 @@ def identify(img_rgb, items=None):
     best_name, best = None, -1.0
     for name, tpl in items:
         b = tpl
+        if target is not None and tuple(b.shape[:2][::-1]) != tuple(target):
+            b = cv2.resize(b, (int(target[0]), int(target[1])))
         if a.shape[0] < b.shape[0] or a.shape[1] < b.shape[1]:
             b = cv2.resize(b, (a.shape[1], a.shape[0]))
         r = cv2.matchTemplate(a, b, cv2.TM_CCOEFF_NORMED)

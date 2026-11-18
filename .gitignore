@@ -29,3 +29,6 @@ logs/digits/glyphs/
 
 # 未标注的头像采样（每 10 秒一张，只在标注前有用）
 assets/portraits/_unknown_*
+
+# 对位数据库是运行期数据，可由 logs/*.jsonl 重建
+logs/roco.db*
