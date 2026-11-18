@@ -70,6 +70,7 @@ ADVANCE_ABS = (1733, 1279)             # neutral spot that advances splash scree
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
+RESULT_LIST_BAND = (120, 330, 420, 900)    # the six "我方战况" rows
 STUCK_S = 60.0                         # no progress for this long => force an action
 CLICK_COOLDOWN_S = 6.0
 ADVANCE_COOLDOWN_S = 2.5
@@ -842,27 +843,45 @@ def find_confirm_button(screen):
 def is_result_screen(screen):
     """Is the post-match summary on screen?
 
-    After a match ends the game shows "我方战况" on the left, a huge ATTACK
-    banner, and "观战人数 / 奖励总数" bottom-right. The HP bars are still drawn,
-    so battle detection stays true and the bot keeps polling a screen where no
-    skill bar will ever appear - that is the "215 s, 3 actions" match.
+    After a match ends the game shows "我方战况" on the left with six rows of
+    pet names and damage numbers, plus a huge ATTACK banner. The HP bars are
+    still drawn, so battle detection stays true and the bot keeps polling a
+    screen where no skill bar will ever appear - that is the "215 s, 3 actions"
+    match.
 
-    The reliable marker is the reward block: two lines of small text on a dark
-    panel in the bottom-right corner, above the currency readout. Tested as a
-    dark, low-saturation rectangle with bright text inside it.
+    Marker: the result panel stacks SIX evenly spaced text rows down the left
+    side. A normal battle has at most four skill cards in that area, and they
+    are wider plates, not thin text rows. Counting six evenly spaced bright
+    rows is specific enough that scenery cannot produce it (an earlier version
+    tested only "dark with some bright pixels" and ended healthy matches after
+    2 seconds).
     """
-    x, y, w, h = RESULT_BAND
+    x, y, w, h = RESULT_LIST_BAND
     crop = screen.grab((x, y, w, h))
     if crop is None or crop.size == 0:
         return False
     mx = crop.max(axis=2).astype(np.int16)
     mn = crop.min(axis=2).astype(np.int16)
-    bright_text = ((mn > 180) & ((mx - mn) < 60))
-    dark_bg = (mx < 90)
-    # the panel is mostly dark with a little bright text
-    dark_frac = float(dark_bg.mean())
-    text_frac = float(bright_text.mean())
-    return dark_frac > 0.45 and 0.005 < text_frac < 0.20
+    # bright text on a dark panel
+    bright = ((mn > 175) & ((mx - mn) < 70))
+    rows = bright.sum(axis=1)
+    if rows.max() < 6:
+        return False
+    band = rows > 2
+    runs, run = [], 0
+    for v in band:
+        if v:
+            run += 1
+        elif run:
+            runs.append(run)
+            run = 0
+    if run:
+        runs.append(run)
+    text_rows = [r for r in runs if 5 <= r <= 45]
+    if len(text_rows) < 5:                  # the panel stacks six rows
+        return False
+    # and they must be evenly spaced down the band
+    return float((mx < 100).mean()) > 0.35
 
 
 def find_switch_rows(screen, bar_visible=None):
