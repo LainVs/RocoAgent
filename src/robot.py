@@ -1734,16 +1734,23 @@ class Bot:
                     ok = self.click_abs(px, py, precheck=False)
                     if ok:
                         time.sleep(0.6)
-                        cx, cy = r[0] + r[2] // 2, r[1] + r[3] // 2
-                        log("SWITCH -> confirm click at %d,%d" % (cx, cy))
-                        self.click_abs(cx, cy, precheck=False)
+                        # Space deploys the pet (user-verified). Send it up to
+                        # three times; a single press can be swallowed.
+                        for i in range(3):
+                            if not self.send_key("space",
+                                                 allow_focus_click=False):
+                                log("SWITCH -> space %d dropped" % (i + 1))
+                            time.sleep(0.5)
                 else:
                     ok = self.send_key(action[1], allow_focus_click=False)
                     if ok:
                         time.sleep(0.9)
-                        if r is not None:
-                            self.click_abs(r[0] + r[2] // 2, r[1] + r[3] // 2,
-                                           precheck=False)
+                        for i in range(3):
+                            if not self.send_key("space",
+                                                 allow_focus_click=False):
+                                log("SWITCH -> space %d dropped (fallback)"
+                                    % (i + 1))
+                            time.sleep(0.5)
             if ok:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
@@ -2108,22 +2115,23 @@ class Bot:
                 log("FAINT -> card click FAILED (board/focus), retry next tick")
                 return                  # pending stays set, blacklisted next tick
             time.sleep(0.6)
-            # Confirm: click the centre of the screen. The panel is still open,
-            # so this lands on empty arena - which is exactly what confirms the
-            # selection (same effect as Space).
-            cx, cy = r[0] + r[2] // 2, r[1] + r[3] // 2
-            log("FAINT -> confirm click at %d,%d" % (cx, cy))
-            if not self.click_abs(cx, cy, precheck=False):
-                log("FAINT -> confirm click FAILED (board/focus)")
+            # Confirm with SPACE, several times. The user measured this in
+            # game: after a row is clicked, Space deploys it - the centre click
+            # alone does not. Space can be swallowed by focus churn, so send it
+            # up to three times.
+            for i in range(3):
+                if not self.send_key("space", allow_focus_click=False):
+                    log("FAINT -> space %d dropped" % (i + 1))
+                time.sleep(0.5)
         else:
             # No row geometry available: fall back to the key sequence.
             if not self.send_key(slot, allow_focus_click=False):
                 return
             time.sleep(0.9)
-            if r is not None:
-                self.click_abs(r[0] + r[2] // 2, r[1] + r[3] // 2, precheck=False)
-            else:
-                self.send_key("space")
+            for i in range(3):
+                if not self.send_key("space", allow_focus_click=False):
+                    log("FAINT -> space %d dropped (fallback)" % (i + 1))
+                time.sleep(0.5)
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
         # blacklisted at the top of this function. Clearing the blacklist here
