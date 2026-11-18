@@ -1336,17 +1336,20 @@ class Bot:
         elif action[0] == "energy":
             ok = self.send_key("f")
         elif action[0] == "switch":
-            # Mid-battle switching is E -> slot -> Space (learn.md). The forced
-            # panel is different: it is already open, so _try_switch sends the
-            # slot directly. Sending the slot here without E simply uses a
-            # skill key - that is why the 10:32:07 "retreat" never swapped the
-            # pet and it died on the spot.
+            # Mid-battle switching is E -> slot -> Space. Verified end to end on
+            # 2026-11-18 14:05-14:15: E opened the party list, the number key
+            # selected the row, and Space confirmed the swap (音速犬 -> 冥古龙).
+            # The forced-switch panel is different: it is already open, so
+            # _try_switch sends the slot directly.
+            # Sending the slot without E just presses a skill key - that is why
+            # the 10:32:07 "retreat" never swapped the pet and it died on the
+            # spot.
             ok = self.send_key("e")
             if ok:
-                time.sleep(0.45)
+                time.sleep(0.9)
                 ok = self.send_key(action[1])
             if ok:
-                time.sleep(1.0)
+                time.sleep(0.9)
                 ok = self.send_key("space")
             if ok:
                 self.switch_count += 1
@@ -1659,18 +1662,13 @@ class Bot:
         if not self.send_key(slot):
             return                      # focus lost: retry after the cooldown
         self.switch_pending = slot
-        time.sleep(1.0)
-        # Confirm by clicking the on-screen Space plate rather than sending the
-        # Space key: the firmware maps "space" to Keyboard.press(' ') and the
-        # game has never honoured it (HANDOFF.md: "number key + Space" 无效).
-        btn = find_confirm_button(self.screen)
-        if btn is not None:
-            log("FAINT -> click confirm plate %d,%d" % btn)
-            self.click_abs(*btn)
-        else:
-            log("FAINT -> confirm plate not found, falling back to Space key")
-            if not self.send_key("space"):
-                return                  # keep switch_pending, re-check next tick
+        time.sleep(0.9)
+        # Confirm with the Space key. Verified live 2026-11-18 14:15: the
+        # sequence E -> number -> Space swapped 音速犬 for 冥古龙 immediately.
+        # The on-screen "Space" plate is a key hint, not a button - clicking it
+        # does nothing, so do not try to click it.
+        if not self.send_key("space"):
+            return                      # keep switch_pending, re-check next tick
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
         # blacklisted at the top of this function. Clearing the blacklist here
