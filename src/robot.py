@@ -59,6 +59,7 @@ SKILL_BOX = dr.BAR                # (250, 480, 780, 1520)
 POLL_S = 0.12
 ACT_COOLDOWN_S = 1.0
 SWITCH_COOLDOWN_S = 2.5
+SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
 
 # UI anchors (window-relative), measured pixel-exactly from live frames
 LOBBY_BTN = (1980, 1480, 520, 150)     # 开始挑战  (gold blob centre ~2210,1567)
@@ -929,6 +930,7 @@ class Bot:
         self.faint_at = None
         self.switch_attempt = 0
         self.switch_gave_up = False
+        self.switch_tried_at = 0.0
         self.switch_count = 0
         self.last_switch_turn = -99
         self.unreadable_since = None
@@ -1135,6 +1137,7 @@ class Bot:
             self.faint_at = None
             self.switch_attempt = 0
             self.switch_gave_up = False
+            self.switch_tried_at = 0.0
 
         # ---- is it my decision window?
         # Gate on the SKILL BAR, not on the countdown. The countdown appears a
@@ -1528,7 +1531,15 @@ class Bot:
             confirmation is swallowed;
           * fainted pets remain in the list, greyed out, and cannot be chosen -
             picking row 1 blindly selects a corpse and the turn is lost.
+
+        Retries are rate-limited by RETRY_S. Without that, a failed send (focus
+        lost, board offline) left both switch_attempt and switched_at untouched,
+        so the poll loop re-entered this function every 0.12 s and logged
+        "FAINT -> switch slot 1 (attempt 0)" hundreds of times while the pet sat
+        dead - observed live at 12:59:27-12:59:38.
         """
+        if now - getattr(self, "switch_tried_at", 0.0) < SWITCH_RETRY_S:
+            return
         rows = find_switch_rows(self.screen)
         if len(rows) < 3:
             return
@@ -1547,8 +1558,9 @@ class Bot:
         slot, _pos, spread = pool[self.switch_attempt % len(pool)]
         log("FAINT -> switch slot %d (bar %.2f, attempt %d)"
             % (slot, spread, self.switch_attempt))
+        self.switch_tried_at = now
         if not self.send_key(slot):
-            return                      # focus lost: retry, don't burn an attempt
+            return                      # focus lost: retry after the cooldown
         time.sleep(1.0)
         if not self.send_key("space"):
             return
