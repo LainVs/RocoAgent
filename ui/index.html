@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RocoAgent 管理面板</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- 顶部固定状态条 -->
+  <header id="statusbar">
+    <span class="sb-item" id="sb-status"><span class="dot" id="sb-dot"></span><span id="sb-status-text">…</span></span>
+    <span class="sb-item" id="sb-pid">PID: —</span>
+    <span class="sb-item" id="sb-last">最后日志: —</span>
+    <span class="sb-item" id="sb-ago">距今: —</span>
+    <span class="sb-item sb-rate" id="sb-rate">今日胜率: —</span>
+  </header>
+
+  <!-- 标签页导航 -->
+  <nav id="tabs">
+    <button class="tab active" data-tab="log">实时日志</button>
+    <button class="tab" data-tab="control">机器人控制</button>
+    <button class="tab" data-tab="results">战绩</button>
+    <button class="tab" data-tab="turns">回合统计</button>
+    <button class="tab" data-tab="portraits">头像标注</button>
+  </nav>
+
+  <main>
+    <!-- 实时日志 -->
+    <section id="panel-log" class="panel active">
+      <div class="panel-bar">
+        <label class="follow">
+          <input type="checkbox" id="follow-toggle" checked /> 跟随
+        </label>
+        <button id="pause-btn" class="btn">暂停跟随</button>
+        <span class="hint" id="log-hint"></span>
+      </div>
+      <pre id="log-view" class="log-view"></pre>
+    </section>
+
+    <!-- 机器人控制 -->
+    <section id="panel-control" class="panel">
+      <div class="control-grid">
+        <button id="start-btn" class="btn btn-go">启动</button>
+        <button id="stop-btn" class="btn btn-danger">停止</button>
+        <button id="openlogs-btn" class="btn">打开日志目录</button>
+      </div>
+      <div class="control-info" id="control-info">读取状态中…</div>
+    </section>
+
+    <!-- 战绩 -->
+    <section id="panel-results" class="panel">
+      <div class="cards" id="result-cards"></div>
+      <h3>最近 30 场</h3>
+      <canvas id="bar-chart" width="900" height="180"></canvas>
+      <h3>最近 20 场</h3>
+      <table class="tbl" id="result-table">
+        <thead><tr><th>时间</th><th>结果</th><th>段位变化</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- 回合统计 -->
+    <section id="panel-turns" class="panel">
+      <div class="cards" id="turn-cards"></div>
+      <h3>最近回合</h3>
+      <table class="tbl" id="turn-table">
+        <thead><tr><th>时间</th><th>回合</th><th>我方%</th><th>对面%</th><th>动作</th><th>原因</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- 头像标注 -->
+    <section id="panel-portraits" class="panel">
+      <p class="hint" id="portrait-hint">共 0 个未标注头像</p>
+      <div id="portrait-list" class="portrait-list"></div>
+    </section>
+  </main>
+
+  <!-- 放大图片遮罩 -->
+  <div id="modal" class="modal hidden"><img id="modal-img" alt="" /></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
