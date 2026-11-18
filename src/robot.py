@@ -331,6 +331,18 @@ class Perc:
             cnt_crop = self.screen.grab(CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
 
+        # Energy: a row of pips under the HP card. Only meaningful in battle,
+        # and only reported when the row was actually located.
+        en = None
+        if battle:
+            try:
+                import energy as _energy
+                pip = self.screen.grab(_energy.PIP_BAND)
+                if pip is not None:
+                    en = _energy.read_energy(pip)
+            except Exception:
+                en = None
+
         return {
             "t": time.time(),
             "battle": battle,
@@ -339,6 +351,7 @@ class Perc:
             "foe_pct": foe["pct"], "foe_color": foe["color"],
             "bar": visible, "npills": npills,
             "countdown": cnt,
+            "energy": en,
             "myturn": bool(battle and (cnt or visible)),
             "skills": skills,
         }
@@ -992,6 +1005,9 @@ class Bot:
         # so it stays empty and _pick_switch_slot degrades to "first living".
         self.bench_names = {}
         self.foe_name = None
+        self.my_name = None
+        self.active_slot = None
+        self.energy = None
         self.switch_count = 0
         self.last_switch_turn = -99
         self.unreadable_since = None
@@ -1042,6 +1058,25 @@ class Bot:
                     continue
         return None
 
+    def _click_to_focus(self):
+        """Get the game into the foreground using a real hardware click.
+
+        SetForegroundWindow is refused for a background process, and this bot
+        runs under whatever launched it. A hardware click on a harmless part of
+        the window is user input, which Windows does honour, and the board can
+        produce it. Point: the middle of the arena, away from every button.
+        """
+        r = self.screen.rect
+        if not r:
+            return False
+        try:
+            self.loop.run_until_complete(
+                self.ble.click_at(r[0] + 700, r[1] + 300))
+            time.sleep(0.35)
+        except Exception:
+            return False
+        return self._game_focused()
+
     def send_key(self, k):
         """Hardware key press, but only while the game owns the foreground.
 
@@ -1049,11 +1084,18 @@ class Bot:
         turns every decision into typing into whatever happens to be on top -
         that is exactly how the bot spent ten minutes at 09:38 clicking through
         a browser dashboard instead of the game.
+
+        Getting focus back is done with a hardware click, not just
+        SetForegroundWindow: the latter is refused whenever another process owns
+        the foreground, which is the normal case here because the bot runs under
+        an editor. Logs showed "FOCUS LOST - key 3 dropped" dozens of times in a
+        row for that reason.
         """
         if not self._game_focused() and not self.ensure_focus():
-            log("FOCUS LOST - key %s dropped (fg=%s game=%s)"
-                % (k, _UD.GetForegroundWindow(), self.screen.hwnd))
-            return False
+            if not self._click_to_focus():
+                log("FOCUS LOST - key %s dropped (fg=%s game=%s)"
+                    % (k, _UD.GetForegroundWindow(), self.screen.hwnd))
+                return False
         r = self._ble(lambda: self.ble.key(str(k)), "key %s" % k)
         return r is not None
 
@@ -1184,6 +1226,83 @@ class Bot:
 
             time.sleep(POLL_S)
 
+    def _decide_v2(self, st, ctx):
+        """Run policy_v2 on the current frame.
+
+        Returns (action, why), or (None, reason) when the state is too thin for
+        the model - the caller then falls back to the legacy decide().
+        """
+        import policy_v2
+        import pvp_engine as E
+
+        my_name = self.my_name
+        foe_name = self.foe_name
+        if not my_name or not foe_name:
+            return None, "policy_v2: pet identity unknown"
+
+        my_max = E.max_hp(my_name)
+        foe_max = E.max_hp(foe_name)
+        if not my_max or not foe_max:
+            return None, "policy_v2: %s not in dataset" % (
+                my_name if not my_max else foe_name)
+
+        my_hp = int(my_max * (st["my_pct"] or 0) / 100.0)
+        foe_hp = int(foe_max * (st["foe_pct"] or 0) / 100.0)
+        if my_hp <= 0:
+            return None, "policy_v2: my hp unreadable"
+
+        skills = []
+        for s in st["skills"]:
+            if not s:
+                continue
+            # The number on the card is already post-effectiveness damage, so it
+            # is exactly the figure policy_v2 wants.
+            dmg = s.get("value")
+            if dmg is None:
+                dmg = _est_value(s)
+            cost = 0
+            try:
+                meta = E.D.skill(s.get("name") or "")
+                if meta:
+                    cost = int(meta.get("energy_consumption") or 0)
+            except Exception:
+                pass
+            skills.append({
+                "i": s["index"], "dmg": dmg, "cost": cost,
+                "kind": s.get("kind"), "lit": bool(s.get("lit", True)),
+            })
+
+        state = {
+            "me": {"name": my_name, "hp": my_hp, "hp_max": my_max,
+                   "energy": st.get("energy") if st.get("energy") is not None else 10,
+                   "skills": skills},
+            "foe": {"name": foe_name, "hp": foe_hp, "hp_max": foe_max},
+            "bench": self.bench_state(),
+            "charge_streak": self.charge_streak,
+        }
+        action, why, detail = policy_v2.decide(state)
+        if detail:
+            why = "%s [v2 %s]" % (why, detail.get("score"))
+        return action, why
+
+    def bench_state(self):
+        """Bench pets for policy_v2, as far as we know them.
+
+        Without OCR we only have names for the pets we have already seen on
+        screen; unknown slots are omitted rather than guessed.
+        """
+        out = []
+        for slot in range(1, 7):
+            name = self.bench_names.get(slot)
+            if not name:
+                continue
+            if slot == getattr(self, "active_slot", None):
+                continue
+            import pvp_engine as E
+            mx = E.max_hp(name) or 1
+            out.append({"name": name, "hp": mx, "hp_max": mx, "energy": 10})
+        return out
+
     def _battle_tick(self, st, now):
         # fainted -> forced switch.
         # Require the HP bar to actually be drawn. During the VS splash the bars
@@ -1286,7 +1405,20 @@ class Bot:
             "switch_streak": self.turn - self.last_switch_turn,
             "charge_streak": self.charge_streak,
         }
-        action, why = decide(st, ctx)
+        action, why = None, ""
+        # Try the expected-value policy first. It is the only decision path that
+        # looks at turns-to-kill, the incoming hit, energy cost and switch value;
+        # the legacy decide() below only compares the four numbers printed on the
+        # cards. Falls through silently when the state is too incomplete for the
+        # model (unknown pets, no readable cards).
+        if not self.args.no_policy_v2:
+            try:
+                action, why = self._decide_v2(st, ctx)
+            except Exception as e:
+                log("policy_v2 failed: %s: %s" % (type(e).__name__, e))
+                action = None
+        if action is None:
+            action, why = decide(st, ctx)
         if action is None:
             # digits unreadable this turn
             lit = [s for s in st["skills"] if s and s.get("lit")]
@@ -1465,12 +1597,14 @@ class Bot:
         """Hardware click, gated on the game actually owning the foreground.
 
         The cursor is moved by the board, so a click while another window is on
-        top would land on that window's UI (it did, repeatedly).
+        top would land on that window's UI (it did, repeatedly). A hardware
+        click is also the only reliable way to take the foreground back.
         """
         if not self._game_focused() and not self.ensure_focus():
-            log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
-                % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
-            return False
+            if not self._click_to_focus():
+                log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
+                    % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
+                return False
         r = self._ble(lambda: self.ble.click_at(x, y), "click %d,%d" % (x, y))
         return r is not None
 
@@ -1633,15 +1767,16 @@ class Bot:
         # is why the log shows "attempt 0" forever.
         if getattr(self, "switch_pending", None) is not None:
             slot = self.switch_pending
-            # The panel is still up, which means the previous number key did not
-            # land on a selectable row (the row was a fainted pet, greyed out).
-            # Remember it so the next pick skips it instead of pressing the same
-            # dead row forever - the log showed "switch slot 1 ... attempt 0"
-            # twenty times in a row while row 1 was a corpse.
+            # The panel is still up, which means the previous attempt did not
+            # complete: either the row was a fainted pet (greyed out) or Space
+            # never reached the game. Either way this row is not working right
+            # now, so blacklist it and move on. Retrying the same row is what
+            # produced "switch slot 3 ... attempt 0" twenty times in a row.
             self.switch_dead.add(slot)
             log("FAINT -> row %d did not take, blacklisting it (%d dead)"
                 % (slot, len(self.switch_dead)))
             self.switch_pending = None
+            self.switch_attempt += 1
             self.switch_tried_at = 0.0
             return
 
@@ -1659,15 +1794,26 @@ class Bot:
         log("FAINT -> switch slot %d (%s, attempt %d)"
             % (slot, why, self.switch_attempt))
         self.switch_tried_at = now
-        if not self.send_key(slot):
-            return                      # focus lost: retry after the cooldown
+        # Record the intent BEFORE sending. If the number key is dropped the
+        # pending marker is what makes the next tick blacklist this row instead
+        # of picking it again - the log showed the same slot retried twenty
+        # times precisely because this was only set after a successful send.
         self.switch_pending = slot
+        self._click_to_focus()
+        if not self.send_key(slot):
+            return                      # pending stays set, blacklisted next tick
         time.sleep(0.9)
-        # Confirm with the Space key. Verified live 2026-11-18 14:15: the
-        # sequence E -> number -> Space swapped 音速犬 for 冥古龙 immediately.
-        # The on-screen "Space" plate is a key hint, not a button - clicking it
-        # does nothing, so do not try to click it.
-        if not self.send_key("space"):
+        # Confirm: click a harmless spot to make sure the game owns the
+        # foreground, then press Space. Verified live 2026-11-18 14:15 that
+        # E -> number -> Space swaps the pet; the click is insurance because
+        # SetForegroundWindow is refused whenever another process holds focus
+        # and the number key alone does not take it back.
+        self._click_to_focus()
+        for attempt in range(3):
+            if self.send_key("space"):
+                break
+            time.sleep(0.4)
+        else:
             return                      # keep switch_pending, re-check next tick
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
@@ -1753,6 +1899,8 @@ def main():
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--probe", type=int, default=0)
     ap.add_argument("--no-guard", action="store_true")
+    ap.add_argument("--no-policy-v2", action="store_true",
+                    help="disable the expected-value policy, use the legacy picker")
     ap.add_argument("--switch-slot", type=int, default=1)
     ap.add_argument("--seconds", type=int, default=0,
                     help="stop after N seconds (0 = run forever)")

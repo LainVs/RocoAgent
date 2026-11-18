@@ -1,133 +1,124 @@
-"""energy.py - read the bottom-left energy counter 'N/10'.
+"""energy.py - read the energy dots under the player's HP card.
 
-The HUD shows a small white '\u2605N/10' on a dark rounded panel at window-rel
-(110,1525)-(200,1557). White text on dark is the easiest OCR target in the whole
-game, so we binarise and template-match with digitread's glyph engine.
+The HUD does not show a number: it shows a row of small circular pips. A pip
+with energy is a bright white disc, an empty pip is a dark red disc. The
+"★10" to the right is the CAP, not the current value - reading it as the
+current value is what the old implementation did, which is why it always
+reported 10 (or None when the ROI missed).
+
+Geometry (window-relative, measured 2026-11-18 on a 2586x1671 window):
+    pip row   y 196..244, x 160..410
+    6 pips, pitch ~52 px, radius ~21 px
+    the cap badge starts around x=430
+
+usage:
+    python energy.py --now
+    python energy.py --selftest
 """
 from __future__ import annotations
 
-import os
 import sys
 
-import cv2
-import numpy as np
-
+sys.path.insert(0, r"D:\Projects\RocoAgent\src")
 sys.path.insert(0, r"D:\Tools")
-import digitread as dr  # noqa: E402
 
-ENERGY_ROI = (104, 1522, 108, 38)      # window-relative (x, y, w, h)
-
-# Rebuilt from live frames: 0..9 from this HUD font.
-_TPL = None
-_TPL_PATH = r"D:\Projects\RocoAgent\logs\digits\energy_tpl.npz"
+PIP_BAND = (160, 196, 250, 48)      # x, y, w, h  (window-relative)
+PIP_COUNT = 6
 
 
-def _masks(reg):
-    """White-text mask: bright and near-neutral (the panel is dark grey)."""
-    r = reg[:, :, 0].astype(np.int16)
-    g = reg[:, :, 1].astype(np.int16)
-    b = reg[:, :, 2].astype(np.int16)
-    mx = np.maximum(np.maximum(r, g), b)
-    mn = np.minimum(np.minimum(r, g), b)
-    white = ((mx > 175) & ((mx - mn) < 45)).astype(np.uint8)
-    return white
+def _pips(band, offset=(0, 0)):
+    """Locate the circular pips inside an already-cropped band.
 
-
-def _glyphs(reg):
-    """Segment the white digits of 'N/10'; keep only the part before '/'."""
-    m = _masks(reg)
-    # the '/' is a thin slanted stroke; digits are wider blobs. Cut at the first
-    # column gap wider than 3px after the leading digits.
-    n, lab, stats, cent = cv2.connectedComponentsWithStats(m, 8)
-    blobs = []
-    for i in range(1, n):
-        x, y, w, h, a = stats[i]
-        if h < 10 or h > 26 or a < 25 or w > 22:
-            continue
-        blobs.append((x, y, w, h, a))
-    blobs.sort(key=lambda t: t[0])
-    return blobs, m
-
-
-def read_energy(rgb, roi=ENERGY_ROI):
-    """Energy 0..10.
-
-    The readout is always 'N/10' or '10/10', so the blob count alone tells us
-    which case we are in: 4 blobs = one energy digit + '/', '1', '0';
-    5 blobs = '1','0','/', '1','0'.
+    `band` must be the pip strip itself. The previous version cropped PIP_BAND
+    out of whatever it was given, so passing an already-cropped strip produced
+    an empty slice and every read returned None.
     """
-    x, y, w, h = roi
-    if y + h > rgb.shape[0] or x + w > rgb.shape[1]:
-        return None
-    reg = rgb[y:y + h, x:x + w]
-    blobs, m = _glyphs(reg)
-    if len(blobs) == 5:
-        return 10
-    if len(blobs) != 4:
-        return None
-    bx, by, bw, bh, ba = blobs[0]
-    g = m[by:by + bh, bx:bx + bw].astype(np.float32)
-    lab, score = _classify(np.clip(g, 0, 1), bw / float(bh))
-    if score < 0.55 or not isinstance(lab, int):
-        return None
-    return lab
+    import cv2
+    import numpy as np
 
-
-_DIGITS = None
-
-
-def _classify(glyph, aspect):
-    """Delegate to digitread's template matcher (it resizes to the proto size)."""
-    global _DIGITS
-    if _DIGITS is None:
-        _DIGITS = dr.load_templates()
-    if _DIGITS is None:
-        return "?", 0.0
-    lab, score = dr.classify(glyph, aspect, _DIGITS)
-    return lab, score
-
-
-def _load_digits():
-    if os.path.exists(_TPL_PATH):
-        z = np.load(_TPL_PATH)
-        return {k: z[k] for k in z.files}
-    return _build_digits()
-
-
-def _build_digits():
-    """Harvest digit shapes from the two calibration frames shipped with the repo."""
-    src = [
-        (r"D:\Projects\RocoAgent\logs\frames2\024605_0416.png", 0),
-        (r"D:\Projects\RocoAgent\logs\k1.png", 1),
-    ]
-    out = {}
-    for path, _ in src:
-        if not os.path.exists(path):
+    ox, oy = offset
+    mx = band.max(axis=2).astype(np.int16)
+    mn = band.min(axis=2).astype(np.int16)
+    # The disc itself is near-white; the star inside is grey, the empty pip is
+    # dark red. Detect the disc body (bright ring) rather than the star.
+    disc = ((mn > 185) & ((mx - mn) < 45)).astype(np.uint8)
+    n, lab, stats, cent = cv2.connectedComponentsWithStats(disc, 8)
+    out = []
+    for i in range(1, n):
+        bx, by, bw, bh, area = stats[i]
+        # A pip is a 25x25 disc (area ~325) at this resolution. Reject the thin
+        # digits of the "★10" cap badge, which also pass the colour test.
+        if not (280 <= area <= 420):
             continue
-        im = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)[:, :, ::-1]
-        x, y, w, h = ENERGY_ROI
-        reg = im[y:y + h, x:x + w]
-        blobs, m = _glyphs(reg)
-        widths = [b[2] for b in blobs]
-        si = int(np.argmin(widths)) if len(blobs) > 1 else -1
-        digits = blobs[:si] if si > 0 else blobs
-        for (bx, by, bw, bh, ba) in digits:
-            g = cv2.resize(m[by:by + bh, bx:bx + bw].astype(np.float32),
-                           (14, 18), interpolation=cv2.INTER_AREA)
-            out["_%d_%d" % (bx, by)] = np.clip(g, 0, 1)
+        if not (22 <= bw <= 30) or not (22 <= bh <= 30):
+            continue
+        out.append((bx + bw // 2 + ox, by + bh // 2 + oy, bw, bh, area))
+    out.sort(key=lambda t: t[0])
     return out
 
 
-if __name__ == "__main__":
-    # calibration: 024605 must read 0, k1 must read 10
-    for p in [r"D:\Projects\RocoAgent\logs\frames2\024605_0416.png",
-              r"D:\Projects\RocoAgent\logs\k1.png"]:
-        if not os.path.exists(p):
-            print("missing", p)
+def read_energy(rgb, band=None):
+    """Number of lit pips (0..6), or None when the row cannot be read.
+
+    Two pip appearances exist:
+      * empty   - dark red disc, no white ring  -> the bright-disc detector
+                  misses it entirely, so the pip count alone under-reports
+      * lit     - near-white disc with a grey star
+
+    So: count the pips that ARE bright, and treat the row as readable when at
+    least 4 pips were located (the row always has 6, but a couple can be hidden
+    behind the "★10" cap badge or clipped at the left edge).
+    """
+    import numpy as np
+
+    pips = _pips(rgb)
+    if len(pips) < 4:
+        return None
+    lit = 0
+    for cx, cy, bw, bh, _area in pips[:PIP_COUNT]:
+        px = rgb[cy - 3:cy + 3, cx - 3:cx + 3]
+        if px.size == 0:
             continue
-        im = cv2.imdecode(np.fromfile(p, np.uint8), cv2.IMREAD_COLOR)[:, :, ::-1]
-        x, y, w, h = ENERGY_ROI
-        reg = im[y:y + h, x:x + w]
-        blobs, m = _glyphs(reg)
-        print(os.path.basename(p), "blobs", blobs, "->", read_energy(im))
-    print(_build_digits().keys())
+        mx = px.max(axis=2).astype(np.int16)
+        if float(mx.mean()) > 150:
+            lit += 1
+    return lit
+
+def read_energy_live(screen=None):
+    import robot
+    scr = screen or robot.Screen()
+    if scr.rect is None:
+        return None
+    crop = scr.grab(PIP_BAND)
+    if crop is None:
+        return None
+    return read_energy(crop)
+
+
+def selftest():
+    import cv2
+    import numpy as np
+
+    ok = True
+    for path, want in (
+        (r"D:\Projects\RocoAgent\logs\estars.png", 0),
+    ):
+        import os
+        if not os.path.exists(path):
+            print("skip", path)
+            continue
+        im = cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_COLOR)
+        im = im[:, :, ::-1]
+        got = read_energy(im, (0, 0, im.shape[1], im.shape[0]))
+        print("%-24s -> %s (want %s) %s" % (
+            os.path.basename(path), got, want,
+            "OK" if got == want else "**FAIL**"))
+        if got != want:
+            ok = False
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(selftest())
+    print("energy =", read_energy_live())
