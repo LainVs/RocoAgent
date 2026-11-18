@@ -941,6 +941,11 @@ class Bot:
         self.switch_attempt = 0
         self.switch_gave_up = False
         self.switch_tried_at = 0.0
+        self.switch_pending = None
+        # slot -> pet name, in party order. Without OCR we cannot know this yet,
+        # so it stays empty and _pick_switch_slot degrades to "first living".
+        self.bench_names = {}
+        self.foe_name = None
         self.switch_count = 0
         self.last_switch_turn = -99
         self.unreadable_since = None
@@ -1146,7 +1151,7 @@ class Bot:
             # The death animation shows 0 HP for a few seconds; _try_switch only
             # acts once the party panel is actually drawn.
             if now - self.faint_at > 1.0 and now - self.switched_at > 2.5:
-                self._try_switch(now)
+                self._try_switch(now, st)
             return
         if self.faint_at is not None:
             self.faint_at = None
@@ -1538,7 +1543,7 @@ class Bot:
             out.append((i + 1, (tx, ty), float(filled.mean())))
         return out
 
-    def _try_switch(self, now):
+    def _try_switch(self, now, st=None):
         """Pick the next living pet: number key, wait 1 s, Space.
 
         Two things learned the hard way:
@@ -1570,17 +1575,78 @@ class Bot:
             return
         alive = [c for c in cand if c[2] >= 0.06]
         pool = alive if alive else cand
-        slot, _pos, spread = pool[self.switch_attempt % len(pool)]
-        log("FAINT -> switch slot %d (bar %.2f, attempt %d)"
-            % (slot, spread, self.switch_attempt))
+
+        # If the previous attempt already sent the number key but Space was
+        # dropped (focus loss), the panel is still open with that row selected.
+        # Resend Space instead of starting over with another number - restarting
+        # is why the log shows "attempt 0" forever.
+        if getattr(self, "switch_pending", None) is not None:
+            slot = self.switch_pending
+            log("FAINT -> resend Space for slot %d" % slot)
+            self.switch_tried_at = now
+            if self.send_key("space"):
+                self.switch_pending = None
+                self.switch_attempt += 1
+                self.switched_at = now
+            return
+
+        # Choose the best replacement instead of rotating.
+        # Rotating (switch_attempt % len(pool)) only skipped corpses and ignored
+        # everything that decides a matchup, which is why the log shows
+        # slot 3 -> slot 1 -> slot 2 within 18 seconds.
+        slot, why = self._pick_switch_slot(pool, st)
+        log("FAINT -> switch slot %d (%s, attempt %d)"
+            % (slot, why, self.switch_attempt))
         self.switch_tried_at = now
         if not self.send_key(slot):
             return                      # focus lost: retry after the cooldown
+        self.switch_pending = slot
         time.sleep(1.0)
         if not self.send_key("space"):
-            return
+            return                      # keep switch_pending, resend Space next
+        self.switch_pending = None
         self.switch_attempt += 1
         self.switched_at = now
+
+    def _pick_switch_slot(self, pool, st):
+        """Score each living replacement and take the best.
+
+        Value of a switch = how hard it hits the current foe, minus how hard the
+        foe hits it, plus a type-matchup bonus. Uses the same damage model as the
+        decision layer so the two never disagree.
+        """
+        foe = (st.get("foe_name") if st else None) or self.foe_name
+        if not foe:
+            # Without the opponent's identity we cannot score matchups; fall back
+            # to the first living row so we still act instead of standing still.
+            slot = pool[0][0]
+            return slot, "no foe identity, first living"
+
+        best = None
+        for slot, _pos, _fill in pool:
+            name = self.bench_names.get(slot)
+            if not name:
+                continue
+            try:
+                import pvp_engine as E
+                dmg = self._best_damage(name, foe)
+                inc = E.worst_incoming(foe, name, top=1)
+                taken = inc[0]["dmg"] if inc else 0
+                hp = E.max_hp(name) or 1
+                score = dmg / 200.0 - taken / float(hp)
+            except Exception:
+                continue
+            if best is None or score > best[0]:
+                best = (score, slot, name, dmg, taken)
+        if best is None:
+            slot = pool[0][0]
+            return slot, "no model data, first living"
+        _s, slot, name, dmg, taken = best
+        return slot, "%s dmg %d taken %d" % (name, dmg, taken)
+
+    def _best_damage(self, name, foe):
+        import pvp_engine as E
+        return E.best_damage_from(name, foe)
 
 
     def _dump(self, st, action, why):
