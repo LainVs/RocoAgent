@@ -125,6 +125,25 @@ def my_max_hp(name):
     return D.calc_hp(int(p["stats"]["hp"]))
 
 
+# Max HP read off the in-game HUD ("cur / max"). The PvP mode does not match
+# calc_hp() for every pet: 音速犬 and 冰钻布鲁斯 land exactly on the formula,
+# 寂灭骨龙 and 巨鼓象 come out ~15% higher, so the formula cannot be trusted for
+# turn-to-die arithmetic. Observed 2026-11-18.
+CALIBRATED_HP = {
+    "音速犬": 366,
+    "冰钻布鲁斯": 345,
+    "寂灭骨龙": 490,
+    "巨鼓象": 510,
+}
+
+
+def max_hp(name):
+    """Max HP to use in TTD/TKO maths: measured value first, formula second."""
+    if name in CALIBRATED_HP:
+        return CALIBRATED_HP[name]
+    return my_max_hp(name)
+
+
 def foe_max_hp(name):
     return my_max_hp(name)
 
@@ -135,8 +154,8 @@ def matchup(foe_name, my_name, my_pct=100.0, foe_pct=100.0):
     you = pet(foe_name)
     if not me or not you:
         return None
-    my_hp = my_max_hp(my_name)
-    foe_hp = foe_max_hp(foe_name)
+    my_hp = max_hp(my_name)
+    foe_hp = max_hp(foe_name)
     inc = worst_incoming(foe_name, my_name)
     return {
         "me": my_name, "me_types": me.get("attributes_list"),
