@@ -1371,7 +1371,16 @@ class Bot:
             # never runs. Without this check the bot sits on the summary screen
             # until the watchdog fires, which is exactly the "215 s, 3 actions"
             # match at 17:22.
-            if self.match_started is not None and is_result_screen(self.screen):
+            #
+            # Guard: the party panel (forced switch) also stacks five or six
+            # rows of text down the left side, and while it is open this check
+            # fired every poll - ending the match every 2 s, resetting
+            # acted_at, and letting the bot fire the same skill ten times in
+            # one turn. A result can only be real after the match has actually
+            # been running for a while, so require a minimum age.
+            if (self.match_started is not None
+                    and now - self.match_started > 45.0
+                    and is_result_screen(self.screen)):
                 if self.result_seen_at is None:
                     self.result_seen_at = now
                 elif now - self.result_seen_at > 1.5:
