@@ -63,6 +63,29 @@ def _prepare(img_rgb):
     return g.astype(np.float32)
 
 
+def _imread(path):
+    """支持中文/Unicode 路径的读图（cv2.imread 在 Windows 上按 ANSI 解析路径）。"""
+    try:
+        buf = np.fromfile(path, dtype=np.uint8)
+        if buf.size == 0:
+            return None
+        return cv2.imdecode(buf, cv2.IMREAD_COLOR)
+    except (OSError, ValueError):
+        return None
+
+
+def _imwrite(path, bgr):
+    """支持中文/Unicode 路径的写图。"""
+    try:
+        ok, buf = cv2.imencode(os.path.splitext(path)[1] or ".png", bgr)
+        if not ok:
+            return False
+        buf.tofile(path)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def load_library(lib_dir=LIB_DIR):
     """Load every <name>.png in the portrait folder, rebuilding on change."""
     try:
@@ -82,7 +105,7 @@ def load_library(lib_dir=LIB_DIR):
             # win the correlation and report a pet name that isn't one.
             continue
         p = os.path.join(lib_dir, f)
-        img = cv2.imread(p)
+        img = _imread(p)
         if img is None or img.shape[0] < 8 or img.shape[1] < 8:
             continue
         items.append((os.path.splitext(f)[0], _prepare(img[:, :, ::-1])))
@@ -138,4 +161,4 @@ def identify(img_rgb, items=None, target=None):
 def save_template(img_rgb, path):
     """Store a portrait crop as a new library template."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    cv2.imwrite(path, cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))
+    return _imwrite(path, cv2.cvtColor(img_rgb, cv2.COLOR_RGB2BGR))

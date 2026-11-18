@@ -136,6 +136,25 @@ def log(msg):
 _UD = ctypes.windll.user32
 
 
+class _PT(ctypes.Structure):
+    _fields_ = [("x", wt.LONG), ("y", wt.LONG)]
+
+
+def _window_at_point(x, y):
+    """返回屏幕坐标点上的顶层窗口。用来在点击前确认"点下去会不会点到别的程序"。"""
+    try:
+        _UD.WindowFromPoint.restype = wt.HWND
+        _UD.WindowFromPoint.argtypes = [_PT]
+        h = _UD.WindowFromPoint(_PT(int(x), int(y)))
+        if not h:
+            return None
+        root = _UD.GetAncestor(h, 2)      # GA_ROOT
+        return root or h
+    except Exception:
+        return None
+
+
+
 def find_game():
     found = []
 
@@ -251,7 +270,17 @@ class Screen:
         pt = wt.POINT(0, 0)
         _UD.ClientToScreen(self.hwnd, ctypes.byref(pt))
         self.client_off = (pt.x - x, pt.y - y)
-        self.client_size = (r.right, r.bottom)
+        new_size = (r.right, r.bottom)
+        old_size = getattr(self, "client_size", None)
+        if old_size and old_size != new_size:
+            # 分辨率/窗口大小变了：所有固定框会自动等比缩放，这里留一条记录，
+            # 方便回看"某次识别异常是不是因为中途换了分辨率"。
+            try:
+                log("WINDOW client %sx%s -> %sx%s (fixed boxes rescale)"
+                    % (old_size[0], old_size[1], new_size[0], new_size[1]))
+            except Exception:
+                pass
+        self.client_size = new_size
         self.last_refresh = time.time()
     def grab(self, box):
         """box = (x, y, w, h) window-relative -> RGB ndarray."""
@@ -284,6 +313,36 @@ class Screen:
         ox, oy = getattr(self, "client_off", (0, 0))
         x, y, w, h = box
         return self.grab((ox + x, oy + y, w, h))
+
+    # ---- 分辨率自适应 -------------------------------------------------
+    # 所有固定的窗口相对坐标都是在 2586x1671 的窗口下量出来的。
+    # 窗口换分辨率/被拖动改变大小时，这些框必须等比缩放，否则识别会错位。
+    BASE_RECT_W, BASE_RECT_H = 2586, 1671
+
+    def sbox(self, box):
+        """把基准分辨率下的窗口相对框，等比缩放到当前窗口尺寸。"""
+        if self.rect is None:
+            self.refresh()
+            if self.rect is None:
+                return box
+        sx = self.rect[2] / float(self.BASE_RECT_W)
+        sy = self.rect[3] / float(self.BASE_RECT_H)
+        if abs(sx - 1.0) < 0.004 and abs(sy - 1.0) < 0.004:
+            return box
+        x, y, w, h = box
+        return (int(round(x * sx)), int(round(y * sy)),
+                max(1, int(round(w * sx))), max(1, int(round(h * sy))))
+
+    def grab_s(self, box):
+        """grab() 的分辨率自适应版：box 用基准分辨率坐标。"""
+        return self.grab(self.sbox(box))
+
+    def client_rect_on_screen(self):
+        if self.rect is None:
+            return None
+        ox, oy = getattr(self, "client_off", (0, 0))
+        cw, ch = getattr(self, "client_size", (self.rect[2], self.rect[3]))
+        return (self.rect[0] + ox, self.rect[1] + oy, cw, ch)
 
 
 # ------------------------------------------------------------------ perception
@@ -334,7 +393,7 @@ class Perc:
 
     def _bar(self, box):
         x, y, w, h = box
-        crop = self.screen.grab((x, y - 2, w, h + 4))
+        crop = self.screen.grab_s((x, y - 2, w, h + 4))
         if crop is None:
             return {"pct": 0.0, "color": "none", "ui": False}
         return _read_bar(crop, (0, 2, w, h))
@@ -346,7 +405,7 @@ class Perc:
 
         x0, y0, x1, y1 = SKILL_BOX
         cw, ch = x1 - x0, y1 - y0
-        crop = self.screen.grab((x0, y0, cw, ch))
+        crop = self.screen.grab_s((x0, y0, cw, ch))
         skills = [None] * 4
         visible, npills = False, 0
         if crop is not None:
@@ -371,7 +430,7 @@ class Perc:
         if battle:
             # Grab the numeral's own ROI instead of the whole 2586x1671 window:
             # the full grab cost ~100 ms to read a 340x150 region.
-            cnt_crop = self.screen.grab(CNT_ROI)
+            cnt_crop = self.screen.grab_s(CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
 
         # Energy: a row of pips under the HP card. Only meaningful in battle,
@@ -380,7 +439,7 @@ class Perc:
         if battle:
             try:
                 import energy as _energy
-                pip = self.screen.grab(_energy.PIP_BAND)
+                pip = self.screen.grab_s(_energy.PIP_BAND)
                 if pip is not None:
                     en = _energy.read_energy(pip)
             except Exception:
@@ -886,7 +945,7 @@ def is_result_screen(screen):
     2 seconds).
     """
     x, y, w, h = RESULT_LIST_BAND
-    crop = screen.grab((x, y, w, h))
+    crop = screen.grab_s((x, y, w, h))
     if crop is None or crop.size == 0:
         return False
     mx = crop.max(axis=2).astype(np.int16)
@@ -1664,7 +1723,7 @@ class Bot:
                 cv2.imwrite(os.path.join(LOG_DIR, "result_hit_%s.png" % ts),
                             cv2.cvtColor(full, cv2.COLOR_RGB2BGR))
             x, y, w, h = RESULT_LIST_BAND
-            band = self.screen.grab((x, y, w, h))
+            band = self.screen.grab_s((x, y, w, h))
             if band is not None:
                 cv2.imwrite(os.path.join(LOG_DIR, "result_band_%s.png" % ts),
                             cv2.cvtColor(band, cv2.COLOR_RGB2BGR))
@@ -2108,6 +2167,32 @@ class Bot:
             return False
         return self.click_abs(r[0] + int(x), r[1] + int(y))
 
+    def _click_target_ok(self, x, y):
+        """点击前的双重保险：目标必须在游戏客户区内，且该点确实属于游戏窗口。
+
+        这条是为了杜绝两类事故：
+          1. 窗口被最小化 -> rect 变成 -32000，点在桌面随机位置
+          2. 游戏被别的窗口挡住 -> 点在编辑器/播放器上
+        """
+        cr = self.screen.client_rect_on_screen()
+        if not cr:
+            return False
+        cx, cy, cw, ch = cr
+        if not (cx <= x < cx + cw and cy <= y < cy + ch):
+            return False
+        top = _window_at_point(x, y)
+        if top is None:
+            return False
+        if top == self.screen.hwnd:
+            return True
+        # 被挡住时先把游戏抬到最上层再检查一次，仍然不是就不点
+        try:
+            _raise_topmost(self.screen.hwnd)
+            time.sleep(0.12)
+        except Exception:
+            return False
+        return _window_at_point(x, y) == self.screen.hwnd
+
     def click_abs(self, x, y, precheck=True):
         """Hardware click, gated on the game actually owning the foreground.
 
@@ -2126,6 +2211,10 @@ class Bot:
                 log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
                     % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
                 return False
+        # 绝不盲点：目标不在客户区内、或那个像素不属于游戏窗口，直接丢弃。
+        if not self._click_target_ok(int(x), int(y)):
+            log("CLICK GUARD - %d,%d 不在游戏窗口内或被遮挡，已丢弃" % (x, y))
+            return False
         r = self._ble(lambda: self.ble.click_at(x, y), "click %d,%d" % (x, y))
         return r is not None
 
