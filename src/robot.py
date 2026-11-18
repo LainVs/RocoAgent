@@ -73,6 +73,9 @@ RESULT_BTN = (1150, 1470, 340, 130)    # 退出      (white blob centre ~1293,15
 LOBBY_BTN_REL = (2210, 1567)             # 开始挑战 centre (window-relative)
 RESULT_BTN_REL = (1293, 1530)            # 退出 centre
 ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash screens
+# 结算/升段页右上角的"略略略"才是跳过按钮。中间那块徽章点了没用（实测连点
+# 8 次都不动），所以这个页面必须单独处理，否则机器人会一直卡在结算页。
+RESULT_SKIP_REL = (2303, 238)
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
@@ -1144,11 +1147,22 @@ def _est_value(s):
 
     The digit count is still reliable, so use it as a floor: a three-glyph read
     is at least 100, a two-glyph read at least 10.
+
+    "1?5" is a 3-glyph read, but the digits we *did* read say much more than
+    "at least 100": the number is 105-195. Use the known digits and assume the
+    unknown ones sit at the end, which keeps the estimate in the right decade.
+    The old floor of 100 let a "23?" tie with a real 100 and win the sort, so
+    the bot pressed a card it could not read over one it could.
     """
     if s.get("value") is not None:
         return float(s["value"])
-    if s.get("kind") == "num" and int(s.get("glyphs") or 0) >= 2:
-        return float(10 ** (int(s["glyphs"]) - 1))
+    text = s.get("text") or ""
+    digits = "".join(ch for ch in text if ch.isdigit())
+    n = len(text) or int(s.get("glyphs") or 0)
+    if s.get("kind") == "num" and n >= 2:
+        if digits:
+            return float(int(digits) * 10 ** max(0, n - len(digits)))
+        return float(10 ** (n - 1))
     return None
 
 
@@ -1245,7 +1259,8 @@ def decide(st, ctx):
     # away the 120, kept the 1, and concluded "everything is weak" - so the bot
     # switched pets for nothing.
     pool = sorted(damaged,
-                  key=lambda p: (p[1], p[0]["color"] != "red"), reverse=True)
+                  key=lambda p: (p[1], p[0].get("value") is not None,
+                                 p[0]["color"] != "red"), reverse=True)
     best, best_v = pool[0]
 
     # Everything on hand is weak: hand the turn to a fresh pet instead of
@@ -1317,6 +1332,15 @@ class Bot:
         self.pet_at = 0.0
         self._pet_poll_at = 0.0
         self._pet_unknown_at = 0.0
+        self._foe_poll_at = 0.0
+        self._foe_unknown_at = 0.0
+        self.foe_bust = None
+        # 每个队伍槽位最后一次看到的血量（%）。换人按这个挑后备，
+        # 而不是按固定轮转 —— 否则会换回一只残血的再立刻换走。
+        self.slot_hp = {}
+        self.cur_slot = 1
+        # 槽位 -> 种族名，靠上场时认头像学出来（我方 6 只没有手填也能用）
+        self.slot_species = {}
         self.foe_name = None
         self.my_name = None
         self.active_slot = None
@@ -1552,6 +1576,13 @@ class Bot:
                         self.leader_done = False
                         self.pet_at = 0.0
                         self._pet_poll_at = 0.0
+                        self.foe_name = None
+                        self.foe_bust = None
+                        self._foe_poll_at = 0.0
+                        self.slot_hp = {}
+                        self.cur_slot = 1
+                        self.slot_species = {}
+                        self._foe_scanned = False
                         # Per-match tally: a lifetime counter made the panel
                         # log read "dead=9" for a six-pet team.
                         self.dead_count = 0
@@ -1565,6 +1596,9 @@ class Bot:
                 # wolf lands is strictly better than waiting for more 悲悯
                 # stacks - the trait scales with fainted allies by itself.
                 self._check_active_pet(st, now)
+                self._check_foe(st, now)
+                if self.cur_slot and st.get("my_pct") is not None:
+                    self.slot_hp[self.cur_slot] = st["my_pct"]
                 # 首领化确认：变成狼的"银白发光"头像说明已经首领化过，
                 # 这样 leader_done 不再依赖"按键发出去了"这个假设。
                 if self.active_pet == "wolf_leader" and not self.leader_done:
@@ -1754,6 +1788,16 @@ class Bot:
                 log("PET -> %s (%.2f)" % (name, sc))
                 self.active_pet = name
                 self.pet_at = now
+            # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）。
+            sp = self._portrait_species(name, "self")
+            if sp and sp != self.my_name:
+                self.my_name = sp
+                log("PET -> species %s" % sp)
+            if sp and self.cur_slot:
+                # 我方 6 只不靠手填也能知道：上场时认出来就记下槽位。
+                if self.slot_species.get(self.cur_slot) != sp:
+                    self.slot_species[self.cur_slot] = sp
+                    self.bench_names[self.cur_slot] = sp
             return
         # Unknown bust: keep one sample every 10 s so the library can be
         # extended by hand without replaying a match. Store the centre crop so
@@ -1776,6 +1820,103 @@ class Bot:
                 log("PET -> unknown bust (%.2f) saved %s" % (sc, os.path.basename(path)))
             except Exception:
                 pass
+
+    def _check_foe(self, st, now):
+        """对面是谁：右上角 HUD 头像 -> 头像库 -> 种族名。
+
+        以前 foe_name 永远是 None，所以 policy_v2 每次都直接返回
+        "pet identity unknown"，TKO/TTD 那一整套判断从来没跑起来过。
+        头像库还没覆盖到的精灵先存样本，等面板补录（见 foe_panel）。
+        """
+        if not st.get("battle"):
+            return
+        if now - self._foe_poll_at < 0.7:
+            return
+        self._foe_poll_at = now
+        try:
+            m = portraits.SEARCH_MARGIN
+            box = portraits.foe_box_for(*self.screen.client_size, margin=m)
+            img = self.screen.grab_client(box)
+        except Exception as e:
+            log("FOE -> grab failed: %s: %s" % (type(e).__name__, e))
+            return
+        if img is None or img.size == 0:
+            return
+        items = portraits.load_library(portraits.FOE_LIB_DIR)
+        name, sc = portraits.identify(img, items,
+                                      target=(box[2] - 2 * m, box[3] - 2 * m))
+        if name is not None and sc >= 0.62:
+            sp = self._portrait_species(name, "foe")
+            if sp and sp != self.foe_name:
+                log("FOE -> %s (%.2f)" % (sp, sc))
+                self.foe_name = sp
+                self.foe_bust = name
+            return
+        if now - self._foe_unknown_at > 12.0:
+            self._foe_unknown_at = now
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(portraits.FOE_LIB_DIR, "_unknown_%s.png" % ts)
+            try:
+                bh, bw = img.shape[:2]
+                portraits.save_template(img[m:bh - m, m:bw - m], path)
+                log("FOE -> unknown bust (%.2f) saved %s"
+                    % (sc, os.path.basename(path)))
+            except Exception:
+                pass
+
+    def _portrait_species(self, stem, side):
+        """头像文件名 -> 种族名。wolf.png 这种老文件名靠库里的映射。"""
+        try:
+            import portrait_db
+            sid = portrait_db.species_of(stem + ".png", side)
+            return portrait_db.species_name(sid) if sid else None
+        except Exception:
+            return None
+
+    def _scan_foe_panel(self):
+        """未知对手：点开特性面板读一次，把头像/特性/技能录进库。
+
+        实测（人机战）面板打开时战斗暂停，ESC 关闭后继续。排位里是否会暂停
+        没有验证过，所以只在一场的第一回合试一次：万一吃掉一回合，代价最小。
+        """
+        import foe_panel
+        log("FOE SCAN -> opening panel")
+        t0 = time.time()
+        try:
+            data = foe_panel.learn_from_panel(
+                self.screen,
+                click=lambda x, y: self.click_abs(x, y),
+                esc=lambda: self.send_key("esc", allow_focus_click=False))
+        except Exception as e:
+            log("FOE SCAN failed: %s: %s" % (type(e).__name__, e))
+            return
+        dt = time.time() - t0
+        if not data:
+            log("FOE SCAN -> no panel (%.1fs)" % dt)
+            return
+        log("FOE SCAN -> %s lv%s 特性=%s 技能=%s (%.1fs)"
+            % (data.get("name"), data.get("level"), data.get("ability"),
+               data.get("skill"), dt))
+        if data.get("name"):
+            self.foe_name = data["name"]
+            self.foe_bust = data["name"]
+
+    def _dump_bar(self, tag):
+        """存一张技能栏截图（认不全数字时用），每 8 秒最多一张。"""
+        if time.time() - getattr(self, "_bar_dump_at", 0) < 8.0:
+            return
+        self._bar_dump_at = time.time()
+        try:
+            x0, y0, x1, y1 = SKILL_BOX
+            crop = self.screen.grab_s((x0, y0, x1 - x0, y1 - y0))
+            if crop is None or crop.size == 0:
+                return
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(LOG_DIR, "bar_%s_%s.png" % (tag, ts))
+            cv2.imwrite(path, cv2.cvtColor(crop, cv2.COLOR_RGB2BGR))
+            log("BAR -> saved %s" % os.path.basename(path))
+        except Exception:
+            pass
 
     def _dump_unreadable(self, tag):
         """技能栏读不出来时存一张全屏，供离线分析（每 15 秒最多一张）。"""
@@ -1961,6 +2102,14 @@ class Bot:
             # acted_at stays: a state change during an attack animation is not
             # a new turn. The 8 s gate below owns retry pacing.
 
+        # ---- 未知对手：点开特性面板补录（一场一次，只在我的回合窗口）
+        if (getattr(self.args, "foe_scan", False)
+                and self.foe_name is None
+                and not getattr(self, "_foe_scanned", False)
+                and self.turn <= 2 and st.get("bar")):
+            self._foe_scanned = True
+            self._scan_foe_panel()
+
         # ---- turn pacing -----------------------------------------------
         # acted_at is deliberately NOT reset by bar flicker or key changes any
         # more; those resets used to sit above this block and let the bot fire
@@ -2138,6 +2287,7 @@ class Bot:
             if ok:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
+                self.cur_slot = action[1]
         if not ok:
             # The key never left the board because the game had lost the
             # foreground. Do not count it as a spent turn: retry on the next
@@ -2164,6 +2314,18 @@ class Bot:
             else ("SWITCH %d" % action[1]) if action[0] == "switch" else "ENERGY F",
             why, st["my_pct"], st["foe_pct"], lit, int(st["countdown"]), detail))
         self._dump(st, action, why)
+
+    def _screen_fingerprint(self):
+        """8x6 灰度指纹：同一个画面卡住才计数，画面一变就重置。"""
+        try:
+            img = self.screen.grab_client((0, 0, 2560, 1600))
+            if img is None or img.size == 0:
+                return None
+            g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+            small = cv2.resize(g, (8, 6), interpolation=cv2.INTER_AREA)
+            return bytes((small // 16).astype(np.uint8).tobytes())
+        except Exception:
+            return None
 
     def _idle_tick(self, now):
         """Lobby / result / pre-match handling.
@@ -2199,6 +2361,33 @@ class Bot:
         if now - self.clicked_at < CLICK_COOLDOWN_S:
             return
 
+        # 屏幕指纹：同一个画面卡住才计数，画面一变就重置。
+        # 之前 advance_count 是整场累计的，8 次之后永久放弃，于是卡在结算页
+        # 上再也不会动（实测 02:16-02:24 卡了 8 分钟）。
+        fp = self._screen_fingerprint()
+        if fp != getattr(self, "_last_fp", None):
+            self._last_fp = fp
+            self.advance_count = 0
+            self.advance_gave_up = False
+            self._skip_logged = False
+
+        # 结算/升段页：点右上角"略略略"跳过。不占 ADVANCE 配额、不受
+        # "只在一场结束后 120 秒内才允许点"的限制 —— 这个页面本身就是
+        # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）。
+        if is_result_screen(self.screen):
+            if now - self.advance_at >= ADVANCE_COOLDOWN_S:
+                if not getattr(self, "_skip_logged", False):
+                    self._skip_logged = True
+                    log("result screen -> click 略略略")
+                self.ensure_focus()
+                self.click_rel(*RESULT_SKIP_REL)
+                self.advance_at = now
+                self.advance_count = 0
+                self.advance_gave_up = False
+                self.last_progress_at = now
+            return
+        self._skip_logged = False
+
         # (the bottom-centre action button was already handled above)
         want = "start" if has_start_button(self.screen) else None
         if want is None:
@@ -2225,7 +2414,12 @@ class Bot:
             if self.advance_count in (1, 5, 8):
                 log("advance splash (click %d)" % self.advance_count)
             self.ensure_focus()
-            self.click_rel(*ADVANCE_REL)
+            # 隔次点右上角"略略略"：结算/升段页只有这个点有效，
+            # 别的 splash（ALL CLEAR / 奖励）点中间就行。
+            if self.advance_count % 2 == 0:
+                self.click_rel(*RESULT_SKIP_REL)
+            else:
+                self.click_rel(*ADVANCE_REL)
             self.advance_at = now
             return
         self.advance_count = 0
@@ -2400,16 +2594,52 @@ class Bot:
             log("review spawn failed: %s" % e)
 
     def next_switch_slot(self):
-        """Rotate through the party for a mid-battle switch (E -> slot -> Space).
+        """Pick the healthiest bench pet instead of rotating blindly.
 
-        This is the six-slot party list, which is not the same list as the
-        forced-switch panel: that one only ever shows the five pets that are not
-        currently out (verified at 1:1: five rows numbered 1-5, no sixth row).
-        Mid-battle the party HUD shows all six, numbered 1-6, so 6 is a valid
-        key here - and only here.
+        This used to be a fixed [2,3,4,5,6,1] cycle. With six pets the cycle
+        comes back to the pet that was already on 20% HP, it lands there, and
+        the retreat rule fires again immediately - that is the "换回来又换掉"
+        loop that burned a turn on every swap.
+
+        HP per slot is remembered from every poll (slot_hp). A slot we have
+        never seen is treated as full: it has not been damaged on the field.
+        Returns None when every bench pet is below 35% - switching into
+        another dying pet is worse than staying.
         """
-        slots = [2, 3, 4, 5, 6, 1]
-        return slots[self.switch_count % len(slots)]
+        cands = [s for s in (2, 3, 4, 5, 6, 1) if s != self.cur_slot]
+        if not cands:
+            return None
+
+        def hp_of(s):
+            v = self.slot_hp.get(s)
+            return 100.0 if v is None else v
+
+        def score(s):
+            # 血量是主项；属性对位（打不打得动 / 挨不挨得住）是副项。
+            # 0.6 的权重是经验值：一只 80% 血但被对面双倍克制的，不该赢过
+            # 一只 55% 血但克制对面的。
+            return hp_of(s) / 100.0 + 0.6 * self._matchup_score(s)
+
+        # 同分时按轮转错开，避免每次都挑同一只
+        start = self.switch_count % len(cands)
+        ordered = cands[start:] + cands[:start]
+        best = max(ordered, key=score)
+        if hp_of(best) < 35.0:
+            return None
+        return best
+
+    def _matchup_score(self, slot):
+        """这个槽位的精灵对上当前对手，属性上占不占便宜（正数=占便宜）。"""
+        try:
+            import portrait_db as P
+            me = self.slot_species.get(slot) or self.bench_names.get(slot)
+            foe = self.foe_name
+            if not me or not foe:
+                return 0.0
+            return P.matchup(P.species_types_by_name(me),
+                             P.species_types_by_name(foe))
+        except Exception:
+            return 0.0
 
     def _living_rows(self, rows):
         """Classify party cards as selectable or greyed-out.
@@ -2634,6 +2864,13 @@ class Bot:
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],
                         "t": s["text"]} if s else None for s in st["skills"]],
         }
+        # 有认不全的数字就留一张技能栏截图：事后能核对"为什么选这张卡"，
+        # 只写日志的话，看到 "23?" 根本没法判断它到底是 230 还是 23。
+        try:
+            if any(s and "?" in (s.get("text") or "") for s in st["skills"]):
+                self._dump_bar("partial")
+        except Exception:
+            pass
         try:
             with open(TURN_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
@@ -2676,9 +2913,12 @@ def main():
     ap.add_argument("--once", action="store_true")
     ap.add_argument("--probe", type=int, default=0)
     ap.add_argument("--no-guard", action="store_true")
-    ap.add_argument("--no-policy-v2", action="store_true",
-                    help="disable the expected-value policy, use the legacy picker")
+    ap.add_argument("--no-policy-v2", action="store_true",                    help="disable the expected-value policy, use the legacy picker")
     ap.add_argument("--switch-slot", type=int, default=1)
+    ap.add_argument("--foe-scan", action="store_true",
+                    help="click the foe portrait to identify unknown pets "
+                         "(opt-in: costs 5-20s and a wasted turn if the panel "
+                         "does not open)")
     ap.add_argument("--seconds", type=int, default=0,
                     help="stop after N seconds (0 = run forever)")
     args = ap.parse_args()

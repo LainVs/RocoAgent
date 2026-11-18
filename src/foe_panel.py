@@ -50,30 +50,39 @@ def is_open(screen):
     return int((img.min(axis=2) > 200).sum()) > 0.35 * img.shape[0] * img.shape[1]
 
 
-def open_panel(screen, session):
-    """点对面头像，等面板出来。返回是否成功。"""
+def open_panel(screen, click=None, session=None):
+    """点对面头像，等面板出来。返回是否成功。
+
+    click 是 (x, y) -> bool 的硬件点击回调；不给就用 session.click_at。
+    """
     import time
     import asyncio
     cx, cy = screen.client_rect_on_screen()[:2]
     tx, ty = FOE_BUST_CLICK
-    if asyncio.iscoroutinefunction(session.click_at):
-        asyncio.get_event_loop().run_until_complete(
-            session.click_at(cx + tx, cy + ty))
-    else:
-        session.click_at(cx + tx, cy + ty)
-    for _ in range(10):
+    if click is not None:
+        click(cx + tx, cy + ty)
+    elif session is not None:
+        if asyncio.iscoroutinefunction(session.click_at):
+            asyncio.get_event_loop().run_until_complete(
+                session.click_at(cx + tx, cy + ty))
+        else:
+            session.click_at(cx + tx, cy + ty)
+    for _ in range(12):
         time.sleep(0.25)
         if is_open(screen):
             return True
     return False
 
 
-def close_panel(session):
+def close_panel(esc=None, session=None):
     import asyncio
-    if asyncio.iscoroutinefunction(session.key):
-        asyncio.get_event_loop().run_until_complete(session.key("esc"))
-    else:
-        session.key("esc")
+    if esc is not None:
+        esc()
+    elif session is not None:
+        if asyncio.iscoroutinefunction(session.key):
+            asyncio.get_event_loop().run_until_complete(session.key("esc"))
+        else:
+            session.key("esc")
 
 
 def read(screen, ocr=None, vocab=None):
@@ -136,7 +145,7 @@ def _raw_ocr(rgb, upscale=2):
     return out
 
 
-def learn_from_panel(screen, session, ocr=None):
+def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None):
     """完整流程：点头像 -> 读面板 -> 关面板 -> 存头像/特性/技能。
 
     返回 {'name','level','ability','skill','species_id','new_*'}，失败返回 None。
@@ -146,13 +155,13 @@ def learn_from_panel(screen, session, ocr=None):
     import numpy as np
     import portrait_db as P
 
-    if not open_panel(screen, session):
+    if not open_panel(screen, click=click, session=session):
         return None
     try:
         bust = screen.grab_client(FOE_PORTRAIT_BOX)
         data = read(screen, ocr=ocr)
     finally:
-        close_panel(session)
+        close_panel(esc=esc, session=session)
     if not data or not data.get("name"):
         return data
 

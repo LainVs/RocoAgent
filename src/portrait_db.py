@@ -113,6 +113,75 @@ def species_of(filename, side="foe", path=DB_PATH):
     return resolve(filename, side, path)[0]
 
 
+def species_name(species_id, path=DB_PATH):
+    if not species_id:
+        return None
+    db = connect(path)
+    try:
+        r = db.execute("SELECT name FROM species WHERE id=?", (species_id,)).fetchone()
+        return r["name"] if r else None
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------- 属性对位
+def species_types_by_name(name, path=DB_PATH):
+    """种族名 -> 属性 id 列表。同名变体取总族值最高的那条。"""
+    import json as _json
+    if not name:
+        return []
+    db = connect(path)
+    try:
+        r = db.execute("SELECT types FROM species WHERE name=? "
+                       "ORDER BY implemented DESC, total DESC LIMIT 1",
+                       (name,)).fetchone()
+        return _json.loads(r["types"]) if r and r["types"] else []
+    finally:
+        db.close()
+
+
+def type_mult(atk, deff, path=DB_PATH):
+    db = connect(path)
+    try:
+        r = db.execute("SELECT mult FROM type_eff WHERE atk=? AND def=?",
+                       (atk, deff)).fetchone()
+        return float(r["mult"]) if r else 1.0
+    finally:
+        db.close()
+
+
+_mult_cache = None
+
+
+def type_table(path=DB_PATH):
+    """(atk, def) -> mult，一次读全表，换人评分每回合要用很多次。"""
+    global _mult_cache
+    if _mult_cache is not None:
+        return _mult_cache
+    db = connect(path)
+    try:
+        _mult_cache = {(r["atk"], r["def"]): float(r["mult"])
+                       for r in db.execute("SELECT atk, def, mult FROM type_eff")}
+        return _mult_cache
+    finally:
+        db.close()
+
+
+def matchup(my_types, foe_types, path=DB_PATH):
+    """正数=我方占优。攻防各取最好的一对，再相减。
+
+    只看属性，不看技能威力 —— 不知道对面带了什么招，也没法知道我们后排
+    带什么招，所以这里给的是"属性上打不打得动"的先验，真正的取舍留给
+    伤害模型。
+    """
+    if not my_types or not foe_types:
+        return 0.0
+    tab = type_table(path)
+    off = max(tab.get((t, f), 1.0) for t in my_types for f in foe_types)
+    deff = max(tab.get((f, t), 1.0) for f in foe_types for t in my_types)
+    return off - deff
+
+
 # ---------------------------------------------------------------- 特性补录
 PANEL_FEATURE_BASE = 990000000
 

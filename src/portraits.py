@@ -22,11 +22,16 @@ import numpy as np
 # shifts with the camera, the head does not.
 PORTRAIT_BOX = (55, 47, 76, 80)
 
+# 对面 HUD 的头像框（右上角，名字左边）。比我们自己的那个宽一点，
+# 所以两个库必须分开存模板，混用会互相拉低相关度。
+FOE_PORTRAIT_BOX = (2148, 47, 84, 76)
+
 # Same box, normalised size used for comparison.
 NORM_W, NORM_H = 64, 64
 
 LIB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                        "assets", "portraits")
+FOE_LIB_DIR = os.path.join(os.path.dirname(LIB_DIR), "portraits_foe")
 
 # The box above was measured on a 2560x1600 client area. If the window is
 # resized the HUD scales with it, so scale the box the same way.
@@ -36,6 +41,13 @@ BASE_W, BASE_H = 2560, 1600
 def box_for(client_w, client_h, margin=0):
     sx, sy = client_w / float(BASE_W), client_h / float(BASE_H)
     x, y, w, h = PORTRAIT_BOX
+    return (int(round(x * sx)) - margin, int(round(y * sy)) - margin,
+            int(round(w * sx)) + 2 * margin, int(round(h * sy)) + 2 * margin)
+
+
+def foe_box_for(client_w, client_h, margin=0):
+    sx, sy = client_w / float(BASE_W), client_h / float(BASE_H)
+    x, y, w, h = FOE_PORTRAIT_BOX
     return (int(round(x * sx)) - margin, int(round(y * sy)) - margin,
             int(round(w * sx)) + 2 * margin, int(round(h * sy)) + 2 * margin)
 
@@ -93,7 +105,10 @@ def load_library(lib_dir=LIB_DIR):
                     for f in os.listdir(lib_dir) if f.lower().endswith(".png"))
     except (OSError, ValueError):
         return []
-    if _lib_cache["mtime"] == mtime:
+    # The cache key must include the folder: 我方和对面是两个库，只按 mtime
+    # 缓存会让先读的那个库被另一个目录复用。
+    key = (os.path.abspath(lib_dir), mtime)
+    if _lib_cache.get("key") == key:
         return _lib_cache["items"]
     items = []
     for f in sorted(os.listdir(lib_dir)):
@@ -109,7 +124,7 @@ def load_library(lib_dir=LIB_DIR):
         if img is None or img.shape[0] < 8 or img.shape[1] < 8:
             continue
         items.append((os.path.splitext(f)[0], _prepare(img[:, :, ::-1])))
-    _lib_cache["mtime"] = mtime
+    _lib_cache["key"] = key
     _lib_cache["items"] = items
     return items
 
