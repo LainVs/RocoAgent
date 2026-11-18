@@ -40,6 +40,7 @@ import mss  # noqa: E402
 import digitread as dr  # noqa: E402
 import esp_shim as rocs  # noqa: E402  (BLE via the espfast daemon)
 import asyncio  # noqa: E402
+import portraits  # noqa: E402  (top-left HUD bust -> active pet)
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -242,6 +243,15 @@ class Screen:
             if g:
                 self.hwnd, x, y, w, h = g
         self.rect = (x, y, w, h)
+        # Client-area origin relative to the window rect. Screenshots (and the
+        # HUD boxes measured on them) are client-relative, so portrait work
+        # goes through grab_client(); everything else stays window-relative.
+        r = wt.RECT()
+        _UD.GetClientRect(self.hwnd, ctypes.byref(r))
+        pt = wt.POINT(0, 0)
+        _UD.ClientToScreen(self.hwnd, ctypes.byref(pt))
+        self.client_off = (pt.x - x, pt.y - y)
+        self.client_size = (r.right, r.bottom)
         self.last_refresh = time.time()
     def grab(self, box):
         """box = (x, y, w, h) window-relative -> RGB ndarray."""
@@ -260,6 +270,20 @@ class Screen:
             if self.rect is None:
                 return None
         return self.grab((0, 0, self.rect[2], self.rect[3]))
+
+    def grab_client(self, box):
+        """box = (x, y, w, h) CLIENT-relative -> RGB ndarray.
+
+        Used for the HUD portrait, whose coordinates were measured on a
+        screenshot (screenshots are client-area only, no frame).
+        """
+        if self.rect is None or time.time() - self.last_refresh > 2.0:
+            self.refresh()
+            if self.rect is None:
+                return None
+        ox, oy = getattr(self, "client_off", (0, 0))
+        x, y, w, h = box
+        return self.grab((ox + x, oy + y, w, h))
 
 
 # ------------------------------------------------------------------ perception
@@ -1147,6 +1171,13 @@ class Bot:
         # slot -> pet name, in party order. Without OCR we cannot know this yet,
         # so it stays empty and _pick_switch_slot degrades to "first living".
         self.bench_names = {}
+        # Active pet, read from the HUD bust (see portraits.py). This is the
+        # only trustworthy species signal: the name text is OCR-unreliable and
+        # the party panel does not include the pet that is on the field.
+        self.active_pet = None
+        self.pet_at = 0.0
+        self._pet_poll_at = 0.0
+        self._pet_unknown_at = 0.0
         self.foe_name = None
         self.my_name = None
         self.active_slot = None
@@ -1363,9 +1394,27 @@ class Bot:
                         self.charge_streak = 0
                         self.advance_count = 0
                         self.advance_gave_up = False
+                        self.active_pet = None
+                        self.leader_done = False
+                        self.pet_at = 0.0
+                        self._pet_poll_at = 0.0
+                        # Per-match tally: a lifetime counter made the panel
+                        # log read "dead=9" for a six-pet team.
+                        self.dead_count = 0
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
+
+                # Active-pet identity comes from the HUD bust, not from the
+                # party panel, and it drives the 首领化 (leader form) trigger:
+                # the transformation costs no turn, so doing it the moment the
+                # wolf lands is strictly better than waiting for more 悲悯
+                # stacks - the trait scales with fainted allies by itself.
+                self._check_active_pet(st, now)
+                if (self.active_pet == "wolf" and not self.leader_done
+                        and self.faint_at is None
+                        and now - self.pet_at > 1.2):
+                    self._leader_transform()
 
             # ---- not in battle: lobby / vs screen / result
             else:
@@ -1508,6 +1557,83 @@ class Bot:
             mx = E.max_hp(name) or 1
             out.append({"name": name, "hp": mx, "hp_max": mx, "energy": 10})
         return out
+
+    # ---------------------------------------------------------------- pets
+    def _check_active_pet(self, st, now):
+        """Identify the pet on the field from the top-left HUD bust.
+
+        Cheap (~1 ms grab + a handful of 64x64 correlations), and it is the
+        only reliable species signal available: the name is OCR-hostile and
+        the party panel never lists the pet that is already out.
+        """
+        if not st.get("battle"):
+            return
+        if now - self._pet_poll_at < 0.5:
+            return
+        self._pet_poll_at = now
+        try:
+            m = portraits.SEARCH_MARGIN
+            box = portraits.box_for(*self.screen.client_size, margin=m)
+            img = self.screen.grab_client(box)
+        except Exception as e:
+            log("PET -> grab failed: %s: %s" % (type(e).__name__, e))
+            return
+        if img is None or img.size == 0:
+            return
+        name, sc = portraits.identify(img)
+        if name is not None and sc >= 0.62:
+            if name != self.active_pet:
+                log("PET -> %s (%.2f)" % (name, sc))
+                self.active_pet = name
+                self.pet_at = now
+            return
+        # Unknown bust: keep one sample every 10 s so the library can be
+        # extended by hand without replaying a match. Store the centre crop so
+        # every template in the library has the same geometry.
+        if now - self._pet_unknown_at > 10.0:
+            self._pet_unknown_at = now
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(portraits.LIB_DIR, "_unknown_%s.png" % ts)
+            try:
+                bh, bw = img.shape[:2]
+                portraits.save_template(img[m:bh - m, m:bw - m], path)
+                log("PET -> unknown bust (%.2f) saved %s" % (sc, os.path.basename(path)))
+            except Exception:
+                pass
+
+    def _leader_transform(self):
+        """首领化: W -> 1 -> Space. Free action, once per match."""
+        log("LEADER -> 恶魔狼 on field, transforming (W/1/space)")
+        if not self.send_key("w"):
+            log("LEADER -> w dropped, retry next tick")
+            return False
+        time.sleep(0.9)
+        self.send_key(1)
+        time.sleep(0.9)
+        for _ in range(3):
+            self.send_key("space")
+            time.sleep(0.5)
+        self.leader_done = True
+        log("LEADER -> sequence sent")
+        # Keep a snapshot of the bust right after the sequence. If the leader
+        # form changes the portrait (it should), this frame is the template we
+        # need to verify the next transformation automatically instead of
+        # trusting that the key sequence landed.
+        time.sleep(1.2)
+        try:
+            m = portraits.SEARCH_MARGIN
+            img = self.screen.grab_client(
+                portraits.box_for(*self.screen.client_size, margin=m))
+            if img is not None and img.size:
+                ts = time.strftime("%H%M%S")
+                path = os.path.join(
+                    os.path.dirname(portraits.LIB_DIR), "logs",
+                    "leader_after_%s.png" % ts)
+                cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                log("LEADER -> bust saved %s" % os.path.basename(path))
+        except Exception:
+            pass
+        return True
 
     def _battle_tick(self, st, now):
         # fainted -> forced switch.
@@ -2155,31 +2281,12 @@ class Bot:
                 if not self.send_key("space", allow_focus_click=False):
                     log("FAINT -> space %d dropped" % (i + 1))
                 time.sleep(0.5)
-            # Leader form (首领化): W -> 1 -> Space, once per match, costs no
-            # turn (battle_terms.md:143). The wolf's leader trait 悲悯 grants
-            # +30% dual attack per fainted ally, so it is worth activating as
-            # soon as it enters late in the match.
-            #
-            # Trigger by DEATH COUNT, not by panel-row mapping. The mapping
-            # proved unreliable: it logged {1:1, 2:2, ...} while the panel
-            # actually excludes the pet on the field, so "slot == leader_slot"
-            # never fired. late-match death switching is overwhelmingly the
-            # wolf in this team plan, so: once four allies have fainted, treat
-            # the next successful switch-in as the wolf and leader-form it.
-            # A wrong guess costs one wasted input, not the match.
-            if (self.dead_count >= 4 and not self.leader_done):
-                time.sleep(1.0)
-                log("LEADER -> late-match switch-in (dead %d), attempting "
-                    "leader form" % self.dead_count)
-                if self.send_key("w", allow_focus_click=False):
-                    time.sleep(0.9)
-                    self.send_key(1, allow_focus_click=False)
-                    time.sleep(0.9)
-                    for i in range(3):
-                        self.send_key("space", allow_focus_click=False)
-                        time.sleep(0.5)
-                    self.leader_done = True
-                    log("LEADER -> sequence sent")
+            # 首领化 is NOT triggered here any more. The panel-row -> party-slot
+            # mapping was disproved (the panel excludes the pet on the field, so
+            # "slot == leader_slot" never matched) and a death-count guess is
+            # only a proxy. The HUD bust in the top-left corner names the pet
+            # that actually landed, so _check_active_pet()/_leader_transform()
+            # fire the W/1/Space sequence from the run loop instead.
         else:
             # No row geometry available: fall back to the key sequence.
             if not self.send_key(slot, allow_focus_click=False):
