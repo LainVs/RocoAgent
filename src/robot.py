@@ -1106,7 +1106,15 @@ class Bot:
         elif action[0] == "energy":
             ok = self.send_key("f")
         elif action[0] == "switch":
-            ok = self.send_key(action[1])
+            # Mid-battle switching is E -> slot -> Space (learn.md). The forced
+            # panel is different: it is already open, so _try_switch sends the
+            # slot directly. Sending the slot here without E simply uses a
+            # skill key - that is why the 10:32:07 "retreat" never swapped the
+            # pet and it died on the spot.
+            ok = self.send_key("e")
+            if ok:
+                time.sleep(0.45)
+                ok = self.send_key(action[1])
             if ok:
                 time.sleep(1.0)
                 ok = self.send_key("space")
