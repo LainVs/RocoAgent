@@ -942,6 +942,9 @@ class Bot:
         self.switch_gave_up = False
         self.switch_tried_at = 0.0
         self.switch_pending = None
+        # Rows that were pressed but did not take (fainted pets, greyed out).
+        # Cleared whenever a switch actually succeeds or the panel disappears.
+        self.switch_dead = set()
         # slot -> pet name, in party order. Without OCR we cannot know this yet,
         # so it stays empty and _pick_switch_slot degrades to "first living".
         self.bench_names = {}
@@ -1158,6 +1161,8 @@ class Bot:
             self.switch_attempt = 0
             self.switch_gave_up = False
             self.switch_tried_at = 0.0
+            self.switch_pending = None
+            self.switch_dead.clear()
 
         # ---- is it my decision window?
         # Gate on the SKILL BAR, not on the countdown. The countdown appears a
@@ -1582,18 +1587,28 @@ class Bot:
         # is why the log shows "attempt 0" forever.
         if getattr(self, "switch_pending", None) is not None:
             slot = self.switch_pending
-            log("FAINT -> resend Space for slot %d" % slot)
-            self.switch_tried_at = now
-            if self.send_key("space"):
-                self.switch_pending = None
-                self.switch_attempt += 1
-                self.switched_at = now
+            # The panel is still up, which means the previous number key did not
+            # land on a selectable row (the row was a fainted pet, greyed out).
+            # Remember it so the next pick skips it instead of pressing the same
+            # dead row forever - the log showed "switch slot 1 ... attempt 0"
+            # twenty times in a row while row 1 was a corpse.
+            self.switch_dead.add(slot)
+            log("FAINT -> row %d did not take, blacklisting it (%d dead)"
+                % (slot, len(self.switch_dead)))
+            self.switch_pending = None
+            self.switch_tried_at = 0.0
             return
 
         # Choose the best replacement instead of rotating.
         # Rotating (switch_attempt % len(pool)) only skipped corpses and ignored
         # everything that decides a matchup, which is why the log shows
         # slot 3 -> slot 1 -> slot 2 within 18 seconds.
+        pool = [c for c in pool if c[0] not in self.switch_dead]
+        if not pool:
+            if not self.switch_gave_up:
+                self.switch_gave_up = True
+                log("FAINT -> every row blacklisted, waiting for auto-pick")
+            return
         slot, why = self._pick_switch_slot(pool, st)
         log("FAINT -> switch slot %d (%s, attempt %d)"
             % (slot, why, self.switch_attempt))
@@ -1603,8 +1618,11 @@ class Bot:
         self.switch_pending = slot
         time.sleep(1.0)
         if not self.send_key("space"):
-            return                      # keep switch_pending, resend Space next
-        self.switch_pending = None
+            return                      # keep switch_pending, re-check next tick
+        # Do NOT assume success here. Whether the row was selectable is only
+        # known on the next poll: if the panel is still up, the pending slot is
+        # blacklisted at the top of this function. Clearing the blacklist here
+        # would erase exactly that information.
         self.switch_attempt += 1
         self.switched_at = now
 
