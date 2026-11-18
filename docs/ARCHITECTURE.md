@@ -175,6 +175,54 @@ python src\verify_channels.py --seconds 60
 
 ---
 
+## 五之三、链路启动顺序
+
+每一步都独立，前一步挂了不影响后一步退化为"单通道"。
+
+| 顺序 | 组件 | 命令 | 权限 |
+|---|---|---|---|
+| 0 | 自检 | `python src\pipeline_check.py` | 无 |
+| 1 | BLE 常连 | `python <tmp>\me_daemon.py` | 无 |
+| 2 | 视觉+决策 | `python -W ignore -u botsup.py --seconds 0` | 无 |
+| 3 | 协议后端（可选） | `cd rocom-helper && py -m src.main` | **管理员** |
+| 4 | 协议桥（可选） | `python src\proto_bridge.py` | 无 |
+| 5 | 并行校验 | `python src\verify_channels.py --seconds 60` | 无 |
+
+`pipeline_check.py` 输出 8 条链路的状态，当前预期：
+
+```
+game window        OK
+game data          OK
+damage engine      OK        worst incoming 462 dmg
+policy weights     OK        15 keys from config
+vision channel     OK        observe 328 ms
+BLE daemon :9999   OK
+protocol helper    DEGRADED  api not running（离线测试已过 352 项）
+proto state file   DOWN      没启动 bridge
+```
+
+协议那两条 DOWN/DEGRADED 是正常状态——**它是可选增强，不是必需**。
+
+### 协议层的离线验证结果（不需要游戏、不需要管理员）
+
+```
+tests/test_type_chart     105 passed
+tests/test_crypto         （同批）
+tests/test_frame          （同批）
+tests/test_opcodes        （同批）
+tests/test_damage_calc    199 passed
+tests/test_tactical_engine（同批）
+tests/test_battle_state   （同批）
+tests/test_battle_replay   48 passed
+------------------------------------
+合计                     352 passed
+```
+
+也就是说 BE21 组帧、AES 解密、opcode 分发、状态机、伤害计算、回放在本机全部验证通过。
+只差"实时抓包"这一步（需要管理员）。
+
+---
+
 ## 六、路线图
 
 | 阶段 | 内容 | 验收 |

@@ -40,6 +40,12 @@ class VisionProvider(Provider):
     def read(self, now):
         st = self.perc.observe()
         out = {}
+        # Only claim HP when the battle HUD is actually on screen. Outside a
+        # battle the bar ROI is scenery and _read_bar reports 0.0, which the bus
+        # would happily accept as a real reading and cross-check against the
+        # protocol, producing false conflicts. Unknown must stay unknown.
+        if not st.get("battle"):
+            return out
         if st.get("my_pct") is not None:
             out["my_hp_pct"] = st["my_pct"]
         if st.get("foe_pct") is not None:
@@ -82,7 +88,8 @@ class FileProtocolProvider(Provider):
             lines = [ln for ln in chunk.splitlines() if ln.strip()]
             if not lines:
                 return {}
-            rec = json.loads(lines[-1].decode("utf-8"))
+            # A Windows tool may have written this file with a UTF-8 BOM.
+            rec = json.loads(lines[-1].lstrip(b"\xef\xbb\xbf").decode("utf-8"))
             age = now - float(rec.get("_t") or now)
             if age > self.max_age:
                 return {}
