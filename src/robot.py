@@ -2148,14 +2148,19 @@ class Bot:
             # Leader form (首领化): W -> 1 -> Space, once per match, costs no
             # turn (battle_terms.md:143). The wolf's leader trait 悲悯 grants
             # +30% dual attack per fainted ally, so it is worth activating as
-            # soon as it enters late in the match. Gated on dead_count so it
-            # does not fire when the wolf comes out early.
-            if (self.leader_enabled and not self.leader_done
-                    and slot == self.leader_slot
-                    and self.dead_count >= 3):
+            # soon as it enters late in the match.
+            #
+            # Trigger by DEATH COUNT, not by panel-row mapping. The mapping
+            # proved unreliable: it logged {1:1, 2:2, ...} while the panel
+            # actually excludes the pet on the field, so "slot == leader_slot"
+            # never fired. late-match death switching is overwhelmingly the
+            # wolf in this team plan, so: once four allies have fainted, treat
+            # the next successful switch-in as the wolf and leader-form it.
+            # A wrong guess costs one wasted input, not the match.
+            if (self.dead_count >= 4 and not self.leader_done):
                 time.sleep(1.0)
-                log("LEADER -> 恶魔狼 entering leader form (dead %d)"
-                    % self.dead_count)
+                log("LEADER -> late-match switch-in (dead %d), attempting "
+                    "leader form" % self.dead_count)
                 if self.send_key("w", allow_focus_click=False):
                     time.sleep(0.9)
                     self.send_key(1, allow_focus_click=False)
@@ -2187,13 +2192,28 @@ class Bot:
         Value of a switch = how hard it hits the current foe, minus how hard the
         foe hits it, plus a type-matchup bonus. Uses the same damage model as the
         decision layer so the two never disagree.
+
+        Panel-row mapping (to be verified against a real screenshot): the panel
+        lists the LIVING pets that are not on the field, in party order. With
+        party [1..6], one active and dead_count fainted, the row order is
+        deduced rather than known - each pick logs the deduction so the user can
+        correct it from the game.
         """
+        # Derive which party slots the panel rows represent.
+        active = getattr(self, "active_slot", None)
+        alive = [s for s in self.party_order if s != active]
+        # Fainted pets stay in the list but greyed out; the bot cannot tell
+        # which rows are dead, so no subtraction here - _living_rows handles
+        # that separately. Log the mapping for the user to verify.
+        mapping = {i + 1: slot for i, slot in enumerate(alive)}
+        log("PANEL MAP: rows=%s dead=%d -> %s"
+            % (len(pool), self.dead_count, mapping))
         foe = (st.get("foe_name") if st else None) or self.foe_name
         if not foe:
             # Without the opponent's identity we cannot score matchups; fall back
             # to the first living row so we still act instead of standing still.
             slot = pool[0][0]
-            return slot, "no foe identity, first living"
+            return slot, "no foe identity, first living (map %s)" % mapping
 
         best = None
         for slot, _pos, _fill in pool:
