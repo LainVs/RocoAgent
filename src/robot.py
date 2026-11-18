@@ -1411,9 +1411,11 @@ class Bot:
                 # wolf lands is strictly better than waiting for more 悲悯
                 # stacks - the trait scales with fainted allies by itself.
                 self._check_active_pet(st, now)
+                leader_ready = (
+                    (now - self.pet_at > 2.0 and st.get("bar"))
+                    or now - self.pet_at > 4.0)
                 if (self.active_pet == "wolf" and not self.leader_done
-                        and self.faint_at is None
-                        and now - self.pet_at > 1.2):
+                        and self.faint_at is None and leader_ready):
                     self._leader_transform()
 
             # ---- not in battle: lobby / vs screen / result
@@ -1439,10 +1441,15 @@ class Bot:
             # been running for a while, so require a minimum age.
             if (self.match_started is not None
                     and now - self.match_started > 45.0
+                    and not st["bar"]
                     and is_result_screen(self.screen)):
                 if self.result_seen_at is None:
                     self.result_seen_at = now
-                elif now - self.result_seen_at > 1.5:
+                    # Keep the frame that triggered the detector: the guard
+                    # below is a heuristic and has ended live matches before,
+                    # so every hit must leave evidence behind.
+                    self._dump_result_frame()
+                elif now - self.result_seen_at > 2.5:
                     log("result screen detected -> ending match")
                     self._end_match()
                     self.result_seen_at = None
@@ -1597,9 +1604,36 @@ class Bot:
             try:
                 bh, bw = img.shape[:2]
                 portraits.save_template(img[m:bh - m, m:bw - m], path)
+                # Also keep the name strip: the bust alone cannot be labelled
+                # offline, and reading it here is what turns these samples into
+                # a portrait library for the whole team.
+                name_img = self.screen.grab_client((0, 0, 460, 170))
+                if name_img is not None:
+                    cv2.imwrite(os.path.join(
+                        portraits.LIB_DIR, "_unknown_%s_name.png" % ts),
+                        cv2.cvtColor(name_img, cv2.COLOR_RGB2BGR))
                 log("PET -> unknown bust (%.2f) saved %s" % (sc, os.path.basename(path)))
             except Exception:
                 pass
+
+    def _dump_result_frame(self):
+        """Save the frame behind a result-screen detection (diagnostics)."""
+        if time.time() - getattr(self, "_result_dump_at", 0) < 10.0:
+            return
+        self._result_dump_at = time.time()
+        ts = time.strftime("%H%M%S")
+        try:
+            full = self.screen.grab_full()
+            if full is not None:
+                cv2.imwrite(os.path.join(LOG_DIR, "result_hit_%s.png" % ts),
+                            cv2.cvtColor(full, cv2.COLOR_RGB2BGR))
+            x, y, w, h = RESULT_LIST_BAND
+            band = self.screen.grab((x, y, w, h))
+            if band is not None:
+                cv2.imwrite(os.path.join(LOG_DIR, "result_band_%s.png" % ts),
+                            cv2.cvtColor(band, cv2.COLOR_RGB2BGR))
+        except Exception:
+            pass
 
     def _leader_transform(self):
         """首领化: W -> 1 -> Space. Free action, once per match."""
@@ -1626,11 +1660,10 @@ class Bot:
                 portraits.box_for(*self.screen.client_size, margin=m))
             if img is not None and img.size:
                 ts = time.strftime("%H%M%S")
-                path = os.path.join(
-                    os.path.dirname(portraits.LIB_DIR), "logs",
-                    "leader_after_%s.png" % ts)
-                cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-                log("LEADER -> bust saved %s" % os.path.basename(path))
+                path = os.path.join(LOG_DIR, "leader_after_%s.png" % ts)
+                ok = cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+                log("LEADER -> bust %s %s" % (
+                    "saved" if ok else "WRITE FAILED", path))
         except Exception:
             pass
         return True
