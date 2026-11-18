@@ -64,9 +64,14 @@ SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
 # UI anchors (window-relative), measured pixel-exactly from live frames
 LOBBY_BTN = (1980, 1480, 520, 150)     # 开始挑战  (gold blob centre ~2210,1567)
 RESULT_BTN = (1150, 1470, 340, 130)    # 退出      (white blob centre ~1293,1532)
-LOBBY_BTN_ABS = (2648, 1605)           # physical, verified clickable
-RESULT_BTN_ABS = (1736, 1571)          # physical, verified clickable
-ADVANCE_ABS = (1733, 1279)             # neutral spot that advances splash screens
+# UI anchors, WINDOW-RELATIVE. They used to be absolute physical pixels measured
+# while the window happened to sit at (443,39); the moment the user dragged the
+# window the clicks landed on whatever used to be at that spot on the desktop -
+# "it is clicking a bit above the 开始挑战 button". Anything tied to the window
+# must be stored relative to the window rect and offset at click time.
+LOBBY_BTN_REL = (2210, 1567)             # 开始挑战 centre (window-relative)
+RESULT_BTN_REL = (1293, 1530)            # 退出 centre
+ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash screens
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
@@ -1811,7 +1816,7 @@ class Bot:
             if self.advance_count in (1, 5, 8):
                 log("advance splash (click %d)" % self.advance_count)
             self.ensure_focus()
-            self.click_abs(*ADVANCE_ABS)
+            self.click_rel(*ADVANCE_REL)
             self.advance_at = now
             return
         self.advance_count = 0
@@ -1837,11 +1842,23 @@ class Bot:
             log("badge read failed: %s" % e)
         log("lobby -> \u5f00\u59cb\u6311\u6218")
         self.ensure_focus()
-        self.click_abs(*LOBBY_BTN_ABS)
+        self.click_rel(*LOBBY_BTN_REL)
         # VS splash + battle intro cinematic: 特性 banners, no HP bars yet.
         # Clicking through it just wastes inputs, so stay quiet.
         self.suppress_until = now + 14.0
         self.clicked_at = now
+
+    def click_rel(self, x, y):
+        """Click a window-relative point.
+
+        All UI anchors are stored relative to the window so that dragging the
+        window does not invalidate them. Using absolute pixels is what made the
+        bot click "a bit above 开始挑战" after the user moved the window.
+        """
+        r = self.screen.rect
+        if r is None:
+            return False
+        return self.click_abs(r[0] + int(x), r[1] + int(y))
 
     def click_abs(self, x, y):
         """Hardware click, gated on the game actually owning the foreground.
