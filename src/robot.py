@@ -1,4 +1,4 @@
-﻿"""robot.py - RocoAgent PvP battle bot (single process: capture -> decide -> HID).
+"""robot.py - RocoAgent PvP battle bot (single process: capture -> decide -> HID).
 
 Why this exists
 ---------------
@@ -147,12 +147,47 @@ def find_game():
 
 
 def focus(hwnd):
+    """Bring the game to the foreground.
+
+    Plain SetForegroundWindow is refused when the caller is not already the
+    foreground process, which is how the bot ended up firing keys into the
+    editor window instead of the game. Attaching to the foreground thread's
+    input queue lifts that restriction.
+    """
     if _UD.GetForegroundWindow() == hwnd:
         return True
     _UD.ShowWindow(hwnd, 9)          # SW_RESTORE
-    ok = _UD.SetForegroundWindow(hwnd)
-    time.sleep(0.05)
-    return bool(ok) or _UD.GetForegroundWindow() == hwnd
+    fg = _UD.GetForegroundWindow()
+    try:
+        cur_tid = ctypes.windll.kernel32.GetCurrentThreadId()
+        fg_tid = _UD.GetWindowThreadProcessId(fg, None)
+        tgt_tid = _UD.GetWindowThreadProcessId(hwnd, None)
+        attached = []
+        for tid in {fg_tid, tgt_tid}:
+            if tid and tid != cur_tid:
+                if _UD.AttachThreadInput(cur_tid, tid, True):
+                    attached.append(tid)
+        _UD.BringWindowToTop(hwnd)
+        _UD.SetForegroundWindow(hwnd)
+        _UD.SetFocus(hwnd)
+        for tid in attached:
+            _UD.AttachThreadInput(cur_tid, tid, False)
+    except Exception:
+        pass
+    if _UD.GetForegroundWindow() != hwnd:
+        # Last resort: raise the game above whatever window is covering it (the
+        # editor was fully covering the game, so even hardware clicks landed on
+        # the editor and focus never moved).
+        try:
+            HWND_TOPMOST = -1
+            SWP = 0x0002 | 0x0001 | 0x0040      # NOMOVE | NOSIZE | SHOWWINDOW
+            _UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP)
+            time.sleep(0.15)
+            _UD.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+    time.sleep(0.08)
+    return _UD.GetForegroundWindow() == hwnd
 
 
 # ------------------------------------------------------------------ capture
@@ -166,6 +201,7 @@ class Screen:
         self.sct = mss.mss()
         self.rect = None
         self.hwnd = None
+        self.last_refresh = 0.0
         self.refresh()
 
     def refresh(self):
@@ -189,7 +225,7 @@ class Screen:
 
     def grab(self, box):
         """box = (x, y, w, h) window-relative -> RGB ndarray."""
-        if self.rect is None:
+        if self.rect is None or time.time() - self.last_refresh > 2.0:
             self.refresh()
             if self.rect is None:
                 return None
@@ -750,13 +786,42 @@ class Bot:
     def connect(self):
         return self.loop.run_until_complete(self.ble.connect())
 
+    def _game_focused(self):
+        return bool(self.screen.hwnd) and _UD.GetForegroundWindow() == self.screen.hwnd
+
     def send_key(self, k):
+        """Hardware key press, but only while the game owns the foreground.
+
+        Keys land in whatever window has focus. Without this gate a lost focus
+        turns every decision into typing into whatever happens to be on top -
+        that is exactly how the bot spent ten minutes at 09:38 clicking through
+        a browser dashboard instead of the game.
+        """
+        if not self._game_focused():
+            self.ensure_focus()
+            if not self._game_focused():
+                log("FOCUS LOST - key %s dropped" % k)
+                return False
         self.loop.run_until_complete(self.ble.key(str(k)))
+        return True
 
     def ensure_focus(self):
         if time.time() - self.focused_at < 3.0:
             return True
         ok = focus(self.screen.hwnd) if self.screen.hwnd else False
+        if not ok and self.screen.hwnd:
+            # Windows refuses SetForegroundWindow when another app owns the
+            # foreground (this is how keys ended up going to the editor). A real
+            # hardware click on the title bar gives the game focus without
+            # touching any game content.
+            try:
+                r = self.screen.rect
+                self.loop.run_until_complete(
+                    self.ble.click_at(r[0] + 700, r[1] + 18))
+                time.sleep(0.25)
+                ok = focus(self.screen.hwnd)
+            except Exception:
+                pass
         self.focused_at = time.time()
         return ok
 
@@ -1070,7 +1135,18 @@ class Bot:
         self.clicked_at = now
 
     def click_abs(self, x, y):
+        """Hardware click, gated on the game actually owning the foreground.
+
+        The cursor is moved by the board, so a click while another window is on
+        top would land on that window's UI (it did, repeatedly).
+        """
+        if not self._game_focused():
+            self.ensure_focus()
+            if not self._game_focused():
+                log("FOCUS LOST - click %d,%d dropped" % (x, y))
+                return False
         self.loop.run_until_complete(self.ble.click_at(x, y))
+        return True
 
     def _end_match(self):
         started = self.match_started
@@ -1120,29 +1196,46 @@ class Bot:
             log("review spawn failed: %s" % e)
 
     def next_switch_slot(self):
-        """Rotate through bench slots.
+        """Rotate through the switch list.
 
-        Mid-battle the party list is not on screen, so we cannot tell which
-        pets are alive; rotate and let the failed attempts move on.
+        The panel that appears when a pet faints numbers its rows 1..5 and never
+        lists the pet that is currently out, so 5 is the highest valid key even
+        though the party has six members (verified on a real panel: five rows,
+        numbers 1-5, no sixth row anywhere down to y=1650).
+
+        Row 1 is tried last: on the one panel captured at 1:1 it was the row
+        holding an already-fainted pet.
         """
-        slots = [2, 3, 4, 5, 6]
+        slots = [2, 3, 4, 5, 1]
         return slots[self.switch_count % len(slots)]
 
     def _living_rows(self, rows):
-        """Classify party cards as alive or greyed-out.
+        """Classify party cards as selectable or greyed-out.
 
-        Fainted pets stay in the list but are drawn desaturated, and cannot be
-        picked. Sampling the card plate and measuring the mean channel spread
-        separates them without OCR.
+        Fainted pets stay in the list, but with an empty HP bar and a grey
+        plate, and cannot be picked.
+
+        The previous test (mean channel spread over the whole card) was really
+        measuring how colourful the card art was, not whether the pet is alive:
+        on the first frame of a real panel it scored 28.7 on the fainted row,
+        above its 25 threshold, so the bot would have sent out a corpse.
+
+        The HP bar is the direct signal. Measured on a real panel: the fainted
+        row fills 0.03 of this band (that is just the yellow cost star), living
+        rows 0.10-0.54. 0.06 sits in the gap.
         """
         out = []
         for i, (tx, ty) in enumerate(rows):
-            box = self.screen.grab((tx - 70, ty - 30, 150, 70))
-            if box is None:
+            # The row target is the card's left edge and the HP bar starts a few
+            # pixels right of it, so this band lands on the bar for every row
+            # including the ones whose position was extrapolated.
+            box = self.screen.grab((tx + 6, ty - 16, 175, 30))
+            if box is None or box.size == 0:
                 continue
-            spread = float((box.max(axis=2).astype(np.int16)
-                            - box.min(axis=2).astype(np.int16)).mean())
-            out.append((i + 1, (tx, ty), spread))
+            mx = box.max(axis=2).astype(np.int16)
+            mn = box.min(axis=2).astype(np.int16)
+            filled = ((mx - mn) > 55) & (mx > 145)
+            out.append((i + 1, (tx, ty), float(filled.mean())))
         return out
 
     def _try_switch(self, now):
@@ -1157,13 +1250,20 @@ class Bot:
         rows = find_switch_rows(self.screen)
         if len(rows) < 3:
             return
+        # Give up after a while instead of hammering a panel that is not
+        # listening: the game picks for us after 15-45 s anyway.
+        if self.switch_attempt >= 8:
+            if not self.switch_gave_up:
+                self.switch_gave_up = True
+                log("FAINT -> 8 attempts failed, waiting for auto-pick")
+            return
         cand = self._living_rows(rows)
         if not cand:
             return
-        alive = [c for c in cand if c[2] >= 25]
+        alive = [c for c in cand if c[2] >= 0.06]
         pool = alive if alive else cand
         slot, _pos, spread = pool[self.switch_attempt % len(pool)]
-        log("FAINT -> switch slot %d (spread %.0f, attempt %d)"
+        log("FAINT -> switch slot %d (bar %.2f, attempt %d)"
             % (slot, spread, self.switch_attempt))
         self.ensure_focus()
         self.send_key(slot)
