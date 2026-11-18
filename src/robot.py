@@ -148,6 +148,25 @@ def find_game():
     return found[0] if found else None
 
 
+def _raise_topmost(hwnd):
+    """Raise the game above whatever covers it, then drop the always-on-top flag.
+
+    Returns the foreground state. Kept separate because both focus() and
+    _click_to_focus() need exactly this step before anything else can work.
+    """
+    try:
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP = 0x0002 | 0x0001 | 0x0040      # NOMOVE | NOSIZE | SHOWWINDOW
+        _UD.ShowWindow(hwnd, 9)             # SW_RESTORE
+        _UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP)
+        _UD.SetForegroundWindow(hwnd)
+        _UD.SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP)
+    except Exception:
+        pass
+    return _UD.GetForegroundWindow() == hwnd
+
+
 def focus(hwnd):
     """Bring the game to the foreground.
 
@@ -180,14 +199,7 @@ def focus(hwnd):
         # Last resort: raise the game above whatever window is covering it (the
         # editor was fully covering the game, so even hardware clicks landed on
         # the editor and focus never moved).
-        try:
-            HWND_TOPMOST = -1
-            SWP = 0x0002 | 0x0001 | 0x0040      # NOMOVE | NOSIZE | SHOWWINDOW
-            _UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP)
-            time.sleep(0.15)
-            _UD.SetForegroundWindow(hwnd)
-        except Exception:
-            pass
+        _raise_topmost(hwnd)
     time.sleep(0.08)
     return _UD.GetForegroundWindow() == hwnd
 
@@ -424,11 +436,50 @@ def _is_skillbar(crop, region, pills=None, slots=None):
     filled = [s for s in slots if s]
     if len(filled) < 2:
         return False, len(pills)
+    # Capsules in one column share an x range; a slot that drifted sideways is a
+    # bad _fill_missing guess (observed: slot 2 placed at x=148 while the real
+    # column is x=228..321, which broke the pitch test and made the whole bar
+    # read as "not drawn" for four minutes).
+    xs = sorted(s["box"][0] for s in filled)
+    if xs[-1] - xs[0] > 220:
+        return False, len(pills)
     ys = sorted((s["box"][1] + s["box"][3]) / 2.0 for s in filled)
     gaps = [b - a for a, b in zip(ys, ys[1:])]
-    # gaps are multiples of the card pitch (one card may be missed entirely)
+    # gaps are multiples of the card pitch (one card may be missed entirely).
+    # A gap below 120 means two slots collapsed onto the same card.
     ok = all(120 <= g <= 420 for g in gaps)
     return bool(ok), len(pills)
+
+
+def _is_dash(crop, pill):
+    """Is this capsule showing "--" (no damage number) rather than digits?
+
+    digitread classifies a capsule as "num" as soon as any glyph passes a colour
+    gate, and the "--" dashes are white, so a status card comes back as a number
+    slot. That mislabels the slot, shifts the whole lattice and made the skill
+    bar read as "not drawn" for four minutes.
+
+    Shape is decisive: "--" is two short horizontal bars, each much wider than
+    it is tall, sitting on one row. Digits are roughly square and have more than
+    two components.
+    """
+    x0, y0, x1, y1 = pill["box"]
+    reg = crop[y0:y1, x0:x1]
+    if reg.size == 0:
+        return False
+    mx = reg.max(axis=2).astype(np.int16)
+    mn = reg.min(axis=2).astype(np.int16)
+    white = (((mx - mn) < 45) & (mn > 150)).astype(np.uint8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(white, 8)
+    bars = 0
+    for i in range(1, n):
+        bx, by, bw, bh, area = stats[i]
+        if area < 8:
+            continue
+        # a dash: wide, flat, and only a few pixels tall
+        if bw >= 5 and bh <= 6 and bw >= 2 * bh:
+            bars += 1
+    return bars >= 2
 
 
 def _is_badge(crop, pill):
@@ -499,7 +550,18 @@ def _fill_missing(crop, slots):
             continue
         y0 = max(0, int(want - 60))
         y1 = min(h, int(want + 60))
-        band = crop[y0:y1, 140:min(w, 430)]
+        # Search only within the column the known capsules occupy. Using the
+        # whole 140..430 band let the matcher latch onto a neighbour card's
+        # digits: slot 2 was placed at x=148 / y=538 while the real capsule sits
+        # at x~228 / y~421, which produced a 66 px pitch and made the entire bar
+        # read as "not drawn" for four minutes.
+        xs_known = [int(s["box"][0]) for s in slots if s]
+        if xs_known:
+            bx0 = max(0, min(xs_known) - 30)
+            bx1 = min(w, max(xs_known) + 110)
+        else:
+            bx0, bx1 = 140, min(w, 430)
+        band = crop[y0:y1, bx0:bx1]
         if band.size == 0:
             continue
         # Score every capsule-sized window with a box filter instead of a Python
@@ -547,7 +609,7 @@ def _fill_missing(crop, slots):
                 px1 = min(band.shape[1], max(x2s) + pad)
                 py0 = max(0, min(ys) - pad)
                 py1 = min(band.shape[0], max(y2s) + pad)
-                slots[i] = {"box": (px0 + 140, py0 + y0, px1 + 140, py1 + y0),
+                slots[i] = {"box": (px0 + bx0, py0 + y0, px1 + bx0, py1 + y0),
                             "kind": "num", "color": None}
                 continue
 
@@ -586,7 +648,7 @@ def _fill_missing(crop, slots):
         if best is None or best[0] < 0.42:
             continue
         _, xx, yy, bw, bh = best
-        slots[i] = {"box": (xx + 140, yy + y0, xx + 140 + bw, yy + y0 + bh),
+        slots[i] = {"box": (xx + bx0, yy + y0, xx + bx0 + bw, yy + y0 + bh),
                     "kind": "num", "color": None}
     return slots
 
@@ -627,7 +689,14 @@ def _slots(crop, region, pills=None):
                 best = (score, cand)
     if best is None:
         return slots
-    return _fill_missing(crop, best[1])
+    slots = _fill_missing(crop, best[1])
+    # Relabel capsules that are actually showing "--": digitread calls anything
+    # with a colour-gated glyph a number, and the white dashes qualify.
+    for s in slots:
+        if s and s.get("kind") == "num" and _is_dash(crop, s):
+            s["kind"] = "dash"
+            s["color"] = None
+    return slots
 
 
 # ------------------------------------------------------------------ UI probes
@@ -991,6 +1060,9 @@ class Bot:
         self.idle_seen = None
         self.advance_at = 0.0
         self.advance_count = 0
+        self.advance_gave_up = False
+        self.gate_logged_at = 0.0
+        self.turn_gate_since = None
         self.match_ended_at = 0.0
         self.suppress_until = 0.0
         self.faint_at = None
@@ -1026,6 +1098,18 @@ class Bot:
 
     def connect(self):
         return self.loop.run_until_complete(self.ble.connect())
+
+    def _gate(self, now, reason):
+        """Explain, at most once a second, why the decision gate stayed shut.
+
+        The 15:45 match produced 0 actions and the log contained only heartbeat
+        lines, so there was no way to tell which condition blocked it. This makes
+        the gate self-explaining without flooding the log.
+        """
+        if now - self.gate_logged_at < 1.0:
+            return
+        self.gate_logged_at = now
+        log("GATE %s" % reason)
 
     def _game_focused(self):
         return bool(self.screen.hwnd) and _UD.GetForegroundWindow() == self.screen.hwnd
@@ -1065,11 +1149,18 @@ class Bot:
         runs under whatever launched it. A hardware click on a harmless part of
         the window is user input, which Windows does honour, and the board can
         produce it. Point: the middle of the arena, away from every button.
+
+        The window must be raised FIRST. A click is delivered to whatever window
+        is topmost at that pixel, so with the editor covering the game the click
+        used to focus the *editor* - which is why every FOCUS LOST line was
+        followed by another one.
         """
         r = self.screen.rect
         if not r:
             return False
         try:
+            if self.screen.hwnd:
+                _raise_topmost(self.screen.hwnd)
             self.loop.run_until_complete(
                 self.ble.click_at(r[0] + 700, r[1] + 300))
             time.sleep(0.35)
@@ -1184,6 +1275,8 @@ class Bot:
                         self.prev_my_pct = None
                         self.heal_streak = 0
                         self.charge_streak = 0
+                        self.advance_count = 0
+                        self.advance_gave_up = False
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -1218,11 +1311,15 @@ class Bot:
                 if btn is not None:
                     self.click_abs(*btn)
                 else:
-                    self.click_abs(*ADVANCE_ABS)
-                    self.click_abs(*RESULT_BTN_ABS)
+                    # ESC, not a click. A blind click on the map moves the
+                    # character: that is how the bot walked itself out of the PvP
+                    # arena into the open world and never got back. ESC opens or
+                    # closes a menu and is harmless on every screen we have seen.
+                    self.send_key("esc")
+                # Do NOT reset advance_count here: that reopened the blind-click
+                # budget and let the loop keep firing every minute.
                 self.last_progress_at = now
                 self.clicked_at = now
-                self.advance_count = 0
 
             time.sleep(POLL_S)
 
@@ -1305,12 +1402,14 @@ class Bot:
 
     def _battle_tick(self, st, now):
         # fainted -> forced switch.
-        # Require the HP bar to actually be drawn. During the VS splash the bars
-        # are not on screen yet, and the old code read that as 0 HP, entered this
-        # branch, found no switch panel, and returned every tick - the pet never
-        # acted once (13:11:18: 45 s, 0 actions).
-        if (st.get("my_ui") and st["my_pct"] is not None
-                and st["my_pct"] <= 0.5):
+        # Sticky once entered: while the switch panel is open the HP bar is often
+        # NOT drawn, so a per-poll `my_ui` test dropped out of this branch every
+        # other frame, ran the reset below, and wiped switch_attempt /
+        # switch_dead. That is exactly why the log showed "switch slot 3 ...
+        # attempt 0" twenty times and never converged.
+        fainted = (st["my_pct"] is not None and st["my_pct"] <= 0.5
+                   and (st.get("my_ui") or self.faint_at is not None))
+        if fainted:
             if self.faint_at is None:
                 self.faint_at = now
             # The death animation shows 0 HP for a few seconds; _try_switch only
@@ -1318,7 +1417,13 @@ class Bot:
             if now - self.faint_at > 1.0 and now - self.switched_at > 2.5:
                 self._try_switch(now, st)
             return
-        if self.faint_at is not None:
+
+        # Only a genuinely healthy pet means the switch succeeded. Resetting on
+        # "my_pct > 0.5" was too eager: a flicker of the panel counted as
+        # recovery and restarted the whole blacklist.
+        if self.faint_at is not None and st["my_pct"] is not None and st["my_pct"] > 5.0:
+            log("FAINT -> recovered (hp %.0f%%) after %d attempts"
+                % (st["my_pct"], self.switch_attempt))
             self.faint_at = None
             self.switch_attempt = 0
             self.switch_gave_up = False
@@ -1355,44 +1460,58 @@ class Bot:
         self.bar_gone_since = None
         self.nodraw_since = None
 
-        # ---- require a stable read (the bar fades in; half-drawn frames gave
-        #      nonsense like 'dmg 5')
+        # ---- stability gate (with a timeout escape)
+        # The read flickers: with 5-6 pills detected the slot->text mapping can
+        # change on every single poll, so "same key twice in a row" never happens
+        # and this used to return forever (0 actions for a whole match).
         key = (round(st["my_pct"] or 0, 1), round(st["foe_pct"] or 0, 1),
                tuple((s["text"] if s else "") for s in st["skills"]),
                tuple((bool(s and s.get("lit"))) for s in st["skills"]))
         if key != self.prev_key:
             self.prev_key = key
             self.stable_since = now
-            if self.acted_at == 0.0:
-                return
-        if now - self.stable_since < 0.15 and self.acted_at == 0.0:
-            return
+        stable = (now - self.stable_since) >= 0.15
 
-        # ---- turn boundary
-        self.turn_key = key
-
-        # ---- patience: if no damage digit is readable, wait for a better frame
-        # We have 15 s a turn and act in ~0.2 s, so waiting 2.5 s costs nothing
-        # and avoids spending the turn on a blind guess.
-        readable = any(s and s["kind"] == "num" and s["value"] is not None
-                       for s in st["skills"])
-        if not readable:
-            if self.unreadable_since is None:
-                self.unreadable_since = now
-            if now - self.unreadable_since < 2.5:
-                return
-        else:
-            self.unreadable_since = None
+        # A genuinely new turn: the numbers moved and some time has passed. This
+        # is what re-arms the per-turn floors; without it the 8 s retry below
+        # blocks the *next* turn too.
+        if key != self.turn_key and now - self.acted_at > 2.5:
+            self.turn_key = key
+            self.acted_at = 0.0
 
         # hard floor: never two presses inside 1.2 s, whatever the state says
         if self.acted_at and now - self.acted_at < 1.2:
             return
         # one press per turn, 8 s retry if the press was dropped
         if self.acted_at and now - self.acted_at < 8.0:
+            self._gate(now, "press sent, waiting for the turn to resolve")
             return
+
+        if not stable:
+            if self.turn_gate_since is None:
+                self.turn_gate_since = now
+            if now - self.turn_gate_since < 3.0:
+                self._gate(now, "read not stable")
+                return
+            self._gate(now, "stability bypassed after 3s")
+        self.turn_gate_since = None
 
         # context the heal gate needs: did we just take damage, and how many
         # turns in a row have we been healing?
+        # ---- patience: if no damage digit is readable, wait briefly for a
+        # better frame. 15 s a turn and we act in ~0.2 s, so 2.5 s costs nothing.
+        readable = any(s and s["kind"] == "num" and s["value"] is not None
+                       for s in st["skills"])
+        if not readable:
+            if self.unreadable_since is None:
+                self.unreadable_since = now
+            if now - self.unreadable_since < 2.5:
+                self._gate(now, "no readable damage digit")
+                return
+            self._gate(now, "unreadable, proceeding after 2.5s")
+        else:
+            self.unreadable_since = None
+
         took_damage = (self.prev_my_pct is not None
                        and st["my_pct"] is not None
                        and st["my_pct"] < self.prev_my_pct - 0.5)
@@ -1552,13 +1671,18 @@ class Bot:
                 return
             if now - self.advance_at < ADVANCE_COOLDOWN_S:
                 return
-            if self.advance_count >= 12:
-                # give up for a while instead of wedging forever
-                if now - self.advance_at < 60.0:
-                    return
-                self.advance_count = 0
+            if self.advance_count >= 8:
+                # Hard cap, never time-reset. The old "reset after 60 s" made the
+                # bot emit another 12 blind clicks every minute; at 15:46 that
+                # walked the character out of the PvP arena into the open world,
+                # where none of our detectors match and it never came back.
+                if not self.advance_gave_up:
+                    self.advance_gave_up = True
+                    log("advance cap reached on an unrecognised screen - "
+                        "stopping blind clicks")
+                return
             self.advance_count += 1
-            if self.advance_count in (1, 5, 12):
+            if self.advance_count in (1, 5, 8):
                 log("advance splash (click %d)" % self.advance_count)
             self.ensure_focus()
             self.click_abs(*ADVANCE_ABS)

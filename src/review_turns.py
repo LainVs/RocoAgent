@@ -189,7 +189,14 @@ def main():
         groups = keep
 
     if not groups:
-        print("no turns in range")
+        msg = "no turns in range\n"
+        print(msg.strip())
+        if args.out:
+            with open(args.out, "w", encoding="utf-8") as f:
+                f.write("# 对局复盘（无数据）\n\n时间窗 %s-%s 内 turns.jsonl 没有记录。\n"
+                        "这通常意味着那一局一次决策都没做出（感知门未开），"
+                        "而不是脚本失败。\n" % (args.t0, args.t1))
+            print("wrote stub", args.out)
         return 1
 
     out = "\n\n---\n\n".join(review(g, i + 1) for i, g in enumerate(groups))
