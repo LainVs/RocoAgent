@@ -274,6 +274,13 @@ def countdown_visible(rgb):
     return int((rgb[y:y + h, x:x + w].min(axis=2) > 200).sum()) > 250
 
 
+def countdown_visible_crop(crop):
+    """Same test when the crop already IS the numeral ROI."""
+    if crop is None or crop.size == 0:
+        return False
+    return int((crop.min(axis=2) > 200).sum()) > 250
+
+
 class Perc:
     """Reads state from three small screen regions. ~25 ms per observation."""
 
@@ -300,9 +307,17 @@ class Perc:
         visible, npills = False, 0
         if crop is not None:
             reg = (0, 0, cw, ch)
-            visible, npills = _is_skillbar(crop, reg)
+            # find_pills is the expensive step (~107 ms). Run it once and share
+            # the result: it used to run three times per observation because
+            # _is_skillbar and _slots each called it.
+            try:
+                pills = dr.find_pills(crop, reg)
+            except Exception:
+                pills = []
+            slots = _slots(crop, reg, pills)
+            visible, npills = _is_skillbar(crop, reg, pills, slots)
             if visible:
-                for i, pill in enumerate(_slots(crop, reg)):
+                for i, pill in enumerate(slots):
                     r = dr.read_skill(crop, pill, self.tpl)
                     r["index"] = i + 1
                     r["lit"] = _card_lit(crop, pill) if pill else False
@@ -310,8 +325,10 @@ class Perc:
 
         cnt = False
         if battle:
-            full = self.screen.grab_full()
-            cnt = countdown_visible(full) if full is not None else False
+            # Grab the numeral's own ROI instead of the whole 2586x1671 window:
+            # the full grab cost ~100 ms to read a 340x150 region.
+            cnt_crop = self.screen.grab(CNT_ROI)
+            cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
 
         return {
             "t": time.time(),
@@ -356,18 +373,24 @@ def _read_bar(rgb, rect):
     return {"pct": round(min(pct, 100.0), 1), "color": color, "ui": ui}
 
 
-def _is_skillbar(crop, region):
+def _is_skillbar(crop, region, pills=None, slots=None):
     """Is the skill card column actually drawn? Returns (visible, npills).
 
     Scenery contains plenty of dark blobs that survive the capsule colour
     filter, so require a card-like lattice: at least 3 slots filled and the
     fitted vertical pitch in the 150-215 px range.
+
+    `pills` and `slots` may be passed in when the caller already computed them:
+    find_pills costs ~107 ms on a real frame, and it used to run three times per
+    observation through this call chain.
     """
-    try:
-        pills = dr.find_pills(crop, region)
-    except Exception:
-        return False, 0
-    slots = _slots(crop, region)
+    if pills is None:
+        try:
+            pills = dr.find_pills(crop, region)
+        except Exception:
+            return False, 0
+    if slots is None:
+        slots = _slots(crop, region, pills)
     filled = [s for s in slots if s]
     if len(filled) < 2:
         return False, len(pills)
@@ -444,20 +467,87 @@ def _fill_missing(crop, slots):
         band = crop[y0:y1, 140:min(w, 430)]
         if band.size == 0:
             continue
-        # Slide a capsule-sized window and score how much of it is the capsule's
-        # uniform dark grey. Connected components were useless here: the scene
-        # behind the card (dark stair rails) is also dark, so blobs merged into
-        # one huge region. A uniform-colour window match does not care.
+        # Score every capsule-sized window with a box filter instead of a Python
+        # triple loop. The original slid a window in 3 px steps and took a numpy
+        # mean each time: 5 sizes x ~40 x ~97 positions per missing slot, which
+        # measured at ~500 ms per observation on a real frame. cv2.blur computes
+        # the same means for all positions in one pass.
+        # The capsule fill is NOT a reliable anchor: on some cards the art tints
+        # it to (160,158,147) instead of the nominal (61,61,61), so a "uniform
+        # dark grey" window match latches onto the shadow beside the card and
+        # frames empty scenery (measured on v1.png slot 2, which then read "--"
+        # while the card clearly showed 546).
+        #
+        # The digits themselves are the reliable feature: saturated green or red
+        # strokes, 9-32 px tall. Find those and take their bounding box.
+        r_, g_, b_ = dr.channels(band)
+        ink = (dr.gate_green(band) | dr.gate_red(band)).astype(np.uint8)
+        if ink.sum() >= 20:
+            n, lab, stats, _ = cv2.connectedComponentsWithStats(ink, 8)
+            blobs = []
+            for k in range(1, n):
+                bx, by, bw2, bh2, area = stats[k]
+                if area < 12 or not (8 <= bh2 <= 30) or not (2 <= bw2 <= 26):
+                    continue
+                blobs.append((bx, by, bw2, bh2))
+            if blobs:
+                # Keep the tightest cluster of digit-sized blobs: pick the row
+                # with the most vertical overlap, so stray marks on neighbouring
+                # cards do not widen the box (v1.png slot 2 read "????4?546??"
+                # when they were included).
+                blobs.sort(key=lambda t: t[0])
+                best_row = None
+                for bx, by, bw2, bh2 in blobs:
+                    row = [t for t in blobs
+                           if abs(t[1] - by) <= 10]
+                    if best_row is None or len(row) > len(best_row):
+                        best_row = row
+                row = best_row or blobs
+                xs = [t[0] for t in row]
+                ys = [t[1] for t in row]
+                x2s = [t[0] + t[2] for t in row]
+                y2s = [t[1] + t[3] for t in row]
+                pad = 3
+                px0 = max(0, min(xs) - pad)
+                px1 = min(band.shape[1], max(x2s) + pad)
+                py0 = max(0, min(ys) - pad)
+                py1 = min(band.shape[0], max(y2s) + pad)
+                slots[i] = {"box": (px0 + 140, py0 + y0, px1 + 140, py1 + y0),
+                            "kind": "num", "color": None}
+                continue
+
+        # Fallback: the original uniform-grey window search, kept for cards whose
+        # digits are white (no saturated ink to find).
         near = (np.abs(band.astype(np.int16) - 61).max(axis=2) <= 22).astype(np.float32)
+        # Restrict the search to the x-range where this pet's capsules actually
+        # live, taken from the slots that were found properly. Hard-coding a band
+        # (the first attempt used 80..200 of the band) pushed slot 2's window to
+        # the right and it framed empty scenery instead of the "546" capsule:
+        # cards are staggered, so capsule x differs by up to 100 px between rows.
+        xs = [int(s["box"][0]) for s in slots if s]
+        if xs:
+            lo = max(0, min(xs) - 140 - 20)
+            hi = max(xs) - 140 + 130
+        else:
+            lo, hi = 0, band.shape[1]
+        lo = max(0, min(lo, band.shape[1] - 1))
+        hi = max(lo + 1, min(hi, band.shape[1]))
         best = None
         for bw, bh in ((68, 32), (64, 30), (72, 36), (60, 28), (66, 34)):
             if band.shape[0] <= bh or band.shape[1] <= bw:
                 continue
-            for yy in range(0, band.shape[0] - bh + 1, 3):
-                for xx in range(0, band.shape[1] - bw + 1, 3):
-                    s = float(near[yy:yy + bh, xx:xx + bw].mean())
-                    if best is None or s > best[0]:
-                        best = (s, xx, yy, bw, bh)
+            m = cv2.blur(near, (bw, bh))
+            m = m[:band.shape[0] - bh + 1, :band.shape[1] - bw + 1]
+            if m.size == 0:
+                continue
+            sub = m[:, lo:min(hi, m.shape[1])]
+            if sub.size == 0:
+                continue
+            yy, xx = np.unravel_index(int(np.argmax(sub)), sub.shape)
+            s = float(sub[yy, xx])
+            xx += lo
+            if best is None or s > best[0]:
+                best = (s, int(xx), int(yy), bw, bh)
         if best is None or best[0] < 0.42:
             continue
         _, xx, yy, bw, bh = best
@@ -466,7 +556,7 @@ def _fill_missing(crop, slots):
     return slots
 
 
-def _slots(crop, region):
+def _slots(crop, region, pills=None):
     """Fit the four damage capsules onto a vertical lattice.
 
     Cards are ~180 px apart. For each card the damage capsule sits to the right
@@ -475,10 +565,11 @@ def _slots(crop, region):
     colour changes (yellow -> red/green) when energy is low, which is exactly
     when naive badge detection breaks.
     """
-    try:
-        pills = dr.find_pills(crop, region)
-    except Exception:
-        pills = []
+    if pills is None:
+        try:
+            pills = dr.find_pills(crop, region)
+        except Exception:
+            pills = []
     slots = [None, None, None, None]
     if not pills:
         return slots
@@ -855,6 +946,34 @@ class Bot:
     def _game_focused(self):
         return bool(self.screen.hwnd) and _UD.GetForegroundWindow() == self.screen.hwnd
 
+    def _ble(self, coro_factory, what="cmd"):
+        """Run a BLE coroutine, surviving a dropped link.
+
+        rocs.Session.send() raises RuntimeError("board offline") when the board
+        is gone, and nothing used to catch it: the exception escaped run(), the
+        process exited rc=1 without a traceback in the log, and the supervisor
+        restarted it four seconds later mid-match. Reconnecting here keeps the
+        bot alive across board resets and radio hiccups.
+        """
+        for attempt in (1, 2):
+            try:
+                return self.loop.run_until_complete(coro_factory())
+            except Exception as e:
+                log("BLE %s failed (%s), attempt %d" % (what, e, attempt))
+                try:
+                    self.loop.run_until_complete(self.ble.close())
+                except Exception:
+                    pass
+                ok = False
+                try:
+                    ok = self.loop.run_until_complete(self.ble.connect())
+                except Exception:
+                    ok = False
+                if not ok:
+                    time.sleep(0.5)
+                    continue
+        return None
+
     def send_key(self, k):
         """Hardware key press, but only while the game owns the foreground.
 
@@ -867,8 +986,8 @@ class Bot:
             log("FOCUS LOST - key %s dropped (fg=%s game=%s)"
                 % (k, _UD.GetForegroundWindow(), self.screen.hwnd))
             return False
-        self.loop.run_until_complete(self.ble.key(str(k)))
-        return True
+        r = self._ble(lambda: self.ble.key(str(k)), "key %s" % k)
+        return r is not None
 
     def ensure_focus(self):
         """Return True only if the game really owns the foreground.
@@ -893,8 +1012,8 @@ class Bot:
             try:
                 r = self.screen.rect
                 if r:
-                    self.loop.run_until_complete(
-                        self.ble.click_at(r[0] + 700, r[1] + 18))
+                    self._ble(lambda: self.ble.click_at(r[0] + 700, r[1] + 18),
+                              "titlebar")
                     time.sleep(0.25)
             except Exception:
                 pass
@@ -1226,6 +1345,22 @@ class Bot:
             self.idle_seen = want
             return                      # confirm on the next poll
         self.idle_seen = None
+        # Snapshot the ladder badge right before queueing: winning adds a star,
+        # losing removes one, so comparing this with the value read on the next
+        # lobby visit gives the match result without parsing any result screen.
+        try:
+            import rank as _rank
+            badge = _rank.read_badge(self.screen)
+            if badge:
+                prev = getattr(self, "rank_before", None)
+                if prev and prev.get("of") == badge.get("of"):
+                    res = _rank.result_from_delta(prev, badge)
+                    if res is not None:
+                        self._log_result(prev, badge, res)
+                self.rank_before = badge
+                log("ladder badge %d/%d" % (badge["stars"], badge["of"]))
+        except Exception as e:
+            log("badge read failed: %s" % e)
         log("lobby -> \u5f00\u59cb\u6311\u6218")
         self.ensure_focus()
         self.click_abs(*LOBBY_BTN_ABS)
@@ -1244,8 +1379,33 @@ class Bot:
             log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
                 % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
             return False
-        self.loop.run_until_complete(self.ble.click_at(x, y))
-        return True
+        r = self._ble(lambda: self.ble.click_at(x, y), "click %d,%d" % (x, y))
+        return r is not None
+
+    def _log_result(self, before, after, res):
+        """Record win/loss from the ladder badge delta.
+
+        +1 win, -1 loss, 0 unchanged (which in this ladder means the star count
+        was capped or the match ended in a draw). Written to results.jsonl so the
+        win rate is a query, not a guess.
+        """
+        path = os.path.join(LOG_DIR, "results.jsonl")
+        rec = {
+            "ts": time.strftime("%H:%M:%S"),
+            "before": before["stars"],
+            "after": after["stars"],
+            "of": after["of"],
+            "delta": res,
+            "result": "win" if res > 0 else ("loss" if res < 0 else "flat"),
+        }
+        try:
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        log("RESULT %s (%d/%d -> %d/%d)" % (
+            rec["result"], before["stars"], before["of"],
+            after["stars"], after["of"]))
 
     def _end_match(self):
         started = self.match_started
@@ -1255,8 +1415,14 @@ class Bot:
         self.last_progress_at = ended
         self.advance_count = 0
         dur = ended - started
-        log("=== MATCH %d END (%.0fs, %d actions) ===" % (
-            self.match_count, dur, self.turn))
+        # Win/loss: the ladder badge is the only reliable result signal. It is
+        # read in the lobby, so at this point we only know the value captured
+        # when the match began; the delta is resolved on the next lobby visit by
+        # rank_after(). Record what we have so nothing is lost.
+        badge_before = getattr(self, "rank_before", None)
+        log("=== MATCH %d END (%.0fs, %d actions) rank_before=%s ===" % (
+            self.match_count, dur, self.turn,
+            badge_before.get("stars") if badge_before else "?"))
         try:
             with open(ROUND_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps({
@@ -1265,6 +1431,7 @@ class Bot:
                     "end": time.strftime("%H:%M:%S", time.localtime(ended)),
                     "seconds": round(dur, 1),
                     "actions": self.turn,
+                    "rank_before": badge_before.get("stars") if badge_before else None,
                 }, ensure_ascii=False) + "\n")
         except Exception:
             pass
