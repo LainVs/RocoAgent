@@ -865,12 +865,15 @@ def is_result_screen(screen):
     return dark_frac > 0.45 and 0.005 < text_frac < 0.20
 
 
-def find_switch_rows(screen):
+def find_switch_rows(screen, bar_visible=None):
     """Detect the forced-switch party list (5 staggered cards down the left).
 
     Each row is a light rounded plate (~155x70) with the pet icon on top. The
     death animation has none of these, so this cleanly separates "pet just died"
     from "the game is actually waiting for me to pick a replacement".
+
+    `bar_visible` lets the caller pass in an already-computed skill-bar result;
+    recomputing it costs ~50 ms and _battle_tick already knows the answer.
 
     Returns a list of window-relative (x, y) click targets, top row first.
     """
@@ -881,12 +884,15 @@ def find_switch_rows(screen):
     # The skill cards' white name plates live in the same area and match the
     # same "light rounded rect" test. If the skill bar is on screen this is a
     # normal battle, not the switch panel.
-    x0, y0, x1, y1 = SKILL_BOX
-    bar = screen.grab((x0, y0, x1 - x0, y1 - y0))
-    if bar is not None:
-        visible, _ = _is_skillbar(bar, (0, 0, x1 - x0, y1 - y0))
-        if visible:
-            return []
+    if bar_visible is None:
+        x0, y0, x1, y1 = SKILL_BOX
+        bar = screen.grab((x0, y0, x1 - x0, y1 - y0))
+        if bar is not None:
+            bar_visible, _ = _is_skillbar(bar, (0, 0, x1 - x0, y1 - y0))
+        else:
+            bar_visible = False
+    if bar_visible:
+        return []
     mx = crop.max(axis=2).astype(np.int16)
     mn = crop.min(axis=2).astype(np.int16)
     light = (((mx - mn) < 30) & (mx > 200)).astype(np.uint8)
@@ -1209,7 +1215,7 @@ class Bot:
             return False
         return self._game_focused()
 
-    def send_key(self, k):
+    def send_key(self, k, allow_focus_click=True):
         """Hardware key press, but only while the game owns the foreground.
 
         Keys land in whatever window has focus. Without this gate a lost focus
@@ -1220,11 +1226,16 @@ class Bot:
         Getting focus back is done with a hardware click, not just
         SetForegroundWindow: the latter is refused whenever another process owns
         the foreground, which is the normal case here because the bot runs under
-        an editor. Logs showed "FOCUS LOST - key 3 dropped" dozens of times in a
-        row for that reason.
+        an editor.
+
+        `allow_focus_click=False` is required for any key sent while a modal
+        panel is open: the focus click lands in the middle of the screen, which
+        for the party panel means "click empty space" and closes it again. That
+        is why "E then number" produced no selection - E opened the panel, then
+        the click before the number key dismissed it.
         """
         if not self._game_focused() and not self.ensure_focus():
-            if not self._click_to_focus():
+            if not allow_focus_click or not self._click_to_focus():
                 log("FOCUS LOST - key %s dropped (fg=%s game=%s)"
                     % (k, _UD.GetForegroundWindow(), self.screen.hwnd))
                 return False
@@ -1462,11 +1473,31 @@ class Bot:
         # other frame, ran the reset below, and wiped switch_attempt /
         # switch_dead. That is exactly why the log showed "switch slot 3 ...
         # attempt 0" twenty times and never converged.
+        # Forced switch: the party panel can appear for two very different
+        # reasons, and the bot must react to both.
+        #   1. our pet fainted (my_pct <= 0.5)
+        #   2. an opponent skill forced it off the field while it was still
+        #      healthy - measured at 446/497 HP in the 18:15 match
+        # The old test only covered case 1, so case 2 fell through to the skill
+        # bar branch, found no bar (the panel covers it), and sat there doing
+        # nothing for the rest of the turn.
+        #
+        # The panel itself is the reliable signal: find_switch_rows returns >= 3
+        # rows only when the party list is drawn, and requires the skill bar to
+        # be absent, so it cannot fire during a normal decision window.
         fainted = (st["my_pct"] is not None and st["my_pct"] <= 0.5
                    and (st.get("my_ui") or self.faint_at is not None))
-        if fainted:
+        forced_panel = False
+        if not fainted and not st["bar"]:
+            # The skill bar is already known to be absent, so pass that in and
+            # skip a second ~50 ms detection pass.
+            forced_panel = len(find_switch_rows(self.screen, bar_visible=False)) >= 3
+        if fainted or forced_panel:
             if self.faint_at is None:
                 self.faint_at = now
+                if forced_panel:
+                    log("FORCED SWITCH -> panel is up at hp %.0f%%"
+                        % (st["my_pct"] or 0))
             # The death animation shows 0 HP for a few seconds; _try_switch only
             # acts once the party panel is actually drawn.
             if now - self.faint_at > 1.0 and now - self.switched_at > 2.5:
@@ -1650,19 +1681,34 @@ class Bot:
             # Sending the slot without E just presses a skill key - that is why
             # the 10:32:07 "retreat" never swapped the pet and it died on the
             # spot.
-            ok = self.send_key("e")
+            # E opens the party list. Take the foreground FIRST, before E, while
+            # a click still does no harm: once the panel is open a click in the
+            # middle of the screen dismisses it.
+            self._click_to_focus()
+            ok = self.send_key("e", allow_focus_click=False)
             if ok:
                 time.sleep(0.9)
-                ok = self.send_key(action[1])
-            if ok:
-                time.sleep(0.9)
-                # Confirm with a left click; see _try_switch for why Space is
-                # not reliable here (the foreground gets stolen between keys).
+                # Pick the row by clicking its card. Keys are unreliable here
+                # because the foreground is stolen between commands and
+                # send_key refuses to fire without it; a hardware click always
+                # gets the foreground and also confirms the choice.
+                rows = find_switch_rows(self.screen)
+                idx = action[1] - 1
                 r = self.screen.rect
-                if r is not None:
-                    self.click_abs(r[0] + 1300, r[1] + 1100)
+                if rows and r is not None and 0 <= idx < len(rows):
+                    tx, ty = rows[idx]
+                    px, py = r[0] + tx + 60, r[1] + ty
+                    log("SWITCH -> click card at %d,%d" % (px, py))
+                    ok = self.click_abs(px, py)
+                    if ok:
+                        time.sleep(0.7)
+                        self.click_abs(px, py)
                 else:
-                    ok = self.send_key("space")
+                    ok = self.send_key(action[1], allow_focus_click=False)
+                    if ok:
+                        time.sleep(0.9)
+                        if r is not None:
+                            self.click_abs(r[0] + 1300, r[1] + 1100)
             if ok:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
@@ -1930,7 +1976,8 @@ class Bot:
         """
         if now - getattr(self, "switch_tried_at", 0.0) < SWITCH_RETRY_S:
             return
-        rows = find_switch_rows(self.screen)
+        # The panel is up, so the skill bar is not; skip re-detecting it.
+        rows = find_switch_rows(self.screen, bar_visible=False)
         if len(rows) < 3:
             return
         # Give up after a while instead of hammering a panel that is not
@@ -1979,30 +2026,45 @@ class Bot:
         log("FAINT -> switch slot %d (%s, attempt %d)"
             % (slot, why, self.switch_attempt))
         self.switch_tried_at = now
-        # Record the intent BEFORE sending. If the number key is dropped the
-        # pending marker is what makes the next tick blacklist this row instead
-        # of picking it again - the log showed the same slot retried twenty
-        # times precisely because this was only set after a successful send.
         self.switch_pending = slot
-        if not self.send_key(slot):
-            return                      # pending stays set, blacklisted next tick
-        time.sleep(0.9)
-        # Confirm with a LEFT CLICK, not the Space key.
+
+        # Select AND confirm with one hardware click on the row's card.
         #
-        # Two facts, both measured on 2026-11-18:
-        #   * a plain left click acts as the confirm, exactly like Space;
-        #   * Space kept being dropped. The log is full of
-        #     "FOCUS LOST - key 2 dropped (fg=1705966)" where fg is the editor:
-        #     the number key landed (it re-took focus first) but by the time
-        #     Space was due the foreground had been stolen again.
-        # A hardware click is real user input, so it takes the foreground and
-        # confirms in one action. The point is low and central - over the arena
-        # floor, clear of every card and button.
+        # Why not keys: the bot runs under an editor, and the foreground is
+        # stolen between every two commands. send_key refuses to fire unless the
+        # game owns the foreground (correct - otherwise keys land in the editor),
+        # so "E, then number" reliably lost the number and the log filled with
+        # "FOCUS LOST - key N dropped (fg=1705966)".
+        #
+        # A hardware click is real user input: Windows always gives it the
+        # foreground, and the user confirmed that a left click on a row both
+        # selects and deploys the pet. So one click does the whole job and the
+        # focus problem disappears.
+        target = None
+        for row_slot, pos, _fill in pool:
+            if row_slot == slot:
+                target = pos
+                break
         r = self.screen.rect
-        if r is not None:
-            self.click_abs(r[0] + 1300, r[1] + 1100)
+        if target is not None and r is not None:
+            px, py = r[0] + target[0] + 60, r[1] + target[1]
+            log("FAINT -> click card at %d,%d" % (px, py))
+            if not self.click_abs(px, py):
+                return                  # pending stays set, blacklisted next tick
+            time.sleep(0.7)
+            # A second click on the same card confirms (same as Space). It is
+            # cheap and harmless if the first one already confirmed.
+            self.click_abs(px, py)
         else:
-            self.send_key("space")
+            # No row geometry available: fall back to the key sequence.
+            if not self.send_key(slot, allow_focus_click=False):
+                return
+            time.sleep(0.9)
+            r = self.screen.rect
+            if r is not None:
+                self.click_abs(r[0] + 1300, r[1] + 1100)
+            else:
+                self.send_key("space")
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
         # blacklisted at the top of this function. Clearing the blacklist here
