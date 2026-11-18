@@ -668,6 +668,25 @@ RETREAT_HP = 25       # below this, and behind on HP, consider switching out
 SWITCH_DMG = 40        # below this, a fresh pet is usually better
 
 
+def _est_value(s):
+    """Best guess at the number on a card, even when one glyph failed to match.
+
+    digitread reports "1?5" for a three-digit number whose middle glyph did not
+    clear its correlation threshold. `value` is None in that case and the old
+    code dropped the skill entirely, so a real "1?5" lost to a neighbouring
+    "55" and the bot spent three turns on the weaker skill while the opponent
+    walked through it.
+
+    The digit count is still reliable, so use it as a floor: a three-glyph read
+    is at least 100, a two-glyph read at least 10.
+    """
+    if s.get("value") is not None:
+        return float(s["value"])
+    if s.get("kind") == "num" and int(s.get("glyphs") or 0) >= 2:
+        return float(10 ** (int(s["glyphs"]) - 1))
+    return None
+
+
 def decide(st, ctx):
     """Pick an action. Returns ((action, why) or (None, reason)).
 
@@ -720,7 +739,13 @@ def decide(st, ctx):
             and my < RETREAT_HP and foe_pct > my + 25):
         return ("switch", bench), "retreat at %.0f%% vs foe %.0f%%" % (my, foe_pct)
 
-    damaged = [s for s in usable if s["kind"] == "num" and s["value"] is not None]
+    damaged = []
+    for s in usable:
+        if s["kind"] != "num":
+            continue
+        v = _est_value(s)
+        if v is not None:
+            damaged.append((s, v))
     if not damaged:
         if usable:
             # Cards are lit but no damage number could be read: that is a failed
@@ -737,9 +762,9 @@ def decide(st, ctx):
     # the hand was 120(red) + a stray "1" misread off slot 4, the filter threw
     # away the 120, kept the 1, and concluded "everything is weak" - so the bot
     # switched pets for nothing.
-    pool = sorted(damaged, key=lambda s: (s["value"], s["color"] != "red"),
-                  reverse=True)
-    best = pool[0]
+    pool = sorted(damaged,
+                  key=lambda p: (p[1], p[0]["color"] != "red"), reverse=True)
+    best, best_v = pool[0]
 
     # Everything on hand is weak: hand the turn to a fresh pet instead of
     # chipping away. The caller supplies the slot of a living bench pet.
@@ -747,12 +772,12 @@ def decide(st, ctx):
     # misread, not a weak hand.
     slot = ctx.get("switch_slot")
     if (slot and ctx.get("switch_streak", 99) >= 3
-            and len(damaged) >= 2 and best["value"] < SWITCH_DMG):
+            and len(damaged) >= 2 and best_v < SWITCH_DMG):
         return ("switch", slot), "all skills weak (best %s), switch to slot %d" % (
-            best["value"], slot)
+            best["text"], slot)
 
     return ("skill", best["index"]), "best affordable dmg %s (%s)" % (
-        best["value"], best["color"])
+        best["text"], best["color"])
 
 
 def _match_name(st, cands):

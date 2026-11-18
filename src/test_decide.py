@@ -87,6 +87,28 @@ print("%-52s %-6s %s   (%s)" % (
     "attack" if ok else str(a), "OK" if ok else "**FAIL**", why))
 
 print()
+print("--- a partially-read big number must not lose to a small one ---")
+# Live regression, 10:27:16: slot 1 read "1?5" (one glyph failed to match, so
+# value was None) and the bot used slot 3 "55" for three turns instead.
+_partial = [
+    {"index": 1, "value": None, "text": "1?5", "kind": "num", "color": "green",
+     "score": 0.4, "glyphs": 3, "lit": True},
+    {"index": 2, "value": None, "text": "--", "kind": "dash", "color": None,
+     "score": 1.0, "glyphs": 0, "lit": True},
+    {"index": 3, "value": 55, "text": "55", "kind": "num", "color": "white",
+     "score": 1.0, "glyphs": 2, "lit": True},
+    {"index": 4, "value": 5, "text": "05", "kind": "num", "color": "white",
+     "score": 1.0, "glyphs": 2, "lit": True},
+]
+a, why = robot.decide(state(100.0, 100.0, _partial), base)
+ok = a == ("skill", 1)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "\"1?5\" (3 glyphs) vs \"55\" -> attack slot 1",
+    "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
+
+print()
 if fails:
     print("%d FAILURE(S)" % fails)
     sys.exit(1)
