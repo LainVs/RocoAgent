@@ -1587,7 +1587,7 @@ class Bot:
             return
         if img is None or img.size == 0:
             return
-        name, sc = portraits.identify(img)
+        name, sc = portraits.identify(img, target=(box[2] - 2 * m, box[3] - 2 * m))
         if name is not None and sc >= 0.62:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
@@ -1615,6 +1615,22 @@ class Bot:
                 log("PET -> unknown bust (%.2f) saved %s" % (sc, os.path.basename(path)))
             except Exception:
                 pass
+
+    def _dump_unreadable(self, tag):
+        """技能栏读不出来时存一张全屏，供离线分析（每 15 秒最多一张）。"""
+        if time.time() - getattr(self, "_unread_at", 0) < 15.0:
+            return
+        self._unread_at = time.time()
+        try:
+            full = self.screen.grab_full()
+            if full is None:
+                return
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(LOG_DIR, "unread_%s_%s.png" % (tag, ts))
+            if cv2.imwrite(path, cv2.cvtColor(full, cv2.COLOR_RGB2BGR)):
+                log("BAR unreadable -> frame saved %s" % os.path.basename(path))
+        except Exception:
+            pass
 
     def _dump_result_frame(self):
         """Save the frame behind a result-screen detection (diagnostics)."""
@@ -1749,6 +1765,9 @@ class Bot:
                     self.nodraw_since = now
                 if (now - self.nodraw_since > 8.0
                         and now - self.acted_at > 8.0):
+                    # 决策窗口开着但技能栏始终没画出来：先把画面留证，
+                    # 下次才能离线看清到底是"动画期间"还是"检测器漏认"。
+                    self._dump_unreadable("nodraw")
                     self.ensure_focus()
                     self.send_key(2)
                     self.acted_at = now
@@ -2398,6 +2417,9 @@ class Bot:
             "turn": self.turn,
             "my_pct": st["my_pct"], "foe_pct": st["foe_pct"],
             "action": list(action), "why": why,
+            # 身份字段：只有头像库认得出来时才有值（目前只有恶魔狼）
+            "our_pet": getattr(self, "active_pet", None),
+            "foe_pet": getattr(self, "foe_name", None),
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],
                         "t": s["text"]} if s else None for s in st["skills"]],
         }
@@ -2406,6 +2428,21 @@ class Bot:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except Exception:
             pass
+        # 对位库：写失败绝不影响对局
+        try:
+            import matchup_db
+            if getattr(self, "_db", None) is None:
+                self._db = matchup_db.connect()
+            started = (time.strftime("%H:%M:%S", time.localtime(self.match_started))
+                       if self.match_started else None)
+            matchup_db.record_decision(self._db, {
+                "match_started": started, "turn": self.turn, "ts": rec["ts"],
+                "our_pet": rec["our_pet"], "foe_pet": rec["foe_pet"],
+                "my_pct": rec["my_pct"], "foe_pct": rec["foe_pct"],
+                "action": list(action), "why": why, "skills": [],
+            })
+        except Exception:
+            self._db = None
 
 
 def probe(n):
