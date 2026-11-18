@@ -1,0 +1,12 @@
+==================================================
+admin=0
+pid=30920
+OpenProcess(VM_READ only) -> handle=0 err=5
+OpenProcess(QUERY_INFO|VM_READ) -> handle=0 err=5
+==================================================
+admin=1
+pid=30920
+OpenProcess(VM_READ only) -> handle=588 err=183
+  ReadProcessMemory(0x140000000) -> 0 bytes=0
+OpenProcess(QUERY_INFO|VM_READ) -> handle=560 err=183
+  ReadProcessMemory(0x140000000) -> 0 bytes=0

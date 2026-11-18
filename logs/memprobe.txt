@@ -1,0 +1,10 @@
+============================================================
+admin = True
+pid = 30920
+OpenProcess(QUERY|VM_READ) -> 552 (err 0)
+  ReadProcessMemory -> ok=0 bytes=0 err=5
+  NtReadVirtualMemory -> status=0xC0000022 bytes=0
+  VirtualQueryEx -> base=0x140000000 size=4096 state=0x1000 protect=0x2
+OpenProcess(QUERY_LIMITED) -> 552
+
+verdict: reads blocked

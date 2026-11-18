@@ -1,0 +1,84 @@
+{
+ "rect": [
+  480,
+  41,
+  2586,
+  1671
+ ],
+ "hits": {
+  "hpbar_my": 10,
+  "hpbar_foe": 10,
+  "skillbar": 10,
+  "action_button": 0
+ },
+ "runs": 10,
+ "detections": {
+  "hpbar_my": {
+   "kind": "D1",
+   "name": "hpbar_my",
+   "bbox": [
+    166,
+    170,
+    245,
+    20
+   ],
+   "confidence": 1.0,
+   "evidence": {
+    "aspect": 12.2,
+    "fill_ratio": 0.718,
+    "caps": [
+     165,
+     411
+    ],
+    "outline_rows": [
+     168,
+     191
+    ],
+    "centre_x": 288.5
+   }
+  },
+  "hpbar_foe": {
+   "kind": "D1",
+   "name": "hpbar_foe",
+   "bbox": [
+    2251,
+    170,
+    245,
+    20
+   ],
+   "confidence": 1.0,
+   "evidence": {
+    "aspect": 12.2,
+    "fill_ratio": 0.811,
+    "caps": [
+     2250,
+     2496
+    ],
+    "outline_rows": [
+     168,
+     191
+    ],
+    "centre_x": 2373.5
+   }
+  },
+  "skillbar": {
+   "kind": "D2",
+   "name": "skillbar",
+   "bbox": [
+    452,
+    706,
+    183,
+    558
+   ],
+   "confidence": 1.0,
+   "evidence": {
+    "pills": 6,
+    "slots_filled": 4,
+    "capsule_x_range": [
+     452,
+     635
+    ]
+   }
+  }
+ }
+}

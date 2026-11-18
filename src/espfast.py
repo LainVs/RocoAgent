@@ -156,7 +156,13 @@ class Board:
     def click(self, x, y, hold_alt=False):
         # Walk the hardware cursor to the target, then click. The board moves
         # the cursor 3.5 screen px per reported unit, so this is a closed loop.
-        for _ in range(6):
+        #
+        # Speed matters: the loop used to allow 6 iterations with a
+        # 0.1 + dur/1000 sleep each, which measured 2.2 s per click. The caller
+        # only waits 0.6 s before the next action, so the cursor was still
+        # travelling when the confirm click arrived and the panel never closed.
+        # Fewer, larger steps and a tighter settle time bring it under 700 ms.
+        for _ in range(4):
             cx, cy = cursor_pos()
             dx, dy = x - cx, y - cy
             if abs(dx) <= 3 and abs(dy) <= 3:
@@ -165,14 +171,16 @@ class Board:
             if ex == 0 and ey == 0:
                 ex = 1 if dx > 0 else -1
                 ey = 1 if dy > 0 else -1
-            dur = 120 + min(240, max(abs(ex), abs(ey)) // 3)
+            # Cap the per-step duration: the board needs time to travel, but
+            # waiting for the full computed duration is what made this slow.
+            dur = 100 + min(120, max(abs(ex), abs(ey)) // 4)
             self.move(ex, ey, dur)
-            time.sleep(0.10 + dur / 1000.0)
+            time.sleep(0.05 + dur / 1000.0)
         if hold_alt:
             self._run(self._send("ALTDOWN"))
             time.sleep(0.2)
         self._run(self._send("CLICK:60"))
-        time.sleep(0.1)
+        time.sleep(0.08)
         if hold_alt:
             self._run(self._send("ALTUP"))
 

@@ -1,154 +1,94 @@
-# 接下来要做的（2026-11-18 上午）
+# NEXT.md — 本轮改动记录（2026-11-18 15:xx）
 
-> 上一轮（凌晨 03:00–09:40）已经把系统跑通了，详见 `logs/HANDOFF.md`。
-> 这一页只讲**当前状态**和**还没做完的事**。
+## 结论先行
 
----
+**0 动作/局的真因不是感知，是「卡在力竭换人状态出不来」。**
+`bar=False` 只是症状：pet 在 0 HP 卡死 → 技能栏本来就不该出现 → 观测永远 bar=False。
 
-## 一、刚刚动过的代码（未验证）
-
-`src/robot.py` 改了三处，**语法通过，但一次都没跑过**：
-
-### 1. 强制换人重写（`_try_switch` + 新增 `_living_rows`）
-
-用户提供了关键情报：
+日志证据（14:24–14:51，27 分钟里 `me=0.0` 不变）：
 
 ```
-换人按键顺序   数字键 → 等 1 秒 → 空格
-               （之前失败就是因为没等，0.3 秒就按空格）
-死掉的精灵     还在列表里，但是灰色的，点它没用
-               （之前的代码盲点第 1 行，正好点到尸体上）
+14:25:11 FAINT -> switch slot 4 (... attempt 0)
+14:25:16 FAINT -> switch slot 3 (... attempt 0)   ← attempt 永远是 0
+14:26:xx FOCUS LOST - key 3 dropped (fg=1705966 game=3476384)   ← 连发 20 次
 ```
 
-新实现：
-- `_living_rows()` 采样每张卡片的颜色散度（max-min），`>= 25` 判定为存活
-- 跳过灰色行，取第一只活的
-- 发数字键 → `time.sleep(1.0)` → 发空格
+## 改了什么（一次一个，都已 py_compile）
 
-### 2. 主动换人（`decide()` 新增分支）
+### 1. 力竭状态不再被反复重置（根因）
+`_battle_tick` 原来要求 `st["my_ui"]` 才进力竭分支。**换人面板打开时血条不画**，
+所以每隔一帧就掉出分支 → 跑到下面的重置代码 → `switch_attempt=0` /
+`switch_dead.clear()` 全被抹掉 → 下一帧又从 slot 3 开始试。
 
+改成 **sticky**：一旦进入力竭，只要 `faint_at` 还在就不再依赖 `my_ui`；
+只有看到 `my_pct > 5%`（精灵真的活了）才重置计数器，并打一行
+`FAINT -> recovered`。
+
+### 2. 盲点上限不再自己复活
+`advance_count >= 12` 之后有 `if now - advance_at < 60: return; advance_count = 0`
+——**每分钟复位一次**。结果 15:46 它在未识别画面上每分钟再点 12 次，
+把角色**点出了 PvP 竞技场、走进了开放世界**（之后所有检测器都匹配不上，再也回不来）。
+
+改成硬上限 8 次，永不复位；只在「新对局开始」或「点了确认按钮」时清零。
+超限只打一条 `advance cap reached ... stopping blind clicks`。
+
+### 3. STUCK 看门狗不再点地图
+原来卡住时 `click(ADVANCE_ABS)` + `click(RESULT_BTN_ABS)`，
+在开放世界里等于让角色乱走。改成**按 ESC**（任何界面都安全），并且不再
+顺手把 `advance_count` 清零。
+
+### 4. `_click_to_focus` 先置顶再点
+原来直接点窗口内 `(700,300)`。**编辑器盖住游戏时，这个点击落在编辑器上**，
+于是"抢焦点"反而把焦点给了编辑器 —— 所以 FOCUS LOST 后面永远跟着 FOCUS LOST。
+新增 `_raise_topmost()`：`SetWindowPos(TOPMOST)` → `SetForegroundWindow` →
+`NOTOPMOST`，`focus()` 和 `_click_to_focus()` 都先走它。
+
+### 5. 决策门的稳定性死锁（新发现）
 ```python
-SWITCH_DMG = 40        # 最高伤害低于这个值就考虑换人
-
-if slot and ctx.get("switch_streak", 99) >= 3 and best["value"] < SWITCH_DMG:
-    return ("switch", slot), "all skills weak ..."
+if key != self.prev_key:
+    self.prev_key = key
+    self.stable_since = now
+    if self.acted_at == 0.0: return     # ← 没有超时
 ```
+技能槽位在 5-6 个胶囊之间抖动时，`key` **每一帧都变**，
+"连续两帧相同"这个条件永远不成立 → 整局 0 动作（15:45 那局就是这样）。
 
-冷却是 3 回合，避免连续换人。
+改成：不稳定就先等，**最多等 3 秒后强行用当前帧出招**。
+另外把"新回合"的判定从"技能栏消失 1.5s"补上"数字变了且距上次出招 > 2.5s"，
+否则 8 秒重试会连下一回合一起堵住。
 
-### 3. 执行器支持 switch
+### 6. 决策门现在会自己解释
+新增 `_gate(now, reason)`，每秒最多一条 `GATE ...`，直接写出是哪个条件在拦
+（`read not stable` / `no readable damage digit` / `press sent, waiting ...`）。
+以后不用再从"只有心跳行"去猜。
 
-```python
-elif action[0] == "switch":
-    self.send_key(action[1])
-    time.sleep(1.0)
-    self.send_key("space")
-    self.switch_count += 1
-    self.last_switch_turn = self.turn
-```
+### 7. 复盘一定落盘
+`review_turns.py` 在窗口内没数据时只 `print` 不写文件，日志却打了
+`review queued -> xxx.md`。改成**没数据也写一个 stub 文件**，说明"那局一次决策都没做"。
 
-`next_switch_slot()` 按 `[2,3,4,5,6]` 轮转——**因为战斗中看不到队伍列表，不知道哪只活着**，只能轮着试。
+## 当前阻塞（下次接手第一步）
 
-### ⚠️ 这三处一定要先验证再继续改别的
+**游戏现在停在开放世界（闪耀大赛入口广场），不在竞技场里。**
+bot 无法自己回去：开放世界里点击 = 走位，没有任何 UI 检测器认识那个界面。
+需要人工把角色带回竞技场（或站到「闪耀大赛」导师旁的传送点），
+botsup 一启动就会接管。
 
----
+导航路径（人工 10 秒）：`ESC` → 菜单左侧 **S5赛季**（窗口相对 580,435）
+→ 面板左下 **闪耀大赛 前往** → 再点进去的 **前往**（相对 2221,360）
+→ 等载入 → 站在导师旁。
 
-## 二、验证清单
+## 下次要做的（按优先级）
 
-```powershell
-cd D:\Tools
-C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe `
-  -W ignore -u botsup.py --seconds 86400
-```
+1. **进竞技场后先别改代码**，直接跑 10 局，看 `GATE` 行 + `rounds.jsonl`
+   的动作数，验证改动 1/2/5 是否真的把动作数拉起来。
+2. 如果动作数还是低，看 `GATE` 行落在哪一类，再针对性改。
+3. 加一个「不在 PvP」的检测（识别开放世界/竞技场入口），
+   并且**只允许在识别出的界面上点击**，禁止盲点。这是防止再走丢的根本办法。
+4. 换人补丁（`switch_pending` / `_pick_switch_slot` / `_is_dash`）在动作数
+   拉到 ≥10/局 之后再验，现在这种噪声下测不出来。
 
-跑起来后看 `D:\Projects\RocoAgent\logs\bot_stdout.log`，确认三件事：
+## 本轮没动的东西
 
-| 检查点 | 期望日志 |
-|---|---|
-| 力竭换人 | `FAINT -> switch slot N (spread ...)` 后面接 `T? SKILL ...` |
-| 主动换人 | `T? SWITCH N (all skills weak ...)` |
-| 换人冷却 | 换人后 3 回合内不再出现 SWITCH |
-
-**如果换人还是失败**，说明 `spread >= 25` 的阈值不对，需要：
-1. 抓一张换人面板的帧
-2. 打印每张卡片的 spread 值
-3. 按实际分布调阈值（存活/灰色应该有明显分界）
-
----
-
-## 三、还没解决的问题（按优先级）
-
-### P0 · 感知失败率 35~40%
-
-```
-现象   best affordable dmg 40 (None)   ← 数字读到了但颜色判定失败
-       整行 --                        ← 完全没读到
-代价   读不到就空过一整个 15 秒回合
-```
-
-数字模板已经做好了（`D:\Tools\digitread.py`，排序准确率 90~95%），但**颜色分类**（绿/红/白）不稳。
-
-建议：统计「有数字但颜色不达标」的帧，和「真的没数字」的帧分开看，别凭感觉调阈值。
-
-### P1 · 策略层基本空白
-
-```
-属性克制表      没接。现在选技能只看「伤害数字最大」，不看属性
-首领化          从来没用过（W → 1 → 空格）
-对面换人        没有反应，只是继续打
-对面防御        无法预判（双方同时选行动，本来也做不到）
-```
-
-属性克制表在 `D:\GameData\洛克王国世界\roco-world-skill\.claude\skills\roco-world\SKILL.md` 里，是一段 JS 对象。
-
-### P2 · 技能播报没用起来
-
-```
-已实现   D:\Tools\announce.py，字符准确率 98%
-未接入   robot.py 里没有调用它
-用途     知道对面用了什么技能 → 推断对面的精灵和打法
-```
-
-### P3 · 强制换人仍然只能靠止损
-
-即使换了新的按键方式，也可能有别的边界情况，保留「试一次就等自动选人」的兜底。
-
----
-
-## 四、代码位置
-
-```
-D:\Projects\RocoAgent\src\robot.py      主程序（刚改过）
-D:\Projects\RocoAgent\src\capture.py    截图
-D:\Projects\RocoAgent\logs\HANDOFF.md   完整背景（15 KB，先读这个）
-D:\Projects\RocoAgent\logs\bot_stdout.log   运行日志
-D:\Projects\RocoAgent\logs\rounds.jsonl     每局结果
-D:\Projects\RocoAgent\logs\turns.jsonl      每回合决策
-
-D:\Tools\ble.py         直连蓝牙发指令
-D:\Tools\bleclick.py    移动+点击（--hold 按 Alt）
-D:\Tools\digitread.py   技能伤害数字识别
-D:\Tools\announce.py    技能播报识别
-D:\Tools\hpbar.py       血条像素读数
-D:\Tools\review.py      对局复盘
-D:\Tools\botsup.py      看门狗
-D:\Tools\rec3.py        抓帧
-```
-
-数据：`D:\GameData\洛克王国世界\`（700+ 精灵、技能、官方解包）
-
----
-
-## 五、昨晚的成绩（供参考）
-
-```
-03:30   0 次动作/局      bar 检测传参错误
-04:00   4 次/85 秒
-05:00  24 次/580 秒
-06:00  26 次/400 秒      最高纪录
-09:00  13 次/234 秒
-
-战果   地绡银龙 1 打 4 横扫，段位 见习决斗家 I → IV
-```
-
-**结论：核心链路是通的，卡在感知和换人两个点上。**
+- `TASK_LAYOUT.md` 的 Step 1 结论（需要用户手动切分辨率）
+- 决策层 / 执行层 / 换人选择逻辑
+- 检测器的 ROI 常量（等 Step 3 才改）

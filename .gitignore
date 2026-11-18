@@ -26,3 +26,6 @@ logs/digits/glyphs/
 
 # 头像模板是识别资产，必须入库（上面的 *.png 是调试截图）
 !assets/portraits/*.png
+
+# 未标注的头像采样（每 10 秒一张，只在标注前有用）
+assets/portraits/_unknown_*
