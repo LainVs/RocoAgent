@@ -687,6 +687,23 @@ def _est_value(s):
     return None
 
 
+def _charge_or_switch(ctx):
+    """Out of energy: gather it with F - unless that keeps getting interrupted.
+
+    聚能 is not a free action. The opponent can spend their turn interrupting it,
+    and then we take damage and gain nothing; the live log shows seven F presses
+    in a row while the foe sat on 67% HP. A pet that is switched in enters with a
+    full energy bar, so after two fruitless charges rotating is strictly better
+    than pressing F a third time.
+    """
+    if (ctx.get("charge_streak", 0) >= 2
+            and ctx.get("switch_slot")
+            and ctx.get("switch_streak", 99) >= 3):
+        return ("switch", ctx["switch_slot"]), \
+            "no energy, charges keep getting interrupted -> rotate"
+    return ("energy",), "nothing affordable, gather energy"
+
+
 def decide(st, ctx):
     """Pick an action. Returns ((action, why) or (None, reason)).
 
@@ -752,7 +769,7 @@ def decide(st, ctx):
             # read, not an empty hand. Tell the caller so it can reuse its last
             # working plan instead of burning the turn on 聚能.
             return None, "lit cards but unreadable"
-        return ("energy",), "nothing affordable, gather energy"
+        return _charge_or_switch(ctx)
 
     # The number on the card is already the damage *after* type effectiveness
     # (the game prints 140 -> 70 against a resisting target), so the biggest
@@ -822,6 +839,7 @@ class Bot:
         self.nodraw_since = None
         self.prev_my_pct = None
         self.heal_streak = 0
+        self.charge_streak = 0
         self.last_progress_at = time.time()
         self.stuck_count = 0
         self.turn = 0
@@ -923,6 +941,7 @@ class Bot:
                         self.match_ended_at = 0.0
                         self.prev_my_pct = None
                         self.heal_streak = 0
+                        self.charge_streak = 0
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -1051,19 +1070,22 @@ class Bot:
                        and st["my_pct"] is not None
                        and st["my_pct"] < self.prev_my_pct - 0.5)
 
-        action, why = decide(st, {
+        ctx = {
             "panic_guard": not self.args.no_guard,
             "took_damage": took_damage,
             "heal_streak": self.heal_streak,
             "switch_slot": self.next_switch_slot(),
             "switch_streak": self.turn - self.last_switch_turn,
-        })
+            "charge_streak": self.charge_streak,
+        }
+        action, why = decide(st, ctx)
         if action is None:
             # digits unreadable this turn
             lit = [s for s in st["skills"] if s and s.get("lit")]
             if not lit:
-                # nothing is affordable: gathering energy is the only move
-                action, why = ("energy",), "unreadable + no energy"
+                # nothing is affordable: gather energy, or rotate if charging
+                # keeps being interrupted
+                action, why = _charge_or_switch(ctx)
             elif len(lit) == 1:
                 # Barely any energy left. Pressing the single affordable card
                 # blind usually burns a turn on a buff/heal, so refill instead.
@@ -1127,6 +1149,10 @@ class Bot:
             # poll instead of burning the whole decision window.
             return
         self.acted_at = now
+        if action[0] == "energy":
+            self.charge_streak += 1
+        else:
+            self.charge_streak = 0
         self.last_progress_at = now
         self.turn += 1
         lit = "".join("1" if (s and s.get("lit")) else "0" for s in st["skills"])

@@ -109,6 +109,29 @@ print("%-52s %-6s %s   (%s)" % (
     "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
 
 print()
+print("--- out of energy: two charges, then rotate to a full-energy pet ---")
+dark = [milk(1, None, False), milk(2, None, False),
+        milk(3, None, False), milk(4, None, False)]
+a, why = robot.decide(state(90.0, 60.0, dark),
+                      dict(base, switch_slot=3, switch_streak=5,
+                           charge_streak=0))
+ok = a == ("energy",)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "no energy, charge_streak 0 -> F", str(a), "OK" if ok else "**FAIL**", why))
+
+a, why = robot.decide(state(90.0, 60.0, dark),
+                      dict(base, switch_slot=3, switch_streak=5,
+                           charge_streak=2))
+ok = a == ("switch", 3)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "no energy, 2 interruptions -> rotate", str(a),
+    "OK" if ok else "**FAIL**", why))
+
+print()
 if fails:
     print("%d FAILURE(S)" % fails)
     sys.exit(1)
