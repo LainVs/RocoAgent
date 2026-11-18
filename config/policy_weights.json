@@ -18,7 +18,9 @@
   "switch_cost": 0.12,
   "switch_margin": 0.04,
   "buff_survive_floor": 0.35,
+  "buff_bonus": 0.06,
   "buff_no_survive_penalty": 0.25,
   "charge_score": 0.06,
-  "charge_interrupt_penalty": 0.10
+  "charge_interrupt_penalty": 0.10,
+  "unknown_incoming_pct": 0.35
 }

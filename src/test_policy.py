@@ -72,6 +72,23 @@ print("%-46s %-14s %s   (%s, best=%.3f)" % (
     "OK" if ok else "**FAIL**", why, best))
 
 print()
+print("--- unknown opponent must not be treated as harmless ---")
+st4 = {
+    "me": {"name": "寂灭骨龙", "hp": 490, "hp_max": 490, "energy": 10,
+           "skills": [skill(1, 175, 5), skill(2, None, 2, kind="dash"),
+                      skill(3, 55, 2), skill(4, 85, 3)]},
+    "foe": {"name": "???", "hp": 200, "hp_max": 434},
+    "bench": [],
+}
+a, why, d = policy_v2.decide(st4)
+ok = d.get("incoming_source") == "assumed" and d["incoming"] > 0
+if not ok:
+    fails += 1
+print("%-46s %-14s %s   (incoming=%s, source=%s)" % (
+    "unidentified foe -> assumed incoming", str(a),
+    "OK" if ok else "**FAIL**", d.get("incoming"), d.get("incoming_source")))
+
+print()
 if fails:
     print("%d FAILURE(S)" % fails)
     sys.exit(1)

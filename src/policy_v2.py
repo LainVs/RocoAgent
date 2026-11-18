@@ -92,9 +92,20 @@ def best_damage_from(name, foe_name):
     return best
 
 
-def _incoming(foe_name, my_name):
+def _incoming(foe_name, my_name, my_max):
+    """Damage the opponent can land on us this turn.
+
+    If the opponent is unidentified (no OCR yet, or a pet missing from the
+    dataset) worst_incoming() returns nothing - and an EV model that reads that
+    as "zero damage taken" will happily stand still and die. Fall back to a
+    conservative fraction of our own max HP instead, and let the caller record
+    that the number is assumed rather than observed.
+    """
     rows = E.worst_incoming(foe_name, my_name, top=1)
-    return rows[0]["dmg"] if rows else 0
+    if rows:
+        return rows[0]["dmg"], "model"
+    pct = weights().get("unknown_incoming_pct", 0.35)
+    return int(max(1, round(my_max * pct))), "assumed"
 
 
 def _outcome(our_dmg, our_kills, opp_dmg, they_kill_us, after_hp, max_hp,
@@ -130,7 +141,7 @@ def decide(state):
     foe_max = foe["hp_max"]
     energy = me.get("energy", 0)
 
-    inc = _incoming(foe_name, my_name)          # they hit us for this much
+    inc, inc_src = _incoming(foe_name, my_name, my_max)
     we_outspeed = _speed(my_name) >= _speed(foe_name)
     matchup = _type_mult(my_name, foe_name)
 
@@ -172,7 +183,8 @@ def decide(state):
             survives = inc < my_hp * (1.0 - w.get("buff_survive_floor", 0.35))
             score = _outcome(0.0, False, inc / max(1, my_max), inc >= my_hp,
                              my_hp - inc, my_max, max(0, energy - cost), 0, matchup)
-            score += 0.10 if survives else -w.get("buff_no_survive_penalty", 0.25)
+            score += w.get("buff_bonus", 0.06) if survives else \
+                -w.get("buff_no_survive_penalty", 0.25)
             cands.append((score, ("skill", s["i"]),
                           "status %d: %s (energy cost %d)" % (
                               s["i"], "safe to buff" if survives else "would likely die", cost)))
@@ -196,7 +208,7 @@ def decide(state):
         if not pet.get("name") or pet.get("hp", 0) <= 0:
             continue
         dmg = best_damage_from(pet["name"], foe_name)
-        inc_new = _incoming(foe_name, pet["name"])
+        inc_new, _src = _incoming(foe_name, pet["name"], pet.get("hp_max") or 1)
         # The switch itself eats the turn, so the incoming hit lands unopposed.
         survives = inc_new < pet.get("hp", 0)
         score = _outcome(dmg / max(1, foe_max), dmg >= foe_hp,
@@ -218,6 +230,7 @@ def decide(state):
     detail = {
         "score": round(best_score, 4),
         "incoming": inc,
+        "incoming_source": inc_src,
         "outspeed": we_outspeed,
         "matchup": matchup,
         "runner_up": (round(cands[1][0], 4), cands[1][1]) if len(cands) > 1 else None,
