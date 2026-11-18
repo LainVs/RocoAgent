@@ -140,8 +140,45 @@ def fmt_action(action) -> str:
 _proc_cache = {"ts": 0.0, "pids": []}
 
 
-def query_robot_pids() -> list[int]:
-    """命令行含 robot.py 且不含 espfast 的 python.exe 进程 PID 列表。"""
+PID_FILE = os.path.join(LOG_DIR, "bot.pid")
+
+
+def _pid_alive(pid: int) -> bool:
+    """纯 Win32 判活：OpenProcess + GetExitCodeProcess，微秒级，不起子进程。"""
+    import ctypes
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not h:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if not k32.GetExitCodeProcess(h, ctypes.byref(code)):
+            return False
+        return code.value == STILL_ACTIVE
+    finally:
+        k32.CloseHandle(h)
+
+
+def _pids_from_pidfile() -> list[int]:
+    try:
+        with open(PID_FILE) as f:
+            pid = int((f.read() or "0").strip())
+    except (OSError, ValueError):
+        return []
+    return [pid] if pid and _pid_alive(pid) else []
+
+
+def query_robot_pids(force_wmi: bool = False) -> list[int]:
+    """优先读 logs/bot.pid（机器人启动时自己写），读不到再退回 WMI。
+
+    WMI 那条路要 spawn 一个 PowerShell，实测 2.2 秒；
+    UI 每 2 秒轮询一次，等于页面一直在等，看起来就是"卡"。
+    """
+    pids = _pids_from_pidfile()
+    if pids and not force_wmi:
+        return pids
     ps = (
         "Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
         "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
@@ -175,11 +212,16 @@ def query_robot_pids() -> list[int]:
 
 
 def find_robot_pids(force: bool = False) -> list[int]:
-    """带短缓存的结果，避免 UI 轮询时频繁起 PowerShell。"""
+    """带短缓存的结果。PID 文件命中时几乎零开销，WMI 则缓存 15 秒。"""
     now = time.time()
-    if not force and now - _proc_cache["ts"] < 2.0:
+    if not force and now - _proc_cache["ts"] < 15.0:
         return _proc_cache["pids"]
-    pids = query_robot_pids()
+    pids = _pids_from_pidfile()
+    if not pids:
+        pids = query_robot_pids()
+    _proc_cache["ts"] = now
+    _proc_cache["pids"] = pids
+    return pids
     _proc_cache["ts"] = now
     _proc_cache["pids"] = pids
     return pids

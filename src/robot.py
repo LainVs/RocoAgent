@@ -1345,6 +1345,21 @@ class Bot:
             return 1
         self.ensure_focus()
         log("bot up; rect=%s" % (self.screen.rect,))
+        # PID 文件：UI 用它判断"机器人是否在跑"，避免每次轮询都 spawn 一个
+        # PowerShell 查进程（实测一次 2.2 秒，UI 会被拖住）。
+        try:
+            with open(os.path.join(LOG_DIR, "bot.pid"), "w") as f:
+                f.write(str(os.getpid()))
+            import atexit
+
+            def _drop_pid():
+                try:
+                    os.remove(os.path.join(LOG_DIR, "bot.pid"))
+                except OSError:
+                    pass
+            atexit.register(_drop_pid)
+        except Exception:
+            pass
         last_log = 0.0
         self.match_started = None
         self.match_count = 0
@@ -1411,6 +1426,11 @@ class Bot:
                 # wolf lands is strictly better than waiting for more 悲悯
                 # stacks - the trait scales with fainted allies by itself.
                 self._check_active_pet(st, now)
+                # 首领化确认：变成狼的"银白发光"头像说明已经首领化过，
+                # 这样 leader_done 不再依赖"按键发出去了"这个假设。
+                if self.active_pet == "wolf_leader" and not self.leader_done:
+                    self.leader_done = True
+                    log("LEADER -> confirmed (bust switched to leader form)")
                 leader_ready = (
                     (now - self.pet_at > 2.0 and st.get("bar"))
                     or now - self.pet_at > 4.0)
