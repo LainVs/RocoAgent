@@ -1538,6 +1538,10 @@ class Bot:
         if fainted or forced_panel:
             if self.faint_at is None:
                 self.faint_at = now
+                # Remember the HP at panel time: a real faint enters with the
+                # bar at/near 0, a forced switch enters with it high. Only the
+                # former counts toward dead_count (悲悯 counts fainted pets).
+                self._faint_hp = st["my_pct"] or 0
                 if forced_panel:
                     log("FORCED SWITCH -> panel is up at hp %.0f%%"
                         % (st["my_pct"] or 0))
@@ -1553,9 +1557,15 @@ class Bot:
         if self.faint_at is not None and st["my_pct"] is not None and st["my_pct"] > 5.0:
             log("FAINT -> recovered (hp %.0f%%) after %d attempts"
                 % (st["my_pct"], self.switch_attempt))
-            # Each recovery follows a faint: one own pet is now out of the
-            # match. 悲悯 counts these, and the leader decision needs the tally.
-            self.dead_count += 1
+            # Only a GENUINE faint counts for dead_count: the party panel can
+            # also appear while the pet is still healthy (an opponent skill
+            # forced it off the field), and the 悲悯 trait counts fainted pets
+            # only. The pre-switch HP separates the two cases.
+            if getattr(self, "_faint_hp", None) is not None \
+                    and self._faint_hp <= 0.5:
+                self.dead_count += 1
+                log("FAINT -> dead_count=%d" % self.dead_count)
+            self._faint_hp = None
             self.faint_at = None
             self.switch_attempt = 0
             self.switch_gave_up = False
