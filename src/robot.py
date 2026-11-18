@@ -1716,23 +1716,27 @@ class Bot:
                 # because the foreground is stolen between commands and
                 # send_key refuses to fire without it; a hardware click always
                 # gets the foreground and also confirms the choice.
-                rows = find_switch_rows(self.screen)
+                rows = find_switch_rows(self.screen, bar_visible=False)
                 idx = action[1] - 1
                 r = self.screen.rect
                 if rows and r is not None and 0 <= idx < len(rows):
                     tx, ty = rows[idx]
-                    px, py = r[0] + tx + 60, r[1] + ty
+                    px, py = r[0] + tx, r[1] + ty
                     log("SWITCH -> click card at %d,%d" % (px, py))
-                    ok = self.click_abs(px, py)
+                    # precheck=False: a focus click would dismiss the panel.
+                    ok = self.click_abs(px, py, precheck=False)
                     if ok:
-                        time.sleep(0.7)
-                        self.click_abs(px, py)
+                        time.sleep(0.6)
+                        cx, cy = r[0] + r[2] // 2, r[1] + r[3] // 2
+                        log("SWITCH -> confirm click at %d,%d" % (cx, cy))
+                        self.click_abs(cx, cy, precheck=False)
                 else:
                     ok = self.send_key(action[1], allow_focus_click=False)
                     if ok:
                         time.sleep(0.9)
                         if r is not None:
-                            self.click_abs(r[0] + 1300, r[1] + 1100)
+                            self.click_abs(r[0] + r[2] // 2, r[1] + r[3] // 2,
+                                           precheck=False)
             if ok:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
@@ -1860,14 +1864,20 @@ class Bot:
             return False
         return self.click_abs(r[0] + int(x), r[1] + int(y))
 
-    def click_abs(self, x, y):
+    def click_abs(self, x, y, precheck=True):
         """Hardware click, gated on the game actually owning the foreground.
 
         The cursor is moved by the board, so a click while another window is on
         top would land on that window's UI (it did, repeatedly). A hardware
         click is also the only reliable way to take the foreground back.
+
+        `precheck=False` skips the focus dance entirely and just clicks. Use it
+        when a modal panel is open: _click_to_focus() clicks the middle of the
+        screen to steal focus, and in the party panel that click DISMISSES the
+        panel. That is why "select a pet" produced a selection and then no
+        confirm - the focus click closed the panel first.
         """
-        if not self._game_focused() and not self.ensure_focus():
+        if precheck and not self._game_focused() and not self.ensure_focus():
             if not self._click_to_focus():
                 log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
                     % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
@@ -2083,22 +2093,26 @@ class Bot:
                 break
         r = self.screen.rect
         if target is not None and r is not None:
-            px, py = r[0] + target[0] + 60, r[1] + target[1]
+            px, py = r[0] + target[0], r[1] + target[1]
             log("FAINT -> click card at %d,%d" % (px, py))
-            if not self.click_abs(px, py):
+            # precheck=False: a focus click in the middle of the screen would
+            # dismiss the panel before the card is hit.
+            if not self.click_abs(px, py, precheck=False):
                 return                  # pending stays set, blacklisted next tick
-            time.sleep(0.7)
-            # A second click on the same card confirms (same as Space). It is
-            # cheap and harmless if the first one already confirmed.
-            self.click_abs(px, py)
+            time.sleep(0.6)
+            # Confirm: click the centre of the screen. The panel is still open,
+            # so this lands on empty arena - which is exactly what confirms the
+            # selection (same effect as Space).
+            cx, cy = r[0] + r[2] // 2, r[1] + r[3] // 2
+            log("FAINT -> confirm click at %d,%d" % (cx, cy))
+            self.click_abs(cx, cy, precheck=False)
         else:
             # No row geometry available: fall back to the key sequence.
             if not self.send_key(slot, allow_focus_click=False):
                 return
             time.sleep(0.9)
-            r = self.screen.rect
             if r is not None:
-                self.click_abs(r[0] + 1300, r[1] + 1100)
+                self.click_abs(r[0] + r[2] // 2, r[1] + r[3] // 2, precheck=False)
             else:
                 self.send_key("space")
         # Do NOT assume success here. Whether the row was selectable is only
