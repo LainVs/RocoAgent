@@ -1,0 +1,32 @@
+{
+  "_comment": "技能栏真值清单。values = 四个技能的伤害数字（null 表示界面显示「--」）；stars = 卡片左上角星标数字（可选）。新增截图时把真值填进来，再跑 python D:\\Tools\\digitread.py build",
+  "frames": [
+    {
+      "path": "D:\\Projects\\RocoAgent\\logs\\skillframes\\skill_001_010847_203.png",
+      "values": [84, 66, 540, null],
+      "stars": [3, 2, 3, 1],
+      "_note": "第一场战斗，绿字"
+    },
+    {
+      "path": "D:\\Projects\\RocoAgent\\logs\\skillframes\\skill_002_010932_444.png",
+      "values": [140, 110, 112, null],
+      "stars": [3, 2, 3, 1],
+      "_note": "第一场战斗，绿字"
+    },
+    {
+      "path": "D:\\Projects\\RocoAgent\\logs\\digits\\frames\\020511_305.png",
+      "values": [null, 425, 70, 100],
+      "_note": "第二场战斗，绿字 + 白字混排"
+    },
+    {
+      "path": "D:\\Projects\\RocoAgent\\logs\\digits\\frames\\020625_010.png",
+      "values": [null, 212, 70, 100],
+      "_note": "第二场战斗，技能2 从 425 减半到 212"
+    },
+    {
+      "path": "D:\\Projects\\RocoAgent\\logs\\digits\\frames\\020700_003.png",
+      "values": [null, 425, 70, 100],
+      "_note": "第二场战斗，数值恢复"
+    }
+  ]
+}

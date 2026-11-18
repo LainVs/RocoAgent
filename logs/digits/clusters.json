@@ -1,0 +1,166 @@
+{
+  "n_frames": 110,
+  "n_glyphs": 880,
+  "clusters": [
+    {
+      "cluster": 6,
+      "n": 216,
+      "label": 0,
+      "vote_frac": 1.0,
+      "votes": {
+        "0": 216
+      },
+      "rank": 0
+    },
+    {
+      "cluster": 1,
+      "n": 125,
+      "label": 2,
+      "vote_frac": 1.0,
+      "votes": {
+        "2": 125
+      },
+      "rank": 1
+    },
+    {
+      "cluster": 5,
+      "n": 110,
+      "label": 1,
+      "vote_frac": 1.0,
+      "votes": {
+        "1": 110
+      },
+      "rank": 2
+    },
+    {
+      "cluster": 4,
+      "n": 109,
+      "label": 0,
+      "vote_frac": 1.0,
+      "votes": {
+        "0": 109
+      },
+      "rank": 3
+    },
+    {
+      "cluster": 3,
+      "n": 108,
+      "label": 7,
+      "vote_frac": 1.0,
+      "votes": {
+        "7": 108
+      },
+      "rank": 4
+    },
+    {
+      "cluster": 0,
+      "n": 93,
+      "label": 4,
+      "vote_frac": 1.0,
+      "votes": {
+        "4": 93
+      },
+      "rank": 5
+    },
+    {
+      "cluster": 2,
+      "n": 91,
+      "label": 5,
+      "vote_frac": 1.0,
+      "votes": {
+        "5": 91
+      },
+      "rank": 6
+    },
+    {
+      "cluster": 7,
+      "n": 19,
+      "label": 1,
+      "vote_frac": 1.0,
+      "votes": {
+        "1": 19
+      },
+      "rank": 7
+    },
+    {
+      "cluster": 9,
+      "n": 2,
+      "label": 6,
+      "vote_frac": 1.0,
+      "votes": {
+        "6": 2
+      },
+      "rank": 8
+    },
+    {
+      "cluster": 8,
+      "n": 1,
+      "label": 8,
+      "vote_frac": 1.0,
+      "votes": {
+        "8": 1
+      },
+      "rank": 9
+    },
+    {
+      "cluster": 10,
+      "n": 1,
+      "label": 5,
+      "vote_frac": 1.0,
+      "votes": {
+        "5": 1
+      },
+      "rank": 10
+    },
+    {
+      "cluster": 11,
+      "n": 1,
+      "label": 4,
+      "vote_frac": 1.0,
+      "votes": {
+        "4": 1
+      },
+      "rank": 11
+    },
+    {
+      "cluster": 12,
+      "n": 1,
+      "label": 1,
+      "vote_frac": 1.0,
+      "votes": {
+        "1": 1
+      },
+      "rank": 12
+    },
+    {
+      "cluster": 13,
+      "n": 1,
+      "label": 0,
+      "vote_frac": 1.0,
+      "votes": {
+        "0": 1
+      },
+      "rank": 13
+    },
+    {
+      "cluster": 14,
+      "n": 1,
+      "label": 0,
+      "vote_frac": 1.0,
+      "votes": {
+        "0": 1
+      },
+      "rank": 14
+    },
+    {
+      "cluster": 15,
+      "n": 1,
+      "label": 2,
+      "vote_frac": 1.0,
+      "votes": {
+        "2": 1
+      },
+      "rank": 15
+    }
+  ]
+}

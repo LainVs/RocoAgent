@@ -1,0 +1,240 @@
+004726  my=  0.0%  foe=  0.0%  skillbright= 92.7
+004728  my=  0.0%  foe=  0.0%  skillbright= 87.4
+004730  my=  0.0%  foe=  0.0%  skillbright= 91.8
+004732  my=  0.0%  foe=  0.0%  skillbright= 81.3
+004734  my=  0.0%  foe=  0.0%  skillbright= 88.5
+004736  my=  0.0%  foe=  0.0%  skillbright= 81.5
+004738  my=  0.0%  foe=  0.0%  skillbright= 81.3
+004740  my=  0.0%  foe=  0.0%  skillbright= 81.2
+004741  my=  0.0%  foe=  0.0%  skillbright= 81.6
+004743  my=  0.0%  foe=  0.0%  skillbright= 81.4
+004745  my=  0.0%  foe=  0.0%  skillbright= 81.5
+004747  my=  0.0%  foe=  0.0%  skillbright= 81.7
+004749  my=  0.0%  foe=  0.0%  skillbright= 81.6
+004751  my=  0.0%  foe=  0.0%  skillbright= 81.4
+004753  my=  0.0%  foe=  0.0%  skillbright= 81.6
+004755  my=  0.0%  foe=  0.0%  skillbright=122.0
+004757  my=  0.0%  foe=  0.0%  skillbright= 76.0
+004759  my= 69.8%  foe=  0.0%  skillbright= 79.7
+004802  my=  0.0%  foe= 87.5%  skillbright= 80.7
+004805  my=  0.0%  foe= 39.0%  skillbright= 83.8
+004807  my=  0.0%  foe= 39.0%  skillbright= 83.1
+004809  my=  0.0%  foe= 39.0%  skillbright= 83.8
+004811  my=  0.0%  foe= 39.0%  skillbright= 99.5
+004813  my=  0.0%  foe= 39.0%  skillbright=100.7
+004815  my=  0.0%  foe= 39.0%  skillbright= 83.8
+004817  my=  0.0%  foe=  0.0%  skillbright=103.5
+004819  my=  0.0%  foe=  0.0%  skillbright= 98.0
+004821  my=  0.0%  foe=  0.0%  skillbright= 59.2
+004823  my=  0.0%  foe=  0.0%  skillbright=105.9
+004826  my=  0.0%  foe=  0.0%  skillbright=108.2
+004829  my=100.0%  foe= 81.7%  skillbright=110.1
+004832  my=100.0%  foe= 81.7%  skillbright= 98.3
+004834  my=100.0%  foe= 81.7%  skillbright=122.5
+004837  my=100.0%  foe= 81.7%  skillbright=122.7
+004839  my=100.0%  foe= 81.7%  skillbright=122.5
+004842  my=100.0%  foe= 81.7%  skillbright=123.3
+004845  my=100.0%  foe= 81.7%  skillbright=121.9
+004847  my=100.0%  foe= 81.7%  skillbright= 93.2
+004850  my=100.0%  foe= 81.7%  skillbright= 99.3
+004853  my=  0.0%  foe=  0.0%  skillbright= 98.1
+004855  my=  0.0%  foe=  0.0%  skillbright=100.9
+004858  my=100.0%  foe= 81.7%  skillbright=100.6
+004901  my= 69.8%  foe= 81.7%  skillbright=102.8
+004904  my= 69.8%  foe= 81.7%  skillbright=122.5
+004906  my= 69.8%  foe= 81.7%  skillbright=124.1
+004909  my=  0.0%  foe=  0.0%  skillbright=101.4
+004912  my=  0.0%  foe=  0.0%  skillbright= 88.5
+004915  my= 69.8%  foe= 81.7%  skillbright= 63.9
+004917  my= 69.8%  foe= 81.7%  skillbright= 88.6
+004920  my= 69.8%  foe= 81.7%  skillbright=111.1
+004923  my= 69.8%  foe= 81.7%  skillbright=110.1
+004925  my= 69.8%  foe= 81.7%  skillbright= 87.9
+004928  my= 69.8%  foe= 81.7%  skillbright= 87.9
+004931  my= 69.8%  foe= 53.9%  skillbright= 88.7
+004934  my= 69.8%  foe= 53.9%  skillbright=106.0
+004936  my= 64.0%  foe= 58.3%  skillbright=  3.6
+004938  my=  0.0%  foe=  0.0%  skillbright= 50.1
+004940  my=  0.0%  foe=  0.0%  skillbright= 34.2
+004942  my=  0.0%  foe=  0.0%  skillbright= 37.5
+004944  my=  0.0%  foe=  0.0%  skillbright= 38.1
+004947  my=  0.0%  foe=  0.0%  skillbright= 28.1
+004949  my= 69.8%  foe= 53.9%  skillbright= 34.1
+004951  my= 69.8%  foe= 53.9%  skillbright= 76.4
+004954  my= 56.9%  foe= 53.9%  skillbright= 88.6
+004956  my= 56.9%  foe= 53.9%  skillbright= 88.6
+004959  my= 56.9%  foe= 53.9%  skillbright= 94.2
+005002  my= 56.9%  foe= 53.9%  skillbright= 78.9
+005005  my= 56.9%  foe= 53.9%  skillbright=127.0
+005007  my= 56.9%  foe= 53.9%  skillbright= 89.2
+005010  my=  0.0%  foe= 53.9%  skillbright= 98.4
+005013  my=  0.0%  foe= 53.9%  skillbright=126.0
+005015  my=  0.0%  foe= 53.9%  skillbright=102.4
+005018  my=  0.0%  foe= 53.9%  skillbright= 89.1
+005021  my=100.0%  foe= 53.9%  skillbright=130.8
+005023  my=100.0%  foe= 53.9%  skillbright=129.1
+005026  my=100.0%  foe= 53.9%  skillbright= 82.3
+005029  my= 95.1%  foe= 61.4%  skillbright=  2.1
+005031  my=  0.0%  foe=  0.0%  skillbright= 44.7
+005033  my=  0.0%  foe=  0.0%  skillbright=213.7
+005035  my=  0.0%  foe=  0.0%  skillbright=125.8
+005037  my=  0.0%  foe=  0.0%  skillbright= 84.3
+005039  my=100.0%  foe= 53.9%  skillbright=163.8
+005041  my=100.0%  foe=  0.0%  skillbright=145.4
+005044  my=100.0%  foe=  1.0%  skillbright=134.2
+005047  my=  0.0%  foe=  0.0%  skillbright= 85.2
+005049  my=  0.0%  foe=  1.0%  skillbright=110.5
+005052  my=  0.0%  foe=  1.0%  skillbright= 89.5
+005055  my=100.0%  foe=  1.0%  skillbright= 90.9
+005057  my=100.0%  foe=  1.0%  skillbright= 90.6
+005100  my=100.0%  foe=  1.0%  skillbright= 91.7
+005103  my=100.0%  foe=  0.0%  skillbright= 88.4
+005106  my=100.0%  foe=  1.0%  skillbright= 91.6
+005108  my=100.0%  foe=  1.0%  skillbright= 96.5
+005111  my=100.0%  foe=  1.0%  skillbright= 90.6
+005114  my=100.0%  foe=  1.0%  skillbright= 93.0
+005116  my=100.0%  foe=  0.0%  skillbright= 89.2
+005119  my=  0.0%  foe=  0.0%  skillbright= 90.9
+005122  my=100.0%  foe=  0.0%  skillbright= 90.9
+005125  my=100.0%  foe= 81.7%  skillbright=106.7
+005128  my=100.0%  foe= 81.7%  skillbright=115.6
+005130  my=100.0%  foe= 81.7%  skillbright=101.8
+005133  my=100.0%  foe= 81.7%  skillbright=100.4
+005136  my=100.0%  foe=  0.0%  skillbright= 99.1
+005138  my=100.0%  foe=  0.0%  skillbright=106.9
+005141  my=100.0%  foe=  0.0%  skillbright=106.8
+005144  my=100.0%  foe=  0.0%  skillbright=105.2
+005147  my=100.0%  foe=  0.0%  skillbright=108.2
+005149  my=100.0%  foe=  0.0%  skillbright=107.8
+005152  my=100.0%  foe=  0.0%  skillbright=106.6
+005155  my=100.0%  foe=  0.0%  skillbright=105.4
+005158  my=  0.0%  foe=100.0%  skillbright= 67.1
+005200  my=  0.0%  foe=  0.0%  skillbright= 99.2
+005203  my=100.0%  foe= 81.7%  skillbright=101.5
+005206  my=100.0%  foe= 81.7%  skillbright= 99.3
+005209  my=100.0%  foe= 81.7%  skillbright= 99.9
+005211  my=100.0%  foe=  0.0%  skillbright= 97.0
+005214  my=  0.0%  foe=  0.0%  skillbright=100.8
+005217  my=100.0%  foe= 81.7%  skillbright= 73.2
+005219  my=100.0%  foe= 81.7%  skillbright=103.2
+005222  my=100.0%  foe= 81.7%  skillbright=106.2
+005225  my=100.0%  foe= 81.7%  skillbright=105.3
+005227  my= 89.3%  foe= 81.7%  skillbright=104.7
+005230  my= 89.3%  foe= 81.7%  skillbright= 98.9
+005233  my= 89.3%  foe=  0.0%  skillbright=105.2
+005236  my= 89.3%  foe=  0.0%  skillbright=103.9
+005238  my= 89.3%  foe= 81.7%  skillbright=101.7
+005241  my= 89.3%  foe= 81.7%  skillbright=112.7
+005244  my= 89.3%  foe= 81.7%  skillbright=113.8
+005246  my= 89.3%  foe= 81.7%  skillbright= 72.1
+005248  my=  0.0%  foe= 81.7%  skillbright=102.0
+005251  my=  0.0%  foe= 81.7%  skillbright= 96.7
+005254  my=  0.0%  foe= 81.7%  skillbright=112.4
+005257  my=  0.0%  foe= 81.7%  skillbright=111.8
+005259  my=  0.0%  foe=  0.0%  skillbright= 81.9
+005302  my=  0.0%  foe=  0.0%  skillbright= 67.1
+005305  my=  0.0%  foe=  0.0%  skillbright= 96.7
+005308  my=  0.0%  foe=  0.0%  skillbright= 88.6
+005310  my=  0.0%  foe=  0.0%  skillbright= 76.7
+005313  my=  0.0%  foe=  0.0%  skillbright= 70.0
+005315  my=  0.0%  foe=  0.0%  skillbright=  0.0
+005317  my=  0.0%  foe=  0.0%  skillbright= 76.0
+005319  my= 69.8%  foe=  0.0%  skillbright= 77.1
+005322  my= 69.8%  foe=  0.0%  skillbright= 74.4
+005325  my=  0.0%  foe=  0.0%  skillbright=104.1
+005327  my=  0.0%  foe= 39.0%  skillbright= 81.7
+005329  my=  0.0%  foe= 39.0%  skillbright= 83.4
+005330  my=  0.0%  foe= 39.0%  skillbright=100.7
+005332  my=  0.0%  foe= 39.0%  skillbright= 83.8
+005334  my=  0.0%  foe= 39.0%  skillbright= 83.8
+005336  my=  0.0%  foe=  0.0%  skillbright=103.5
+005338  my=  0.0%  foe=  0.0%  skillbright= 96.7
+005340  my=  0.0%  foe=  0.0%  skillbright= 67.8
+005343  my=  0.0%  foe=  0.0%  skillbright= 81.1
+005345  my=  0.0%  foe=  0.0%  skillbright= 81.7
+005348  my=100.0%  foe= 81.7%  skillbright=110.2
+005351  my=100.0%  foe= 81.7%  skillbright=123.5
+005353  my=100.0%  foe= 81.7%  skillbright= 98.1
+005356  my=100.0%  foe= 81.7%  skillbright=110.0
+005359  my=100.0%  foe=  0.0%  skillbright= 82.7
+005401  my=100.0%  foe=  0.0%  skillbright= 82.0
+005404  my= 83.1%  foe=  0.0%  skillbright= 98.9
+005407  my=  0.0%  foe=  0.0%  skillbright=121.7
+005409  my=100.0%  foe=  0.0%  skillbright= 81.6
+005412  my=100.0%  foe=  0.0%  skillbright= 97.5
+005415  my=100.0%  foe=  0.0%  skillbright=112.5
+005417  my=100.0%  foe=  0.0%  skillbright= 49.9
+005420  my=100.0%  foe=  0.0%  skillbright= 89.5
+005423  my=100.0%  foe=  0.0%  skillbright=117.8
+005425  my=  0.0%  foe=  0.0%  skillbright= 86.8
+005428  my=  0.0%  foe=  0.0%  skillbright=116.9
+005431  my=100.0%  foe= 81.7%  skillbright=100.1
+005433  my=100.0%  foe= 67.1%  skillbright=105.0
+005436  my=100.0%  foe= 67.1%  skillbright=135.1
+005438  my=100.0%  foe= 67.1%  skillbright=109.2
+005441  my=100.0%  foe= 67.1%  skillbright=142.7
+005444  my=  0.0%  foe=  0.0%  skillbright= 35.7
+005446  my=  0.0%  foe=  0.0%  skillbright=114.0
+005448  my=  0.0%  foe=  0.0%  skillbright=123.7
+005450  my=  0.0%  foe=  0.0%  skillbright= 87.3
+005452  my=100.0%  foe= 68.8%  skillbright=177.6
+005455  my=100.0%  foe= 67.1%  skillbright=181.4
+005457  my=100.0%  foe= 47.8%  skillbright=156.9
+005500  my=  0.0%  foe=  0.0%  skillbright= 71.0
+005503  my=100.0%  foe= 81.7%  skillbright=127.7
+005505  my=100.0%  foe= 81.7%  skillbright=132.9
+005508  my=100.0%  foe= 81.7%  skillbright=121.0
+005511  my=100.0%  foe= 81.7%  skillbright=128.4
+005513  my=100.0%  foe= 81.7%  skillbright=145.3
+005516  my=100.0%  foe= 81.7%  skillbright=143.5
+005519  my=100.0%  foe=  0.0%  skillbright=129.6
+005521  my=  0.0%  foe=  0.0%  skillbright=128.2
+005524  my=100.0%  foe=  0.0%  skillbright= 81.0
+005527  my=100.0%  foe=  0.0%  skillbright=119.6
+005529  my=100.0%  foe=  0.0%  skillbright=118.9
+005532  my=  0.0%  foe=  0.0%  skillbright= 63.5
+005534  my=  0.0%  foe=  0.0%  skillbright= 82.0
+005536  my=  0.0%  foe=  0.0%  skillbright= 29.7
+005538  my=  0.0%  foe=  0.0%  skillbright= 28.5
+005540  my=  0.0%  foe=  0.0%  skillbright=117.6
+005543  my=100.0%  foe=  0.0%  skillbright=117.2
+005546  my=  0.0%  foe=  0.0%  skillbright=117.7
+005548  my=100.0%  foe=  0.0%  skillbright=120.0
+005551  my=100.0%  foe= 81.7%  skillbright=141.2
+005553  my=100.0%  foe= 81.7%  skillbright=140.5
+005556  my=100.0%  foe= 81.7%  skillbright=134.9
+005559  my=100.0%  foe= 81.7%  skillbright=131.2
+005602  my=100.0%  foe= 81.7%  skillbright= 57.7
+005604  my=  0.0%  foe=  0.0%  skillbright=142.3
+005607  my=100.0%  foe=  0.0%  skillbright=143.1
+005609  my=100.0%  foe= 81.7%  skillbright=129.5
+005612  my=100.0%  foe= 81.7%  skillbright=132.8
+005615  my=100.0%  foe= 81.7%  skillbright=141.3
+005617  my=100.0%  foe= 81.7%  skillbright=128.6
+005620  my=100.0%  foe= 81.7%  skillbright=132.4
+005623  my=100.0%  foe= 81.7%  skillbright=143.4
+005625  my=100.0%  foe= 81.7%  skillbright=130.9
+005628  my=100.0%  foe=  0.0%  skillbright= 89.6
+005631  my=  0.0%  foe=  0.0%  skillbright=129.2
+005633  my=100.0%  foe= 81.7%  skillbright= 82.3
+005636  my=100.0%  foe= 81.7%  skillbright=134.2
+005639  my=100.0%  foe= 81.7%  skillbright=131.1
+005641  my=100.0%  foe=  0.0%  skillbright=140.5
+005644  my=100.0%  foe=  0.0%  skillbright=131.6
+005646  my=100.0%  foe=  0.0%  skillbright=131.7
+005649  my=  0.0%  foe=  0.0%  skillbright=131.1
+005652  my=  0.0%  foe=  0.0%  skillbright=134.1
+005655  my= 96.4%  foe=  0.0%  skillbright= 44.9
+005657  my=  0.0%  foe=  0.0%  skillbright= 86.6
+005700  my=  0.0%  foe=  0.0%  skillbright= 76.1
+005702  my=  0.0%  foe=  0.0%  skillbright= 76.1
+005704  my=  0.0%  foe=  0.0%  skillbright= 65.2
+005707  my=  0.0%  foe=  0.0%  skillbright=  0.0
+005709  my=  0.0%  foe=  0.0%  skillbright= 76.0
+005711  my= 69.8%  foe=  0.0%  skillbright= 77.6
+005714  my= 96.4%  foe=  0.0%  skillbright= 75.2
+005716  my= 69.8%  foe=  0.0%  skillbright= 53.0
+005719  my=  0.0%  foe= 57.6%  skillbright=103.8
+005721  my=  0.0%  foe= 39.0%  skillbright= 83.1
+005723  my=  0.0%  foe= 39.0%  skillbright= 83.8
+005725  my=  0.0%  foe= 39.0%  skillbright= 83.8
