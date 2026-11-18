@@ -1548,10 +1548,10 @@ class Bot:
         if not st["bar"]:
             if self.bar_gone_since is None:
                 self.bar_gone_since = now
-            # the bar must be *continuously* absent for 1.5 s to count as a new
-            # turn (a detector flicker is far shorter)
-            if now - self.bar_gone_since > 1.5:
-                self.acted_at = 0.0
+            # The bar being away for a while used to reset acted_at, which let
+            # the bot press again mid-turn whenever the detector flickered
+            # during an attack animation. The 8 s pacing gate below is the only
+            # retry mechanism now; this reset would defeat it.
             self.prev_key = None
             if st["countdown"]:
                 if self.nodraw_since is None:
@@ -1587,12 +1587,19 @@ class Bot:
         # blocks the *next* turn too.
         if key != self.turn_key and now - self.acted_at > 2.5:
             self.turn_key = key
-            self.acted_at = 0.0
+            # acted_at stays: a state change during an attack animation is not
+            # a new turn. The 8 s gate below owns retry pacing.
 
-        # hard floor: never two presses inside 1.2 s, whatever the state says
+        # ---- turn pacing -----------------------------------------------
+        # acted_at is deliberately NOT reset by bar flicker or key changes any
+        # more; those resets used to sit above this block and let the bot fire
+        # five presses in four seconds whenever the bar detector wobbled during
+        # an attack animation. The two gates below are now the ONLY thing that
+        # can delay a second press, and neither can be bypassed by state churn:
+        #   1.2 s hard floor between any two presses
+        #   8 s wait for the turn to actually resolve before retrying
         if self.acted_at and now - self.acted_at < 1.2:
             return
-        # one press per turn, 8 s retry if the press was dropped
         if self.acted_at and now - self.acted_at < 8.0:
             self._gate(now, "press sent, waiting for the turn to resolve")
             return
@@ -2098,6 +2105,7 @@ class Bot:
             # precheck=False: a focus click in the middle of the screen would
             # dismiss the panel before the card is hit.
             if not self.click_abs(px, py, precheck=False):
+                log("FAINT -> card click FAILED (board/focus), retry next tick")
                 return                  # pending stays set, blacklisted next tick
             time.sleep(0.6)
             # Confirm: click the centre of the screen. The panel is still open,
@@ -2105,7 +2113,8 @@ class Bot:
             # selection (same effect as Space).
             cx, cy = r[0] + r[2] // 2, r[1] + r[3] // 2
             log("FAINT -> confirm click at %d,%d" % (cx, cy))
-            self.click_abs(cx, cy, precheck=False)
+            if not self.click_abs(cx, cy, precheck=False):
+                log("FAINT -> confirm click FAILED (board/focus)")
         else:
             # No row geometry available: fall back to the key sequence.
             if not self.send_key(slot, allow_focus_click=False):
