@@ -450,12 +450,17 @@ def _fill_missing(crop, slots):
     if not (120 <= pitch <= 240):
         pitch = 180.0
     h, w = crop.shape[:2]
+    n_slots = len(slots)
     for i, s in enumerate(slots):
         if s is not None:
             continue
-        # expected centre from the nearest filled neighbour
+        # expected centre from the nearest filled neighbour.
+        # Bound the index by len(ys), not a hard-coded 4: _fill_missing is called
+        # with whatever slot list _slots built, and a shorter list made ys[j]
+        # raise IndexError, which crashed the whole bot (rc=1, no traceback).
         ref = next(((j, ys[j]) for j in (i - 1, i + 1, i - 2, i + 2)
-                    if 0 <= j < 4 and ys[j] is not None), None)
+                    if 0 <= j < n_slots and 0 <= j < len(ys)
+                    and ys[j] is not None), None)
         if ref is None:
             continue
         j, yj = ref
@@ -1035,7 +1040,20 @@ class Bot:
             if self.deadline and time.time() > self.deadline:
                 log("deadline reached, exiting")
                 return 0
-            st = self.perc.observe()
+            # A perception exception used to kill the process (rc=1, no traceback
+            # in the log, supervisor restart mid-match). One bad frame must not
+            # end the run: log it, back off, keep polling.
+            try:
+                st = self.perc.observe()
+            except Exception as e:
+                self.perc_errors = getattr(self, "perc_errors", 0) + 1
+                log("PERCEPTION ERROR #%d: %s: %s" % (
+                    self.perc_errors, type(e).__name__, e))
+                if self.perc_errors in (1, 10, 100):
+                    import traceback
+                    log(traceback.format_exc().replace("\n", " | ")[:400])
+                time.sleep(0.5)
+                continue
             self.last_state = st
             now = time.time()
 
