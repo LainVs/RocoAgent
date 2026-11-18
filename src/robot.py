@@ -1151,6 +1151,16 @@ class Bot:
         self.my_name = None
         self.active_slot = None
         self.energy = None
+        # Leader-form tracking (恶魔狼 首领血脉).
+        # dead_count = own pets that have fainted this match; the "悲悯" trait
+        # grants +30% dual attack per fainted ally, which is why the wolf is
+        # saved for the late game.
+        # Party order from myteam_wolf.md; slot 4 is the wolf.
+        self.party_order = [1, 2, 3, 4, 5, 6]
+        self.leader_slot = 4          # 恶魔狼
+        self.leader_done = False      # 首领化 is once per match
+        self.leader_enabled = False   # off until the panel mapping is verified
+        self.dead_count = 0
         self.switch_count = 0
         self.last_switch_turn = -99
         self.unreadable_since = None
@@ -1543,6 +1553,9 @@ class Bot:
         if self.faint_at is not None and st["my_pct"] is not None and st["my_pct"] > 5.0:
             log("FAINT -> recovered (hp %.0f%%) after %d attempts"
                 % (st["my_pct"], self.switch_attempt))
+            # Each recovery follows a faint: one own pet is now out of the
+            # match. 悲悯 counts these, and the leader decision needs the tally.
+            self.dead_count += 1
             self.faint_at = None
             self.switch_attempt = 0
             self.switch_gave_up = False
@@ -2132,6 +2145,26 @@ class Bot:
                 if not self.send_key("space", allow_focus_click=False):
                     log("FAINT -> space %d dropped" % (i + 1))
                 time.sleep(0.5)
+            # Leader form (首领化): W -> 1 -> Space, once per match, costs no
+            # turn (battle_terms.md:143). The wolf's leader trait 悲悯 grants
+            # +30% dual attack per fainted ally, so it is worth activating as
+            # soon as it enters late in the match. Gated on dead_count so it
+            # does not fire when the wolf comes out early.
+            if (self.leader_enabled and not self.leader_done
+                    and slot == self.leader_slot
+                    and self.dead_count >= 3):
+                time.sleep(1.0)
+                log("LEADER -> 恶魔狼 entering leader form (dead %d)"
+                    % self.dead_count)
+                if self.send_key("w", allow_focus_click=False):
+                    time.sleep(0.9)
+                    self.send_key(1, allow_focus_click=False)
+                    time.sleep(0.9)
+                    for i in range(3):
+                        self.send_key("space", allow_focus_click=False)
+                        time.sleep(0.5)
+                    self.leader_done = True
+                    log("LEADER -> sequence sent")
         else:
             # No row geometry available: fall back to the key sequence.
             if not self.send_key(slot, allow_focus_click=False):
