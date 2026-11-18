@@ -216,6 +216,19 @@ class App(tk.Tk):
                      relief=tk.FLAT, font=F, padding=4)
         st.map("Treeview", background=[("selected", CARD_HI)])
         st.map("Treeview.Heading", background=[("active", CARD_HI)])
+        # 下拉框：默认是白色 3D 边框，在深色面板里非常扎眼
+        st.configure("Roco.TCombobox", fieldbackground=CARD, background=CARD,
+                     foreground=TXT, arrowcolor=DIM, bordercolor=LINE,
+                     lightcolor=LINE, darkcolor=LINE, selectbackground=CARD_HI,
+                     selectforeground=TXT, padding=3)
+        st.map("Roco.TCombobox",
+               fieldbackground=[("readonly", CARD)],
+               foreground=[("readonly", TXT)],
+               background=[("active", CARD_HI)])
+        self.option_add("*TCombobox*Listbox.background", CARD)
+        self.option_add("*TCombobox*Listbox.foreground", TXT)
+        self.option_add("*TCombobox*Listbox.selectBackground", ACCENT)
+        self.option_add("*TCombobox*Listbox.selectForeground", "#ffffff")
 
     # ---------------- 头部
     def _build_header(self):
@@ -251,7 +264,7 @@ class App(tk.Tk):
         bar_holder = tk.Frame(self, bg=PANEL)
         bar_holder.pack(fill=tk.X)
         self.pages = {}
-        self.tabbar = TabBar(bar_holder, ["实时日志", "战绩", "回合", "头像标注"], self._on_tab)
+        self.tabbar = TabBar(bar_holder, ["实时日志", "战绩", "回合", "队伍", "头像标注"], self._on_tab)
         self.tabbar.pack(anchor="w", padx=14)
         tk.Frame(self, bg=LINE, height=1).pack(fill=tk.X)
 
@@ -260,16 +273,21 @@ class App(tk.Tk):
         self.pages["实时日志"] = self._page_log()
         self.pages["战绩"] = self._page_results()
         self.pages["回合"] = self._page_turns()
+        self.pages["队伍"] = self._page_team()
         self.pages["头像标注"] = self._page_portraits()
         self._on_tab("实时日志")
 
     def _on_tab(self, name):
         if not getattr(self, "pages", None):
             return
+        self._active_tab = name
         for n, p in self.pages.items():
             p.pack_forget()
         if name in self.pages:
             self.pages[name].pack(fill=tk.BOTH, expand=True)
+        # 头像页要现读 60+ 张图，切过去时刷新一次，平时不碰
+        if name == "头像标注":
+            self._refresh_portraits(force=True)
 
     # ---------------- 日志页
     def _page_log(self):
@@ -470,6 +488,276 @@ class App(tk.Tk):
                 "%.1f" % it["foe_pct"] if it.get("foe_pct") is not None else "",
                 " ".join(str(x) for x in a), it.get("why", "")))
 
+    # ---------------- 队伍页
+    def _page_team(self):
+        import team_db as T
+        p = tk.Frame(self.body, bg=BG)
+        self._team_sel = 1
+        self._team_opts = T.species_options()
+        self._team_natures = T.natures()
+        self._team_moves = []
+        self._team_cards = {}
+
+        left = tk.Frame(p, bg=BG)
+        left.pack(side=tk.LEFT, fill=tk.Y, padx=(14, 10), pady=12)
+        tk.Label(left, text="我方队伍", bg=BG, fg=DIM, font=F).pack(anchor="w", pady=(0, 6))
+        for i in range(1, 7):
+            card = tk.Frame(left, bg=CARD, width=200, height=64, cursor="hand2")
+            card.pack(fill=tk.X, pady=3)
+            card.pack_propagate(False)
+            bar = tk.Frame(card, bg=LINE, width=3)
+            bar.pack(side=tk.LEFT, fill=tk.Y)
+            body = tk.Frame(card, bg=CARD)
+            body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=9, pady=7)
+            t1 = tk.Label(body, text="%d 号位" % i, bg=CARD, fg=DIM, font=F, anchor="w")
+            t1.pack(fill=tk.X)
+            t2 = tk.Label(body, text="未填写", bg=CARD, fg=DIM, font=FB, anchor="w")
+            t2.pack(fill=tk.X)
+            for w in (card, bar, body, t1, t2):
+                w.bind("<Button-1>", lambda e, s=i: self._team_select(s))
+            self._team_cards[i] = (card, bar, t1, t2)
+
+        self.lb_team_fill = tk.Label(left, text="", bg=BG, fg=DIM, font=F)
+        self.lb_team_fill.pack(anchor="w", pady=(8, 0))
+
+        form = tk.Frame(p, bg=PANEL)
+        form.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 14), pady=12)
+
+        self.lb_team_title = tk.Label(form, text="1 号位", bg=PANEL, fg=TXT, font=FH)
+        self.lb_team_title.pack(anchor="w", padx=14, pady=(12, 8))
+
+        def row(label, hint=""):
+            f = tk.Frame(form, bg=PANEL)
+            f.pack(fill=tk.X, padx=14, pady=3)
+            tk.Label(f, text=label, bg=PANEL, fg=DIM, font=F, width=7,
+                     anchor="w").pack(side=tk.LEFT)
+            return f
+
+        # 种族 + 搜索
+        f = row("种族")
+        self.cb_species = ttk.Combobox(f, values=[], state="readonly", width=44,
+                                       font=F, style="Roco.TCombobox")
+        self.cb_species.pack(side=tk.LEFT)
+        self.cb_species.bind("<<ComboboxSelected>>", lambda e: self._team_species_changed())
+        tk.Label(f, text="搜索", bg=PANEL, fg=DIM, font=F).pack(side=tk.LEFT, padx=(12, 4))
+        self.en_search = tk.Entry(f, bg=CARD, fg=TXT, insertbackground=TXT,
+                                  relief=tk.FLAT, font=F, width=12)
+        self.en_search.pack(side=tk.LEFT)
+        self.en_search.bind("<KeyRelease>", lambda e: self._team_filter())
+
+        f = row("属性")
+        self.lb_species_meta = tk.Label(f, text="—", bg=PANEL, fg=DIM, font=F, anchor="w")
+        self.lb_species_meta.pack(side=tk.LEFT)
+
+        # 等级 / 性格
+        f = row("等级")
+        self.en_level = tk.Entry(f, bg=CARD, fg=TXT, insertbackground=TXT,
+                                 relief=tk.FLAT, font=F, width=6)
+        self.en_level.pack(side=tk.LEFT)
+        tk.Label(f, text="性格", bg=PANEL, fg=DIM, font=F).pack(side=tk.LEFT, padx=(16, 4))
+        self.cb_nature = ttk.Combobox(f, values=[], state="readonly", width=16,
+                                      font=F, style="Roco.TCombobox")
+        self.cb_nature.pack(side=tk.LEFT)
+
+        # 六维
+        f = row("面板值")
+        self.en_stats = {}
+        for key, label in (("hp", "HP"), ("atk", "攻"), ("spa", "魔攻"),
+                           ("def", "防"), ("spd", "魔防"), ("spe", "速")):
+            tk.Label(f, text=label, bg=PANEL, fg=DIM, font=F).pack(side=tk.LEFT, padx=(0, 3))
+            e = tk.Entry(f, bg=CARD, fg=TXT, insertbackground=TXT, relief=tk.FLAT,
+                         font=F, width=5, justify="center")
+            e.pack(side=tk.LEFT, padx=(0, 10))
+            self.en_stats[key] = e
+        tk.Label(f, text="最大血", bg=PANEL, fg=DIM, font=F).pack(side=tk.LEFT, padx=(0, 3))
+        self.en_maxhp = tk.Entry(f, bg=CARD, fg=TXT, insertbackground=TXT,
+                                 relief=tk.FLAT, font=F, width=6, justify="center")
+        self.en_maxhp.pack(side=tk.LEFT)
+
+        tk.Frame(form, bg=LINE, height=1).pack(fill=tk.X, padx=14, pady=(10, 6))
+
+        f = row("技能")
+        self.cb_moves = []
+        holder = tk.Frame(f, bg=PANEL)
+        holder.pack(side=tk.LEFT)
+        for i in range(4):
+            line = tk.Frame(holder, bg=PANEL)
+            line.pack(fill=tk.X, pady=1)
+            tk.Label(line, text="%d" % (i + 1), bg=PANEL, fg=ACCENT, font=FB,
+                     width=2).pack(side=tk.LEFT)
+            cb = ttk.Combobox(line, values=[], state="readonly", width=52,
+                              font=F, style="Roco.TCombobox")
+            cb.pack(side=tk.LEFT)
+            self.cb_moves.append(cb)
+
+        bottom = tk.Frame(form, bg=PANEL)
+        bottom.pack(fill=tk.X, padx=14, pady=(12, 12), side=tk.BOTTOM)
+        flat_button(bottom, "保存这一只", self._team_save, bg=OK,
+                    fg="#08130a", hover="#4ecb5f").pack(side=tk.LEFT)
+        flat_button(bottom, "清空", self._team_clear).pack(side=tk.LEFT, padx=8)
+        self.lb_team_msg = tk.Label(bottom, text="", bg=PANEL, fg=DIM, font=F)
+        self.lb_team_msg.pack(side=tk.LEFT, padx=12)
+
+        tk.Label(form, text="面板值直接抄游戏里精灵详情页；不填的项留空，计算器不会瞎猜。",
+                 bg=PANEL, fg=DIM, font=("Microsoft YaHei UI", 8)).pack(
+                     anchor="w", padx=14, pady=(0, 4))
+
+        self._team_filter()
+        self._team_select(1)
+        return p
+
+    def _team_types(self, raw):
+        try:
+            return "/".join(json.loads(raw or "[]"))
+        except ValueError:
+            return "?"
+
+    def _team_filter(self):
+        import team_db as T
+        q = (self.en_search.get() or "").strip()
+        self._team_opts = T.species_options(query=q) if q else T.species_options()
+        self._team_values = ["%s · %s · %s · 总%s" % (
+            o["id"], o["name"], self._team_types(o["type_names"]), o["total"])
+            for o in self._team_opts]
+        self.cb_species.config(values=self._team_values)
+
+    def _team_select(self, slot):
+        import team_db as T
+        self._team_sel = slot
+        self.lb_team_title.config(text="%d 号位" % slot)
+        for i, (card, bar, t1, t2) in self._team_cards.items():
+            on = (i == slot)
+            card.config(bg=CARD_HI if on else CARD)
+            for w in (card, t1, t2):
+                w.config(bg=CARD_HI if on else CARD)
+            bar.config(bg=ACCENT if on else LINE)
+
+        data = {d["slot"]: d for d in T.load_team()}.get(slot) or {}
+        sid = data.get("species_id")
+        if sid:
+            for idx, o in enumerate(self._team_opts):
+                if o["id"] == sid:
+                    self.cb_species.current(idx)
+                    break
+            else:
+                self.cb_species.set("")
+        else:
+            self.cb_species.set("")
+        self.en_level.delete(0, tk.END)
+        self.en_level.insert(0, str(data.get("level") or 60))
+        nat = [n for n in self._team_natures if n["id"] == data.get("nature_id")]
+        self.cb_nature.set("%s · %s" % (nat[0]["name"], nat[0]["plus_stat"] + "/" + nat[0]["minus_stat"])
+                           if nat else "")
+        for key, e in self.en_stats.items():
+            e.delete(0, tk.END)
+            if data.get(key) is not None:
+                e.insert(0, str(data[key]))
+        self.en_maxhp.delete(0, tk.END)
+        if data.get("max_hp"):
+            self.en_maxhp.insert(0, str(data["max_hp"]))
+        self._team_species_changed(moves=data.get("moves") or [])
+        self._team_refresh_cards()
+
+    def _team_species_changed(self, moves=None):
+        import team_db as T
+        idx = self.cb_species.current()
+        if idx < 0 or idx >= len(self._team_opts):
+            self.lb_species_meta.config(text="—")
+            self._team_moves = []
+            for cb in self.cb_moves:
+                cb.config(values=[])
+                cb.set("")
+            return
+        sp = self._team_opts[idx]
+        feat = T.feature_of(sp["id"]) or {}
+        self.lb_species_meta.config(
+            text="%s · 总族值 %s · 特性 %s%s" % (
+                self._team_types(sp["type_names"]), sp["total"],
+                feat.get("name") or "—",
+                ("（%s）" % feat["desc"]) if feat.get("desc") else ""))
+        self._team_moves = T.moves_for(sp["id"])
+        vals = ["%s · %s · %s威力 · E%s" % (
+            m["id"], m["name"], m["power"] or "—", m["cost"]) for m in self._team_moves]
+        for i, cb in enumerate(self.cb_moves):
+            cb.config(values=vals)
+            if moves and i < len(moves) and moves[i]:
+                for j, m in enumerate(self._team_moves):
+                    if m["id"] == moves[i]:
+                        cb.current(j)
+                        break
+                else:
+                    cb.set("")
+            elif not moves:
+                cb.set("")
+
+    def _team_save(self):
+        import team_db as T
+        idx = self.cb_species.current()
+        if idx < 0:
+            self.lb_team_msg.config(text="先选种族", fg=BAD)
+            return
+        sp = self._team_opts[idx]
+
+        def num(widget):
+            raw = (widget.get() or "").strip()
+            if not raw:
+                return None
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        nat_idx = self.cb_nature.current()
+        nature_id = self._team_natures[nat_idx]["id"] if 0 <= nat_idx < len(self._team_natures) else None
+        moves = []
+        for cb in self.cb_moves:
+            j = cb.current()
+            moves.append(self._team_moves[j]["id"] if 0 <= j < len(self._team_moves) else None)
+        data = {
+            "species_id": sp["id"],
+            "level": num(self.en_level) or 60,
+            "nature_id": nature_id,
+            "max_hp": num(self.en_maxhp),
+            "moves": [m for m in moves if m],
+        }
+        for key, e in self.en_stats.items():
+            data[key] = num(e)
+        T.save_pet(self._team_sel, data)
+        self.lb_team_msg.config(text="已保存 %s" % sp["name"], fg=OK)
+        self._team_refresh_cards()
+
+    def _team_clear(self):
+        import team_db as T
+        T.clear_slot(self._team_sel)
+        self.cb_species.set("")
+        for e in list(self.en_stats.values()) + [self.en_maxhp, self.en_level]:
+            e.delete(0, tk.END)
+        for cb in self.cb_moves:
+            cb.set("")
+        self.cb_nature.set("")
+        self.lb_species_meta.config(text="—")
+        self.lb_team_msg.config(text="已清空", fg=DIM)
+        self._team_refresh_cards()
+
+    def _team_refresh_cards(self):
+        import team_db as T
+        team = {d["slot"]: d for d in T.load_team()}
+        for i, (card, bar, t1, t2) in self._team_cards.items():
+            d = team.get(i) or {}
+            if d.get("species_id"):
+                sp = T.species_row(d["species_id"]) or {}
+                t1.config(text="%d 号位 · Lv%s" % (i, d.get("level") or 60))
+                t2.config(text="%s  %s" % (sp.get("name") or "?",
+                                           self._team_types(sp.get("type_names"))),
+                          fg=TXT)
+                bar.config(bg=ACCENT if i == self._team_sel else OK)
+            else:
+                t1.config(text="%d 号位" % i)
+                t2.config(text="未填写", fg=DIM)
+                bar.config(bg=ACCENT if i == self._team_sel else LINE)
+        self.lb_team_fill.config(text="已填 %d / 6" % sum(
+            1 for d in team.values() if d.get("species_id")))
+
     # ---------------- 头像页
     def _page_portraits(self):
         p = tk.Frame(self.body, bg=BG)
@@ -493,16 +781,25 @@ class App(tk.Tk):
         self._imgs = []
         return p
 
-    def _refresh_portraits(self):
-        for w in self.pinner.winfo_children():
-            w.destroy()
-        self._imgs.clear()
+    def _refresh_portraits(self, force=False):
+        # 67 张图重建一次要 2 秒，比 2 秒的心跳还长，会把自己卡死。
+        # 所以：签名没变就不重建，而且只在头像页可见时才重建。
         try:
             names = sorted(os.listdir(PORTRAIT_DIR))
         except OSError:
             return
         unknown = [n for n in names if n.startswith("_unknown_")
                    and n.endswith(".png") and not n.endswith("_name.png")]
+        sig = tuple(unknown)
+        if not force and sig == getattr(self, "_portrait_sig", None):
+            return
+        if not force and getattr(self, "_active_tab", "") != "头像标注":
+            return
+        self._portrait_sig = sig
+
+        for w in self.pinner.winfo_children():
+            w.destroy()
+        self._imgs.clear()
         self.lb_pcount.config(text="%d 张待标注" % len(unknown))
         if not unknown:
             tk.Label(self.pinner, text="没有待标注的头像", bg=BG, fg=DIM,
