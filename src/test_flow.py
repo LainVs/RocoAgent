@@ -101,6 +101,28 @@ def main():
             name, want, len(rows), "OK" if ok else "**FAIL**"))
 
     print()
+    print("--- hp bar: unknown must not be reported as 0% ---")
+    import numpy as np
+    # A frame with no HP bar at all (VS splash): the reading must be None, not
+    # 0.0, or the bot thinks it fainted and sits in the switch branch.
+    blank = np.zeros((40, 260, 3), np.uint8)
+    r = robot._read_bar(blank, (0, 2, 244, 20))
+    ok = r["pct"] is None
+    if not ok:
+        bad += 1
+    print("%-52s %-14s %s" % (
+        "blank frame -> pct None", str(r["pct"]), "OK" if ok else "**FAIL**"))
+
+    # A frame whose border is the battle-HUD grey but with no fill = really 0%.
+    hud = np.full((40, 260, 3), 100, np.uint8)
+    r = robot._read_bar(hud, (0, 2, 244, 20))
+    ok = r["pct"] == 0.0 and r["ui"] is True
+    if not ok:
+        bad += 1
+    print("%-52s %-14s %s" % (
+        "hud border, no fill -> pct 0.0", str(r["pct"]), "OK" if ok else "**FAIL**"))
+
+    print()
     if bad:
         print("%d FAILURE(S)" % bad)
         return 1

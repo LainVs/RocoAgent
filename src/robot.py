@@ -334,6 +334,7 @@ class Perc:
         return {
             "t": time.time(),
             "battle": battle,
+            "my_ui": my["ui"], "foe_ui": foe["ui"],
             "my_pct": my["pct"], "my_color": my["color"],
             "foe_pct": foe["pct"], "foe_color": foe["color"],
             "bar": visible, "npills": npills,
@@ -344,10 +345,17 @@ class Perc:
 
 
 def _read_bar(rgb, rect):
-    """Same physics as hpwatch.read_bar, inlined so we don't import its CLI."""
+    """Same physics as hpwatch.read_bar, inlined so we don't import its CLI.
+
+    `pct` is None when the bar cannot be read, and only 0.0 when the bar is
+    genuinely empty. Returning 0.0 for both made "I cannot see the HUD" and "my
+    pet has fainted" indistinguishable: during the VS splash the HP bars are not
+    drawn yet, so the bot read 0.0, decided it had fainted, and then sat in the
+    switch branch for the whole match - 45 s and 0 actions on 13:11:18.
+    """
     x, y, w, h = rect
     if x + w > rgb.shape[1] or y + h + 1 >= rgb.shape[0]:
-        return {"pct": 0.0, "color": "none", "ui": False}
+        return {"pct": None, "color": "none", "ui": False}
     sub = rgb[y:y + h, x:x + w]
     r = sub[:, :, 0].astype(np.int16)
     g = sub[:, :, 1].astype(np.int16)
@@ -364,11 +372,13 @@ def _read_bar(rgb, rect):
     emn = np.minimum(np.minimum(er, eg), eb)
     ui = bool((((emx - emn) < 20) & (emx > 70) & (emx < 125)).mean() > 0.55)
     if not len(cols) or cols[0] > 6:
-        return {"pct": 0.0, "color": "none", "ui": ui}
+        # No fill at all. Only call it an empty bar when the frame really is a
+        # battle HUD; otherwise the reading is unknown.
+        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui}
     pct = 100.0 * (cols[-1] + 1) / w
     px = sub[fm]
     if len(px) == 0:
-        return {"pct": 0.0, "color": "none", "ui": ui}
+        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui}
     mr, mg = px[:, 0].mean(), px[:, 1].mean()
     color = "green" if mg >= mr else ("orange" if mg > 0.6 * mr else "red")
     return {"pct": round(min(pct, 100.0), 1), "color": color, "ui": ui}
@@ -1124,8 +1134,13 @@ class Bot:
             time.sleep(POLL_S)
 
     def _battle_tick(self, st, now):
-        # fainted -> forced switch
-        if st["my_pct"] is not None and st["my_pct"] <= 0.5:
+        # fainted -> forced switch.
+        # Require the HP bar to actually be drawn. During the VS splash the bars
+        # are not on screen yet, and the old code read that as 0 HP, entered this
+        # branch, found no switch panel, and returned every tick - the pet never
+        # acted once (13:11:18: 45 s, 0 actions).
+        if (st.get("my_ui") and st["my_pct"] is not None
+                and st["my_pct"] <= 0.5):
             if self.faint_at is None:
                 self.faint_at = now
             # The death animation shows 0 HP for a few seconds; _try_switch only
