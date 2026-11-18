@@ -1269,17 +1269,15 @@ class Bot:
             log("review spawn failed: %s" % e)
 
     def next_switch_slot(self):
-        """Rotate through the switch list.
+        """Rotate through the party for a mid-battle switch (E -> slot -> Space).
 
-        The panel that appears when a pet faints numbers its rows 1..5 and never
-        lists the pet that is currently out, so 5 is the highest valid key even
-        though the party has six members (verified on a real panel: five rows,
-        numbers 1-5, no sixth row anywhere down to y=1650).
-
-        Row 1 is tried last: on the one panel captured at 1:1 it was the row
-        holding an already-fainted pet.
+        This is the six-slot party list, which is not the same list as the
+        forced-switch panel: that one only ever shows the five pets that are not
+        currently out (verified at 1:1: five rows numbered 1-5, no sixth row).
+        Mid-battle the party HUD shows all six, numbered 1-6, so 6 is a valid
+        key here - and only here.
         """
-        slots = [2, 3, 4, 5, 1]
+        slots = [2, 3, 4, 5, 6, 1]
         return slots[self.switch_count % len(slots)]
 
     def _living_rows(self, rows):

@@ -94,15 +94,15 @@ def main():
                 "OK" if ok else "**FAIL**"))
 
     print()
-    print("--- switch slot range ---")
+    print("--- mid-battle switch slot range (party list is 1-6) ---")
     bot = types.SimpleNamespace(switch_count=0)
     seen = []
-    for i in range(10):
+    for i in range(12):
         bot.switch_count = i
         seen.append(robot.Bot.next_switch_slot(bot))
-    ok = max(seen) <= 5 and min(seen) >= 1
+    ok = max(seen) <= 6 and min(seen) >= 1
     bad += 0 if ok else 1
-    print("slots over 10 rotations: %s %s" % (seen, "OK" if ok else "**FAIL**"))
+    print("slots over 12 rotations: %s %s" % (seen, "OK" if ok else "**FAIL**"))
 
     print()
     if missing:
