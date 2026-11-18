@@ -68,6 +68,7 @@ LOBBY_BTN_ABS = (2648, 1605)           # physical, verified clickable
 RESULT_BTN_ABS = (1736, 1571)          # physical, verified clickable
 ADVANCE_ABS = (1733, 1279)             # neutral spot that advances splash screens
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
+CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 STUCK_S = 60.0                         # no progress for this long => force an action
 CLICK_COOLDOWN_S = 6.0
 ADVANCE_COOLDOWN_S = 2.5
@@ -223,7 +224,6 @@ class Screen:
                 self.hwnd, x, y, w, h = g
         self.rect = (x, y, w, h)
         self.last_refresh = time.time()
-
     def grab(self, box):
         """box = (x, y, w, h) window-relative -> RGB ndarray."""
         if self.rect is None or time.time() - self.last_refresh > 2.0:
@@ -362,7 +362,13 @@ def _read_bar(rgb, rect):
     b = sub[:, :, 2].astype(np.int16)
     mx = np.maximum(np.maximum(r, g), b)
     mn = np.minimum(np.minimum(r, g), b)
-    fm = ((mx - mn) > 60) & (mx > 145)
+    # Fill test. Two failure modes were measured on live frames:
+    #   * green/orange bars: fill max-channel ~170-200, empty slot ~110
+    #   * red critical bars: fill max-channel ~155, empty slot ~142
+    # The old gate (max > 145) rejected the red fill entirely, so a pet at 2%
+    # read as "no fill" = fainted. A gate of 150 sits between the red fill and
+    # the red empty slot; combined with the saturation test it separates both.
+    fm = ((mx - mn) > 55) & (mx > 150)
     cols = np.nonzero(fm.sum(axis=0) >= 2)[0]
     edge = np.concatenate([rgb[y - 2:y, x:x + w], rgb[y + h:y + h + 2, x:x + w]])
     er = edge[:, :, 0].astype(np.int16)
@@ -695,6 +701,43 @@ def find_action_button(screen):
     _, bx, by, bw, bh = best
     cx = x + bx + bw // 2
     cy = y + by + bh // 2
+    if screen.rect is None:
+        return None
+    return (screen.rect[0] + cx, screen.rect[1] + cy)
+
+
+def find_confirm_button(screen):
+    """Locate the on-screen "Space" confirm plate shown while the switch panel
+    is open.
+
+    Clicking it is more reliable than sending a Space key: the board maps
+    "space" to Keyboard.press(' ') (esp_alt/src/main.cpp:248) and HANDOFF.md
+    records that "number key + Space" never actually switched a pet. The plate
+    is a light rounded rectangle on the saturated arena floor.
+
+    Returns physical (x, y) or None.
+    """
+    x, y, w, h = CONFIRM_BAND
+    crop = screen.grab((x, y, w, h))
+    if crop is None or crop.size == 0:
+        return None
+    mx = crop.max(axis=2).astype(np.int16)
+    mn = crop.min(axis=2).astype(np.int16)
+    light = ((mn > 190) & ((mx - mn) < 35)).astype(np.uint8)
+    if int(light.sum()) < 800:
+        return None
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(light, 8)
+    best = None
+    for i in range(1, n):
+        bx, by, bw, bh, area = stats[i]
+        if area < 800 or not (50 <= bw <= 300) or not (24 <= bh <= 120):
+            continue
+        if best is None or area > best[0]:
+            best = (area, bx, by, bw, bh)
+    if best is None:
+        return None
+    _, bx, by, bw, bh = best
+    cx, cy = x + bx + bw // 2, y + by + bh // 2
     if screen.rect is None:
         return None
     return (screen.rect[0] + cx, screen.rect[1] + cy)
@@ -1617,8 +1660,17 @@ class Bot:
             return                      # focus lost: retry after the cooldown
         self.switch_pending = slot
         time.sleep(1.0)
-        if not self.send_key("space"):
-            return                      # keep switch_pending, re-check next tick
+        # Confirm by clicking the on-screen Space plate rather than sending the
+        # Space key: the firmware maps "space" to Keyboard.press(' ') and the
+        # game has never honoured it (HANDOFF.md: "number key + Space" 无效).
+        btn = find_confirm_button(self.screen)
+        if btn is not None:
+            log("FAINT -> click confirm plate %d,%d" % btn)
+            self.click_abs(*btn)
+        else:
+            log("FAINT -> confirm plate not found, falling back to Space key")
+            if not self.send_key("space"):
+                return                  # keep switch_pending, re-check next tick
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
         # blacklisted at the top of this function. Clearing the blacklist here
