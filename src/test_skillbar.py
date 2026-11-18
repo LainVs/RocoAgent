@@ -28,12 +28,16 @@ CASES = {
     "v1.png": (True, ["--", "546", "--", "--"]),
     "k1.png": (True, ["--", "212", "70", "100"]),
     "q1.png": (True, ["--", "415", "--", "--"]),
+    # f2.png was originally a scenery frame, but the file on disk is now a real
+    # battle frame. Verified at 2.5x zoom on 2026-11-18: 吞咽 315 / 力量增效 -- /
+    # 跌落 251 / 火云车 --. So the old "must be empty" expectation was stale; the
+    # detector was right and the test case was wrong.
+    "f2.png": (True, ["315", "--", "251", "--"]),
     "r1.png": (False, ["-", "-", "-", "-"]),
     "h8.png": (False, ["-", "-", "-", "-"]),
     "h2.png": (False, ["-", "-", "-", "-"]),
     "h5.png": (False, ["-", "-", "-", "-"]),
     "p1.png": (False, ["-", "-", "-", "-"]),
-    "f2.png": (False, ["-", "-", "-", "-"]),
     "livebar2.png": (False, ["-", "-", "-", "-"]),
 }
 

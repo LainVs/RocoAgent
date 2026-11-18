@@ -38,7 +38,7 @@ import cv2  # noqa: E402
 import mss  # noqa: E402
 
 import digitread as dr  # noqa: E402
-import rocs  # noqa: E402  (asyncio BLE session)
+import esp_shim as rocs  # noqa: E402  (BLE via the espfast daemon)
 import asyncio  # noqa: E402
 
 try:
@@ -69,6 +69,7 @@ RESULT_BTN_ABS = (1736, 1571)          # physical, verified clickable
 ADVANCE_ABS = (1733, 1279)             # neutral spot that advances splash screens
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
+RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
 STUCK_S = 60.0                         # no progress for this long => force an action
 CLICK_COOLDOWN_S = 6.0
 ADVANCE_COOLDOWN_S = 2.5
@@ -550,15 +551,28 @@ def _fill_missing(crop, slots):
             continue
         y0 = max(0, int(want - 60))
         y1 = min(h, int(want + 60))
-        # Search only within the column the known capsules occupy. Using the
-        # whole 140..430 band let the matcher latch onto a neighbour card's
-        # digits: slot 2 was placed at x=148 / y=538 while the real capsule sits
-        # at x~228 / y~421, which produced a 66 px pitch and made the entire bar
-        # read as "not drawn" for four minutes.
-        xs_known = [int(s["box"][0]) for s in slots if s]
-        if xs_known:
-            bx0 = max(0, min(xs_known) - 30)
-            bx1 = min(w, max(xs_known) + 110)
+        # Search band for the missing capsule.
+        #
+        # History: the original used a fixed 140..430 and sometimes latched onto
+        # a neighbour card's digits. Commit 1d51d0b narrowed it to "the x range
+        # of the capsules already found, -30/+110". That was wrong in the other
+        # direction: when find_pills returns only one or two capsules the band
+        # collapses around them and the missing slots can never be recovered,
+        # which is exactly the "find_pills=2, slots all wrong" state seen in the
+        # 17:21 match.
+        #
+        # Compromise: keep the full band, but require the candidate to sit within
+        # a plausible distance of the column the known capsules form. The column
+        # is derived from the median x, so one stray capsule cannot shrink it.
+        xs_known = sorted(int(s["box"][0]) for s in slots if s)
+        if len(xs_known) >= 2:
+            col = xs_known[len(xs_known) // 2]
+            # Wide enough to hold a card, narrow enough to exclude the next
+            # column. Cards are ~180 px apart and the capsule sits near the
+            # card's left edge, so -70/+120 around the median column covers the
+            # digits without reaching the neighbour.
+            bx0 = max(0, col - 70)
+            bx1 = min(w, col + 120)
         else:
             bx0, bx1 = 140, min(w, 430)
         band = crop[y0:y1, bx0:bx1]
@@ -825,6 +839,32 @@ def find_confirm_button(screen):
     return (screen.rect[0] + cx, screen.rect[1] + cy)
 
 
+def is_result_screen(screen):
+    """Is the post-match summary on screen?
+
+    After a match ends the game shows "我方战况" on the left, a huge ATTACK
+    banner, and "观战人数 / 奖励总数" bottom-right. The HP bars are still drawn,
+    so battle detection stays true and the bot keeps polling a screen where no
+    skill bar will ever appear - that is the "215 s, 3 actions" match.
+
+    The reliable marker is the reward block: two lines of small text on a dark
+    panel in the bottom-right corner, above the currency readout. Tested as a
+    dark, low-saturation rectangle with bright text inside it.
+    """
+    x, y, w, h = RESULT_BAND
+    crop = screen.grab((x, y, w, h))
+    if crop is None or crop.size == 0:
+        return False
+    mx = crop.max(axis=2).astype(np.int16)
+    mn = crop.min(axis=2).astype(np.int16)
+    bright_text = ((mn > 180) & ((mx - mn) < 60))
+    dark_bg = (mx < 90)
+    # the panel is mostly dark with a little bright text
+    dark_frac = float(dark_bg.mean())
+    text_frac = float(bright_text.mean())
+    return dark_frac > 0.45 and 0.005 < text_frac < 0.20
+
+
 def find_switch_rows(screen):
     """Detect the forced-switch party list (5 staggered cards down the left).
 
@@ -1061,6 +1101,7 @@ class Bot:
         self.advance_at = 0.0
         self.advance_count = 0
         self.advance_gave_up = False
+        self.result_seen_at = None
         self.gate_logged_at = 0.0
         self.turn_gate_since = None
         self.match_ended_at = 0.0
@@ -1290,6 +1331,20 @@ class Bot:
                 if self.match_started is not None and now - self.battle_false_since > 6.0:
                     self._end_match()
                 self._idle_tick(now)
+
+            # ---- the result screen keeps the HP bars drawn, so the branch above
+            # never runs. Without this check the bot sits on the summary screen
+            # until the watchdog fires, which is exactly the "215 s, 3 actions"
+            # match at 17:22.
+            if self.match_started is not None and is_result_screen(self.screen):
+                if self.result_seen_at is None:
+                    self.result_seen_at = now
+                elif now - self.result_seen_at > 1.5:
+                    log("result screen detected -> ending match")
+                    self._end_match()
+                    self.result_seen_at = None
+            else:
+                self.result_seen_at = None
 
             if now - last_log > 15.0:
                 last_log = now
@@ -1601,7 +1656,13 @@ class Bot:
                 ok = self.send_key(action[1])
             if ok:
                 time.sleep(0.9)
-                ok = self.send_key("space")
+                # Confirm with a left click; see _try_switch for why Space is
+                # not reliable here (the foreground gets stolen between keys).
+                r = self.screen.rect
+                if r is not None:
+                    self.click_abs(r[0] + 1300, r[1] + 1100)
+                else:
+                    ok = self.send_key("space")
             if ok:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
@@ -1923,22 +1984,25 @@ class Bot:
         # of picking it again - the log showed the same slot retried twenty
         # times precisely because this was only set after a successful send.
         self.switch_pending = slot
-        self._click_to_focus()
         if not self.send_key(slot):
             return                      # pending stays set, blacklisted next tick
         time.sleep(0.9)
-        # Confirm: click a harmless spot to make sure the game owns the
-        # foreground, then press Space. Verified live 2026-11-18 14:15 that
-        # E -> number -> Space swaps the pet; the click is insurance because
-        # SetForegroundWindow is refused whenever another process holds focus
-        # and the number key alone does not take it back.
-        self._click_to_focus()
-        for attempt in range(3):
-            if self.send_key("space"):
-                break
-            time.sleep(0.4)
+        # Confirm with a LEFT CLICK, not the Space key.
+        #
+        # Two facts, both measured on 2026-11-18:
+        #   * a plain left click acts as the confirm, exactly like Space;
+        #   * Space kept being dropped. The log is full of
+        #     "FOCUS LOST - key 2 dropped (fg=1705966)" where fg is the editor:
+        #     the number key landed (it re-took focus first) but by the time
+        #     Space was due the foreground had been stolen again.
+        # A hardware click is real user input, so it takes the foreground and
+        # confirms in one action. The point is low and central - over the arena
+        # floor, clear of every card and button.
+        r = self.screen.rect
+        if r is not None:
+            self.click_abs(r[0] + 1300, r[1] + 1100)
         else:
-            return                      # keep switch_pending, re-check next tick
+            self.send_key("space")
         # Do NOT assume success here. Whether the row was selectable is only
         # known on the next poll: if the panel is still up, the pending slot is
         # blacklisted at the top of this function. Clearing the blacklist here
