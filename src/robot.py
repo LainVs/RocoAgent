@@ -122,9 +122,33 @@ def acquire_lock():
     return True
 
 
+_STDOUT_IS_LOG = None
+
+
+def _stdout_is_log():
+    """True when stdout already appends to bot_stdout.log.
+
+    The bot is normally started with its stdout redirected into that same
+    file, and log() also appends to it - which wrote every line twice, with
+    the two handles interleaving so lines came out mangled.
+    """
+    global _STDOUT_IS_LOG
+    if _STDOUT_IS_LOG is None:
+        _STDOUT_IS_LOG = False
+        try:
+            a = os.fstat(sys.stdout.fileno())
+            b = os.stat(BOT_LOG)
+            _STDOUT_IS_LOG = (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+        except Exception:
+            pass
+    return _STDOUT_IS_LOG
+
+
 def log(msg):
     line = "%s %s" % (time.strftime("%H:%M:%S"), msg)
     print(line, flush=True)
+    if _stdout_is_log():
+        return
     try:
         with open(BOT_LOG, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -346,19 +370,70 @@ class Screen:
 
 
 # ------------------------------------------------------------------ perception
-def _card_lit(crop, pill):
-    """Is this skill card lit (affordable) or dimmed (not enough energy)?
+def _plate_p75(crop, pill):
+    """Brightness of the name plate under a skill card, or None.
 
-    Measured on live frames: affordable cards have a max-channel mean of
-    148-159, unaffordable ones 56-88. 105 sits in the gap.
+    The plate is the cream banner just below the damage capsule. It is the
+    one part of the card whose colour does not depend on the skill art, so
+    it is the only safe place to read "can this card be used".
     """
-    x0, y0, x1, y1 = pill["box"]
-    ax0, ax1 = max(0, x0 - 45), x1
-    ay0, ay1 = max(0, y0 - 70), max(0, y0 - 10)
-    art = crop[ay0:ay1, ax0:ax1]
-    if art.size == 0:
+    h, w = crop.shape[:2]
+    x0, y0, x1, y1 = [int(v) for v in pill["box"]]
+    py0, py1 = y1 + 4, y1 + 32
+    px0, px1 = x0 + 6, x1 - 6
+    if py1 > h or px1 > w or py1 - py0 < 8 or px1 - px0 < 8:
+        return None
+    plate = crop[py0:py1, px0:px1]
+    if plate.size == 0:
+        return None
+    return float(np.percentile(plate.max(axis=2).astype(np.float32), 75))
+
+
+def _card_lit(crop, pill):
+    """Is this skill card usable (enough energy) or greyed out?
+
+    Greying is an overlay on the whole card: the cream name plate drops from
+    ~245 to ~196 and its >230 pixel count goes to zero. 220 sits in the gap.
+
+    The old test measured the art above the capsule, which misreads any skill
+    whose icon is naturally dark (e.g. the purple 蝙蝠毒蛊 read 102 vs the
+    105 threshold) and misses cards that are greyed but still bright.
+    """
+    p75 = _plate_p75(crop, pill)
+    if p75 is None:
         return True
-    return float(art.max(axis=2).mean()) > 105.0
+    return p75 > 220.0
+
+
+def count_skill_badges(screen):
+    """How many ★N cost badges are on screen (0..4, sometimes 5).
+
+    The badge keeps its yellow star even when the card is greyed out, so it
+    is the one marker that still says "the skill bar is up" on the dimmed
+    frames where find_pills gives up on the capsule colour. The post-match
+    summary has none - that is what makes it usable as a "not a result
+    screen" test.
+    """
+    x0, y0, x1, y1 = SKILL_BOX
+    crop = screen.grab_s((x0, y0, x1 - x0, y1 - y0))
+    if crop is None or crop.size == 0:
+        return 0
+    d = np.abs(crop.astype(np.int16) - np.array(dr.BG, np.int16)).max(axis=2)
+    m = (d <= 10).astype(np.uint8)
+    n, _lab, stats, _ = cv2.connectedComponentsWithStats(m, 8)
+    h, w = crop.shape[:2]
+    cnt = 0
+    for i in range(1, n):
+        bx, by, bw, bh, _area = stats[i]
+        if not (28 <= bw <= 110 and 14 <= bh <= 46):
+            continue
+        if not (1.1 <= bw / float(bh) <= 4.2):
+            continue
+        if bx + bw > w or by + bh > h:
+            continue
+        if int(dr.gate_yellow(crop[by:by + bh, bx:bx + bw]).sum()) >= 40:
+            cnt += 1
+    return cnt
 
 
 CNT_ROI = (1120, 55, 340, 150)     # the big white countdown numeral
@@ -423,7 +498,12 @@ class Perc:
                 for i, pill in enumerate(slots):
                     r = dr.read_skill(crop, pill, self.tpl)
                     r["index"] = i + 1
-                    r["lit"] = _card_lit(crop, pill) if pill else False
+                    p75 = _plate_p75(crop, pill) if pill else None
+                    r["plate"] = None if p75 is None else int(round(p75))
+                    # Same rule as _card_lit; computed here so the plate value
+                    # can go into the turn log without a second pass. A missing
+                    # capsule means "no card here", which is never pressable.
+                    r["lit"] = bool(p75 is not None and p75 > 220.0)
                     skills[i] = r
 
         cnt = False
@@ -1520,15 +1600,17 @@ class Bot:
             # been running for a while, so require a minimum age.
             if (self.match_started is not None
                     and now - self.match_started > 45.0
+                    and self.turn >= 3
                     and not st["bar"]
-                    and is_result_screen(self.screen)):
+                    and is_result_screen(self.screen)
+                    and count_skill_badges(self.screen) < 2):
                 if self.result_seen_at is None:
                     self.result_seen_at = now
                     # Keep the frame that triggered the detector: the guard
                     # below is a heuristic and has ended live matches before,
                     # so every hit must leave evidence behind.
                     self._dump_result_frame()
-                elif now - self.result_seen_at > 2.5:
+                elif now - self.result_seen_at > 5.0:
                     log("result screen detected -> ending match")
                     self._end_match()
                     self.result_seen_at = None
@@ -1987,6 +2069,19 @@ class Bot:
             self.miss_streak = 0
         self.prev_my_pct = st["my_pct"]
 
+        # Last line of defence: never press a card the screen says is greyed.
+        # Every decision path already filters on "lit", but a stale plan or a
+        # policy that ignores it must not turn into a wasted turn (and, when out
+        # of energy, into the same key being hammered).
+        if action[0] == "skill":
+            idx = action[1] - 1
+            card = st["skills"][idx] if 0 <= idx < len(st["skills"]) else None
+            if card is not None and not card.get("lit", True):
+                log("GUARD slot %d is greyed (plate=%s), gather energy instead"
+                    % (action[1], card.get("plate")))
+                why = "slot %d greyed -> gather energy" % action[1]
+                action = ("energy",)
+
         ok = False
         if action[0] == "skill":
             ok = self.send_key(action[1])
@@ -2056,11 +2151,18 @@ class Bot:
         self.last_progress_at = now
         self.turn += 1
         lit = "".join("1" if (s and s.get("lit")) else "0" for s in st["skills"])
-        log("T%-3d %s (%s) me=%s%% foe=%s%% lit=%s cnt=%d" % (
+        # When any card is greyed, print its plate brightness: 245 = usable,
+        # 196 = greyed. This is the field that used to be misread.
+        detail = ""
+        if "0" in lit:
+            detail = " plate=%s" % "/".join(
+                "--" if not s or s.get("plate") is None else str(s["plate"])
+                for s in st["skills"])
+        log("T%-3d %s (%s) me=%s%% foe=%s%% lit=%s cnt=%d%s" % (
             self.turn,
             ("SKILL %d" % action[1]) if action[0] == "skill"
             else ("SWITCH %d" % action[1]) if action[0] == "switch" else "ENERGY F",
-            why, st["my_pct"], st["foe_pct"], lit, int(st["countdown"])))
+            why, st["my_pct"], st["foe_pct"], lit, int(st["countdown"]), detail))
         self._dump(st, action, why)
 
     def _idle_tick(self, now):

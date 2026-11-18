@@ -1,22 +1,18 @@
 # -*- coding: utf-8 -*-
-"""RocoAgent 原生管理面板（tkinter）。
+"""RocoAgent 管理面板 v2（tkinter 原生，深色卡片式）。
 
-为什么不用浏览器：
-    uvicorn + Chromium 一套下来常驻 200-400MB，对一台同时在跑游戏和 BLE
-    守护进程的机器来说太重。这个窗口只有 30-50MB，开机就能放旁边。
+设计目标：
+    - 不弹浏览器，常驻 30-50MB
+    - 卡片式布局 + 统一色板，告警色只给真正需要注意的东西
+    - 离屏截图模式 --snapshot，方便改样式时自检
 
-功能：
-    状态栏   运行状态 / PID / 最后日志时间 / 今日胜率
-    日志页   增量读取 bot_stdout.log，关键字着色，自动跟随，可暂停
-    战绩页   胜/负/未判定、胜率、最近 30 场条形图、最近 20 场列表
-    回合页   动作分布、双方平均血量
-    头像页   未标注头像缩略图 + 输入框，改名即扩充识别库
-
-启动：
-    python src/roco_gui.py
+启动：双击桌面 "RocoAgent 管理面板"，或
+      pythonw src\\roco_gui.py
+自检：python src\\roco_gui.py --snapshot out.png
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import os
 import subprocess
@@ -35,26 +31,40 @@ RESULTS = os.path.join(LOG_DIR, "results.jsonl")
 TURNS = os.path.join(LOG_DIR, "turns.jsonl")
 PID_FILE = os.path.join(LOG_DIR, "bot.pid")
 
-FONT = ("Microsoft YaHei UI", 9)
-FONT_B = ("Microsoft YaHei UI", 9, "bold")
-FONT_T = ("Microsoft YaHei UI", 12, "bold")
+# ---------------------------------------------------------------- 色板
+BG = "#0b0e14"          # 窗口底
+PANEL = "#11161f"       # 面板
+CARD = "#161d28"        # 卡片
+CARD_HI = "#1b2432"     # 卡片悬停/强调
+LINE = "#222b3a"        # 分隔线
+TXT = "#e6edf3"         # 主文字
+DIM = "#8b98a9"         # 次要文字
+ACCENT = "#4c8dff"      # 主色
+OK = "#3fb950"
+BAD = "#f85149"
+WARN = "#d29922"
+PURPLE = "#a371f7"
 
-# 日志着色规则：(子串, tag, 配置)
+F = ("Microsoft YaHei UI", 9)
+FB = ("Microsoft YaHei UI", 9, "bold")
+FH = ("Microsoft YaHei UI", 11, "bold")
+FT = ("Microsoft YaHei UI", 15, "bold")
+MONO = ("Consolas", 9)
+
 LOG_RULES = [
-    ("LEADER", "leader", {"foreground": "#c792ea"}),
-    ("RESULT win", "win", {"foreground": "#3fb950"}),
-    ("RESULT loss", "loss", {"foreground": "#f85149"}),
-    ("RESULT flat", "flat", {"foreground": "#8b949e"}),
-    ("PET ->", "pet", {"foreground": "#58a6ff"}),
-    ("FAINT", "faint", {"foreground": "#d29922"}),
-    ("ERROR", "err", {"foreground": "#f85149"}),
-    ("FOCUS LOST", "focus", {"foreground": "#8b949e"}),
+    ("LEADER", PURPLE),
+    ("RESULT win", OK),
+    ("RESULT loss", BAD),
+    ("RESULT flat", DIM),
+    ("PET ->", ACCENT),
+    ("FAINT", WARN),
+    ("CLICK GUARD", BAD),
+    ("ERROR", BAD),
+    ("FOCUS LOST", "#5b6676"),
 ]
 
 
-# --------------------------------------------------------------------------
-# 数据读取
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------- 数据
 def read_jsonl(path, tail=None):
     items = []
     try:
@@ -71,13 +81,10 @@ def read_jsonl(path, tail=None):
                     items.append(obj)
     except OSError:
         return []
-    if tail and len(items) > tail:
-        items = items[-tail:]
-    return items
+    return items[-tail:] if tail and len(items) > tail else items
 
 
 def pid_alive(pid):
-    import ctypes
     k32 = ctypes.windll.kernel32
     h = k32.OpenProcess(0x1000, False, int(pid))
     if not h:
@@ -98,13 +105,6 @@ def robot_pid():
     return pid if pid_alive(pid) else None
 
 
-def tail_offset():
-    try:
-        return os.path.getsize(LOG_FILE)
-    except OSError:
-        return 0
-
-
 def stat(items):
     win = sum(1 for x in items if x.get("result") == "win")
     loss = sum(1 for x in items if x.get("result") == "loss")
@@ -114,93 +114,197 @@ def stat(items):
             "rate": (win / decided) if decided else 0.0}
 
 
-# --------------------------------------------------------------------------
-# 主窗口
-# --------------------------------------------------------------------------
+# ---------------------------------------------------------------- 组件
+class Card(tk.Frame):
+    """带左侧强调条的卡片。"""
+
+    def __init__(self, parent, title, value="—", sub="", color=ACCENT, width=200):
+        super().__init__(parent, bg=CARD, highlightthickness=0)
+        self.configure(width=width, height=92)
+        self.pack_propagate(False)
+        bar = tk.Frame(self, bg=color, width=3)
+        bar.pack(side=tk.LEFT, fill=tk.Y)
+        body = tk.Frame(self, bg=CARD)
+        body.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=12, pady=9)
+        tk.Label(body, text=title, bg=CARD, fg=DIM, font=F, anchor="w").pack(fill=tk.X)
+        self.lb_value = tk.Label(body, text=value, bg=CARD, fg=TXT, font=FT, anchor="w")
+        self.lb_value.pack(fill=tk.X, pady=(1, 0))
+        self.lb_sub = tk.Label(body, text=sub, bg=CARD, fg=DIM, font=F, anchor="w")
+        self.lb_sub.pack(fill=tk.X)
+
+    def set(self, value=None, sub=None, color=None):
+        if value is not None:
+            self.lb_value.config(text=value)
+        if sub is not None:
+            self.lb_sub.config(text=sub)
+        if color is not None:
+            self.lb_value.config(fg=color)
+
+
+def flat_button(parent, text, cmd, bg=CARD, fg=TXT, hover=CARD_HI, padx=14, pady=6):
+    b = tk.Button(parent, text=text, command=cmd, bg=bg, fg=fg, font=FB,
+                  relief=tk.FLAT, bd=0, padx=padx, pady=pady,
+                  activebackground=hover, activeforeground=fg, cursor="hand2")
+    b.bind("<Enter>", lambda e: b.config(bg=hover))
+    b.bind("<Leave>", lambda e: b.config(bg=bg))
+    return b
+
+
+class TabBar(tk.Frame):
+    def __init__(self, parent, tabs, on_change):
+        super().__init__(parent, bg=PANEL)
+        self.on_change = on_change
+        self.items = {}
+        for i, name in enumerate(tabs):
+            holder = tk.Frame(self, bg=PANEL)
+            holder.pack(side=tk.LEFT, padx=(0, 4))
+            lb = tk.Label(holder, text=name, bg=PANEL, fg=DIM, font=FB,
+                          padx=16, pady=9, cursor="hand2")
+            lb.pack()
+            ul = tk.Frame(holder, bg=PANEL, height=2)
+            ul.pack(fill=tk.X)
+            self.items[name] = (lb, ul)
+            lb.bind("<Button-1>", lambda e, n=name: self.select(n))
+        self.select(tabs[0])
+
+    def select(self, name):
+        for n, (lb, ul) in self.items.items():
+            on = (n == name)
+            lb.config(fg=TXT if on else DIM, bg=PANEL)
+            ul.config(bg=ACCENT if on else PANEL)
+        self.on_change(name)
+
+
+# ---------------------------------------------------------------- 主窗口
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("RocoAgent 管理面板")
-        self.geometry("1080x680")
-        self.minsize(900, 560)
-        self.configure(bg="#0d1117")
+        self.geometry("1120x800")
+        self.minsize(980, 720)
+        self.configure(bg=BG)
         self._log_pos = 0
         self._log_lines = 0
         self._follow = tk.BooleanVar(value=True)
-        self._build_style()
-        self._build_status()
+        self._blink = False
+        self._style_tree()
+        self._build_header()
+        self._build_footer()
         self._build_tabs()
-        self._build_buttons()
+        self._dark_titlebar()
         self.after(300, self._tick)
 
-    # ---------------- 样式
-    def _build_style(self):
+    def _dark_titlebar(self):
+        try:
+            hwnd = int(self.frame(), 16) if str(self.frame()).startswith("0x") else int(self.frame())
+            for attr in (20, 19):
+                v = ctypes.c_int(1)
+                ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                    hwnd, attr, ctypes.byref(v), ctypes.sizeof(v))
+        except Exception:
+            pass
+
+    def _style_tree(self):
         st = ttk.Style(self)
         try:
             st.theme_use("clam")
         except tk.TclError:
             pass
-        st.configure(".", font=FONT, background="#0d1117", foreground="#c9d1d9")
-        st.configure("TNotebook", background="#0d1117", borderwidth=0)
-        st.configure("TNotebook.Tab", padding=(14, 6), background="#161b22",
-                     foreground="#8b949e")
-        st.map("TNotebook.Tab", background=[("selected", "#21262d")],
-               foreground=[("selected", "#f0f6fc")])
-        st.configure("Treeview", background="#0d1117", fieldbackground="#0d1117",
-                     foreground="#c9d1d9", rowheight=22, borderwidth=0)
-        st.configure("Treeview.Heading", background="#161b22", foreground="#c9d1d9")
+        st.configure("Treeview", background=PANEL, fieldbackground=PANEL,
+                     foreground=TXT, rowheight=23, borderwidth=0, font=F)
+        st.configure("Treeview.Heading", background=CARD, foreground=DIM,
+                     relief=tk.FLAT, font=F, padding=4)
+        st.map("Treeview", background=[("selected", CARD_HI)])
+        st.map("Treeview.Heading", background=[("active", CARD_HI)])
 
-    def _build_status(self):
-        bar = tk.Frame(self, bg="#161b22", height=34)
-        bar.pack(side=tk.TOP, fill=tk.X)
-        bar.pack_propagate(False)
-        self.lb_status = tk.Label(bar, text="● 已停止", bg="#161b22",
-                                  fg="#f85149", font=FONT_B)
-        self.lb_status.pack(side=tk.LEFT, padx=10)
-        self.lb_pid = tk.Label(bar, text="PID: —", bg="#161b22", fg="#8b949e",
-                               font=FONT)
-        self.lb_pid.pack(side=tk.LEFT, padx=10)
-        self.lb_last = tk.Label(bar, text="最后日志: —", bg="#161b22",
-                                fg="#8b949e", font=FONT)
-        self.lb_last.pack(side=tk.LEFT, padx=10)
-        self.lb_rate = tk.Label(bar, text="今日胜率: —", bg="#161b22",
-                                fg="#c9d1d9", font=FONT_B)
-        self.lb_rate.pack(side=tk.RIGHT, padx=10)
+    # ---------------- 头部
+    def _build_header(self):
+        h = tk.Frame(self, bg=PANEL, height=66)
+        h.pack(fill=tk.X)
+        h.pack_propagate(False)
+        left = tk.Frame(h, bg=PANEL)
+        left.pack(side=tk.LEFT, padx=(18, 0))
+        tk.Label(left, text="RocoAgent", bg=PANEL, fg=TXT, font=("Microsoft YaHei UI", 16, "bold")).pack(anchor="w")
+        tk.Label(left, text="洛克王国世界 · 排位托管", bg=PANEL, fg=DIM, font=("Microsoft YaHei UI", 8)).pack(anchor="w")
 
+        self.dot = tk.Canvas(h, width=10, height=10, bg=PANEL, highlightthickness=0)
+        self.dot.pack(side=tk.LEFT, padx=(26, 6))
+        self.dot_id = self.dot.create_oval(1, 1, 9, 9, fill=BAD, outline="")
+        self.lb_status = tk.Label(h, text="已停止", bg=PANEL, fg=TXT, font=FB)
+        self.lb_status.pack(side=tk.LEFT)
+
+        self.lb_meta = tk.Label(h, text="PID —   ·   最后日志 —", bg=PANEL, fg=DIM, font=F)
+        self.lb_meta.pack(side=tk.LEFT, padx=16)
+
+        right = tk.Frame(h, bg=PANEL)
+        right.pack(side=tk.RIGHT, padx=18)
+        self.lb_rate = tk.Label(right, text="胜率 —", bg=PANEL, fg=TXT,
+                                font=("Microsoft YaHei UI", 13, "bold"))
+        self.lb_rate.pack(anchor="e")
+        self.lb_rate_sub = tk.Label(right, text="", bg=PANEL, fg=DIM, font=F)
+        self.lb_rate_sub.pack(anchor="e")
+
+        tk.Frame(self, bg=LINE, height=1).pack(fill=tk.X)
+
+    # ---------------- 页签
     def _build_tabs(self):
-        self.nb = ttk.Notebook(self)
-        self.nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=(6, 0))
-        self._tab_log()
-        self._tab_result()
-        self._tab_turns()
-        self._tab_portraits()
+        bar_holder = tk.Frame(self, bg=PANEL)
+        bar_holder.pack(fill=tk.X)
+        self.pages = {}
+        self.tabbar = TabBar(bar_holder, ["实时日志", "战绩", "回合", "头像标注"], self._on_tab)
+        self.tabbar.pack(anchor="w", padx=14)
+        tk.Frame(self, bg=LINE, height=1).pack(fill=tk.X)
+
+        self.body = tk.Frame(self, bg=BG)
+        self.body.pack(fill=tk.BOTH, expand=True)
+        self.pages["实时日志"] = self._page_log()
+        self.pages["战绩"] = self._page_results()
+        self.pages["回合"] = self._page_turns()
+        self.pages["头像标注"] = self._page_portraits()
+        self._on_tab("实时日志")
+
+    def _on_tab(self, name):
+        if not getattr(self, "pages", None):
+            return
+        for n, p in self.pages.items():
+            p.pack_forget()
+        if name in self.pages:
+            self.pages[name].pack(fill=tk.BOTH, expand=True)
 
     # ---------------- 日志页
-    def _tab_log(self):
-        f = tk.Frame(self.nb, bg="#0d1117")
-        self.nb.add(f, text="实时日志")
-        top = tk.Frame(f, bg="#0d1117")
-        top.pack(fill=tk.X)
-        tk.Checkbutton(top, text="自动跟随", variable=self._follow,
-                       bg="#0d1117", fg="#8b949e", selectcolor="#21262d",
-                       activebackground="#0d1117", activeforeground="#c9d1d9",
-                       font=FONT).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="清屏", command=self._clear_log,
-                  bg="#21262d", fg="#c9d1d9", relief=tk.FLAT,
-                  font=FONT).pack(side=tk.LEFT, padx=4)
-        tk.Button(top, text="跳到末尾", command=self._jump_end,
-                  bg="#21262d", fg="#c9d1d9", relief=tk.FLAT,
-                  font=FONT).pack(side=tk.LEFT, padx=4)
-        box = tk.Frame(f, bg="#0d1117")
-        box.pack(fill=tk.BOTH, expand=True)
-        self.txt = tk.Text(box, bg="#010409", fg="#c9d1d9", insertbackground="#c9d1d9",
-                           relief=tk.FLAT, wrap=tk.NONE, font=("Consolas", 9))
-        sb = tk.Scrollbar(box, command=self.txt.yview)
+    def _page_log(self):
+        p = tk.Frame(self.body, bg=BG)
+        top = tk.Frame(p, bg=BG)
+        top.pack(fill=tk.X, padx=14, pady=(10, 6))
+        self.lb_follow = tk.Label(top, text="", bg=BG, fg=DIM, font=F,
+                                  cursor="hand2")
+        self.lb_follow.pack(side=tk.LEFT)
+        self.lb_follow.bind("<Button-1>", lambda e: self._toggle_follow())
+        self._toggle_follow(force=True)
+        flat_button(top, "清屏", self._clear_log).pack(side=tk.LEFT, padx=8)
+        flat_button(top, "跳到末尾", self._jump_end).pack(side=tk.LEFT)
+        self.lb_loginfo = tk.Label(top, text="", bg=BG, fg=DIM, font=F)
+        self.lb_loginfo.pack(side=tk.RIGHT)
+
+        wrap = tk.Frame(p, bg=PANEL, highlightthickness=0)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 12))
+        self.txt = tk.Text(wrap, bg=PANEL, fg="#c7d1de", insertbackground=TXT,
+                           relief=tk.FLAT, bd=0, wrap=tk.NONE, font=MONO,
+                           padx=12, pady=8, spacing1=1, spacing3=1)
+        sb = ttk.Scrollbar(wrap, command=self.txt.yview)
         self.txt.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.txt.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        for _sub, tag, cfg in LOG_RULES:
-            self.txt.tag_configure(tag, **cfg)
+        for sub, color in LOG_RULES:
+            self.txt.tag_configure(sub, foreground=color)
+        return p
+
+    def _toggle_follow(self, force=False):
+        if not force:
+            self._follow.set(not self._follow.get())
+        on = self._follow.get()
+        self.lb_follow.config(text=("● " if on else "○ ") + "自动跟随",
+                              fg=OK if on else DIM)
 
     def _clear_log(self):
         self.txt.delete("1.0", tk.END)
@@ -212,28 +316,25 @@ class App(tk.Tk):
     def _append_log(self, text):
         for line in text.splitlines():
             tag = None
-            for sub, t, _cfg in LOG_RULES:
+            for sub, _c in LOG_RULES:
                 if sub in line:
-                    tag = t
+                    tag = sub
                     break
-            if tag:
-                self.txt.insert(tk.END, line + "\n", tag)
-            else:
-                self.txt.insert(tk.END, line + "\n")
+            self.txt.insert(tk.END, line + "\n", tag)
             self._log_lines += 1
-        # 控制内存：超过 6000 行删掉最早的 2000 行
         if self._log_lines > 6000:
             self.txt.delete("1.0", "2000.0")
             self._log_lines -= 2000
         if self._follow.get():
             self.txt.see(tk.END)
+        self.lb_loginfo.config(text="%d 行" % self._log_lines)
 
     def _poll_log(self):
         try:
             size = os.path.getsize(LOG_FILE)
         except OSError:
             return
-        if size < self._log_pos:          # 文件被截断/轮转
+        if size < self._log_pos:
             self._log_pos = 0
         if size == self._log_pos:
             return
@@ -248,72 +349,101 @@ class App(tk.Tk):
             self._append_log(chunk)
 
     # ---------------- 战绩页
-    def _tab_result(self):
-        f = tk.Frame(self.nb, bg="#0d1117")
-        self.nb.add(f, text="战绩")
-        self.lb_cards = tk.Label(f, text="", bg="#0d1117", fg="#c9d1d9",
-                                 font=FONT_T, anchor="w", justify=tk.LEFT)
-        self.lb_cards.pack(fill=tk.X, padx=10, pady=8)
-        self.cv = tk.Canvas(f, height=90, bg="#0d1117", highlightthickness=0)
-        self.cv.pack(fill=tk.X, padx=10)
+    def _page_results(self):
+        p = tk.Frame(self.body, bg=BG)
+        row = tk.Frame(p, bg=BG)
+        row.pack(fill=tk.X, padx=14, pady=(14, 8))
+        self.c_win = Card(row, "今日胜", "0", "有判定的对局", OK, width=170)
+        self.c_loss = Card(row, "今日负", "0", "", BAD, width=170)
+        self.c_rate = Card(row, "胜率", "—", "只算有判定的", ACCENT, width=190)
+        self.c_flat = Card(row, "未判定", "0", "对局没打出结果", WARN, width=190)
+        for c in (self.c_win, self.c_loss, self.c_rate, self.c_flat):
+            c.pack(side=tk.LEFT, padx=(0, 10))
+
+        chart_wrap = tk.Frame(p, bg=PANEL)
+        chart_wrap.pack(fill=tk.X, padx=14, pady=(6, 10))
+        tk.Label(chart_wrap, text="最近 30 场", bg=PANEL, fg=DIM,
+                 font=F).pack(anchor="w", padx=12, pady=(8, 0))
+        self.cv = tk.Canvas(chart_wrap, height=86, bg=PANEL, highlightthickness=0)
+        self.cv.pack(fill=tk.X, padx=12, pady=(2, 10))
+
+        table_wrap = tk.Frame(p, bg=PANEL)
+        table_wrap.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 14))
         cols = ("ts", "result", "rank")
-        self.tv_res = ttk.Treeview(f, columns=cols, show="headings", height=14)
-        for c, t, w in (("ts", "时间", 110), ("result", "结果", 110),
-                        ("rank", "段位", 200)):
+        self.tv_res = ttk.Treeview(table_wrap, columns=cols, show="headings", height=8)
+        for c, t, w in (("ts", "时间", 110), ("result", "结果", 120),
+                        ("rank", "段位", 240)):
             self.tv_res.heading(c, text=t)
             self.tv_res.column(c, width=w, anchor="w")
-        self.tv_res.pack(fill=tk.BOTH, expand=True, padx=10, pady=8)
-        self.tv_res.tag_configure("win", foreground="#3fb950")
-        self.tv_res.tag_configure("loss", foreground="#f85149")
-        self.tv_res.tag_configure("flat", foreground="#8b949e")
+        self.tv_res.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        self.tv_res.tag_configure("win", foreground=OK)
+        self.tv_res.tag_configure("loss", foreground=BAD)
+        self.tv_res.tag_configure("flat", foreground=DIM)
+        return p
 
     def _refresh_results(self):
         items = read_jsonl(RESULTS)
-        today = stat(items)
+        t = stat(items)
         r20 = stat(items[-20:])
-        self.lb_cards.config(
-            text="今日  胜 %d / 负 %d / 未判定 %d      胜率 %.1f%%%s\n"
-                 "最近 20 场胜率 %.1f%%"
-                 % (today["win"], today["loss"], today["flat"],
-                    today["rate"] * 100,
-                    "" if not today["flat"] else "（%d 场有判定）" % today["decided"],
-                    r20["rate"] * 100))
-        # 条形图
-        self.cv.delete("all")
+        self.c_win.set(str(t["win"]))
+        self.c_loss.set(str(t["loss"]))
+        self.c_rate.set("%.1f%%" % (t["rate"] * 100) if t["decided"] else "—",
+                        "近 20 场 %.1f%%" % (r20["rate"] * 100) if r20["decided"] else "近 20 场 —")
+        self.c_flat.set(str(t["flat"]), "已剔除出胜率")
+        self.lb_rate.config(text="%.1f%%" % (t["rate"] * 100) if t["decided"] else "—")
+        self.lb_rate_sub.config(
+            text="%d 胜 %d 负 · %d 未判定" % (t["win"], t["loss"], t["flat"]))
+
+        cv = self.cv
+        cv.delete("all")
         recent = items[-30:]
-        w = max(1, self.cv.winfo_width() or 1000)
-        bw = max(6, (w - 20) / max(1, len(recent)))
-        colors = {"win": "#3fb950", "loss": "#f85149", "flat": "#484f58"}
+        w = max(300, cv.winfo_width() or 900)
+        n = max(1, len(recent))
+        slot = (w - 24) / n
+        bw = max(6, slot * 0.62)
+        colors = {"win": OK, "loss": BAD, "flat": "#38414f"}
+        cv.create_line(12, 70, w - 12, 70, fill=LINE)
         for i, it in enumerate(recent):
-            x = 10 + i * bw
-            self.cv.create_rectangle(x, 20, x + bw - 3, 70,
-                                     fill=colors.get(it.get("result"), "#484f58"),
-                                     outline="")
-        # 列表
+            x = 12 + i * slot + (slot - bw) / 2
+            hgt = 46 if it.get("result") != "flat" else 22
+            col = colors.get(it.get("result"), "#38414f")
+            cv.create_rectangle(x, 70 - hgt, x + bw, 70, fill=col, outline="")
+        if not recent:
+            cv.create_text(w / 2, 40, text="还没有战绩", fill=DIM, font=F)
+
         for row in self.tv_res.get_children():
             self.tv_res.delete(row)
+        label = {"win": "胜", "loss": "负", "flat": "未判定"}
         for it in items[-20:][::-1]:
             self.tv_res.insert("", tk.END, values=(
-                it.get("ts", ""), it.get("result", ""),
-                "%s/%s -> %s/%s" % (it.get("before"), it.get("of"),
-                                    it.get("after"), it.get("of"))),
+                it.get("ts", ""), label.get(it.get("result"), it.get("result", "")),
+                "%s/%s → %s/%s" % (it.get("before"), it.get("of"),
+                                   it.get("after"), it.get("of"))),
                 tags=(it.get("result", "flat"),))
 
     # ---------------- 回合页
-    def _tab_turns(self):
-        f = tk.Frame(self.nb, bg="#0d1117")
-        self.nb.add(f, text="回合统计")
-        self.lb_turns = tk.Label(f, text="", bg="#0d1117", fg="#c9d1d9",
-                                 font=FONT_T, anchor="w", justify=tk.LEFT)
-        self.lb_turns.pack(fill=tk.X, padx=10, pady=10)
+    def _page_turns(self):
+        p = tk.Frame(self.body, bg=BG)
+        row = tk.Frame(p, bg=BG)
+        row.pack(fill=tk.X, padx=14, pady=(14, 8))
+        self.c_skill = Card(row, "技能", "0", "最近 200 回合", ACCENT, width=150)
+        self.c_energy = Card(row, "聚能", "0", "", PURPLE, width=150)
+        self.c_switch = Card(row, "换人", "0", "", WARN, width=150)
+        self.c_hp = Card(row, "平均血量", "—", "我方 / 对面", OK, width=230)
+        for c in (self.c_skill, self.c_energy, self.c_switch, self.c_hp):
+            c.pack(side=tk.LEFT, padx=(0, 10))
+
+        wrap = tk.Frame(p, bg=PANEL)
+        wrap.pack(fill=tk.BOTH, expand=True, padx=14, pady=(8, 14))
         cols = ("ts", "turn", "my", "foe", "action", "why")
-        self.tv_turns = ttk.Treeview(f, columns=cols, show="headings", height=18)
-        for c, t, w in (("ts", "时间", 80), ("turn", "回合", 50),
+        self.tv_turns = ttk.Treeview(wrap, columns=cols, show="headings", height=8)
+        for c, t, w in (("ts", "时间", 80), ("turn", "回合", 54),
                         ("my", "我方%", 70), ("foe", "对面%", 70),
-                        ("action", "动作", 90), ("why", "理由", 420)):
+                        ("action", "动作", 100), ("why", "理由", 460)):
             self.tv_turns.heading(c, text=t)
             self.tv_turns.column(c, width=w, anchor="w")
-        self.tv_turns.pack(fill=tk.BOTH, expand=True, padx=10, pady=(0, 10))
+        self.tv_turns.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+        return p
 
     def _refresh_turns(self):
         items = read_jsonl(TURNS, tail=200)
@@ -322,18 +452,17 @@ class App(tk.Tk):
             a = it.get("action") or []
             k = a[0] if a else "?"
             kinds[k] = kinds.get(k, 0) + 1
+        self.c_skill.set(str(kinds.get("skill", 0)))
+        self.c_energy.set(str(kinds.get("energy", 0)))
+        self.c_switch.set(str(kinds.get("switch", 0)))
         my = [it["my_pct"] for it in items if it.get("my_pct") is not None]
         foe = [it["foe_pct"] for it in items if it.get("foe_pct") is not None]
         avg = lambda xs: (sum(xs) / len(xs)) if xs else 0
-        self.lb_turns.config(text="最近 %d 回合    动作: %s    我方均血 %.1f%%    "
-                                  "对面均血 %.1f%%"
-                             % (len(items),
-                                "  ".join("%s=%d" % (k, v) for k, v in
-                                          sorted(kinds.items(), key=lambda x: -x[1])),
-                                avg(my), avg(foe)))
+        self.c_hp.set("%.0f%% / %.0f%%" % (avg(my), avg(foe)),
+                      "最近 %d 回合" % len(items))
         for row in self.tv_turns.get_children():
             self.tv_turns.delete(row)
-        for it in items[-60:][::-1]:
+        for it in items[-80:][::-1]:
             a = it.get("action") or []
             self.tv_turns.insert("", tk.END, values=(
                 it.get("ts", ""), it.get("turn", ""),
@@ -342,26 +471,27 @@ class App(tk.Tk):
                 " ".join(str(x) for x in a), it.get("why", "")))
 
     # ---------------- 头像页
-    def _tab_portraits(self):
-        f = tk.Frame(self.nb, bg="#0d1117")
-        self.nb.add(f, text="头像标注")
-        tip = tk.Label(f, bg="#0d1117", fg="#8b949e", font=FONT, anchor="w",
-                       justify=tk.LEFT,
-                       text="认不出的头像每 10 秒存一张。填名字后回车即可改名，"
-                            "机器人下次识别立刻生效（不用重启）。")
-        tip.pack(fill=tk.X, padx=10, pady=6)
-        outer = tk.Frame(f, bg="#0d1117")
-        outer.pack(fill=tk.BOTH, expand=True, padx=10)
-        self.pc = tk.Canvas(outer, bg="#0d1117", highlightthickness=0)
-        sb = tk.Scrollbar(outer, command=self.pc.yview)
+    def _page_portraits(self):
+        p = tk.Frame(self.body, bg=BG)
+        head = tk.Frame(p, bg=BG)
+        head.pack(fill=tk.X, padx=14, pady=(12, 6))
+        tk.Label(head, text="认不出的头像每 10 秒存一张，填名字回车即可（立即生效）",
+                 bg=BG, fg=DIM, font=F).pack(side=tk.LEFT)
+        self.lb_pcount = tk.Label(head, text="", bg=BG, fg=DIM, font=F)
+        self.lb_pcount.pack(side=tk.RIGHT)
+        outer = tk.Frame(p, bg=BG)
+        outer.pack(fill=tk.BOTH, expand=True, padx=14, pady=(0, 14))
+        self.pc = tk.Canvas(outer, bg=BG, highlightthickness=0)
+        sb = ttk.Scrollbar(outer, command=self.pc.yview)
         self.pc.configure(yscrollcommand=sb.set)
         sb.pack(side=tk.RIGHT, fill=tk.Y)
         self.pc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.pinner = tk.Frame(self.pc, bg="#0d1117")
+        self.pinner = tk.Frame(self.pc, bg=BG)
         self.pc.create_window((0, 0), window=self.pinner, anchor="nw")
         self.pinner.bind("<Configure>",
                          lambda e: self.pc.configure(scrollregion=self.pc.bbox("all")))
         self._imgs = []
+        return p
 
     def _refresh_portraits(self):
         for w in self.pinner.winfo_children():
@@ -371,14 +501,15 @@ class App(tk.Tk):
             names = sorted(os.listdir(PORTRAIT_DIR))
         except OSError:
             return
-        unknown = [n for n in names
-                   if n.startswith("_unknown_") and n.endswith(".png")
-                   and not n.endswith("_name.png")]
+        unknown = [n for n in names if n.startswith("_unknown_")
+                   and n.endswith(".png") and not n.endswith("_name.png")]
+        self.lb_pcount.config(text="%d 张待标注" % len(unknown))
         if not unknown:
-            tk.Label(self.pinner, text="没有待标注的头像", bg="#0d1117",
-                     fg="#8b949e", font=FONT).grid(row=0, column=0, pady=10)
+            tk.Label(self.pinner, text="没有待标注的头像", bg=BG, fg=DIM,
+                     font=F).grid(row=0, column=0, pady=20, padx=10)
             return
         from PIL import Image, ImageTk
+        COLS = 4
         for i, fn in enumerate(unknown):
             path = os.path.join(PORTRAIT_DIR, fn)
             try:
@@ -388,25 +519,22 @@ class App(tk.Tk):
             except Exception:
                 continue
             self._imgs.append(ph)
-            row = tk.Frame(self.pinner, bg="#161b22")
-            row.grid(row=i, column=0, sticky="ew", pady=3, padx=2)
-            tk.Label(row, image=ph, bg="#161b22").pack(side=tk.LEFT, padx=6, pady=4)
-            tk.Label(row, text=fn, bg="#161b22", fg="#8b949e", font=FONT,
-                     width=24, anchor="w").pack(side=tk.LEFT)
-            ent = tk.Entry(row, bg="#0d1117", fg="#c9d1d9", insertbackground="#c9d1d9",
-                           relief=tk.FLAT, font=FONT, width=16)
-            ent.pack(side=tk.LEFT, padx=6)
-            ent.bind("<Return>", lambda e, p=path, f2=fn, w=ent: self._label(p, f2, w))
-            tk.Button(row, text="保存", bg="#238636", fg="white", relief=tk.FLAT,
-                      font=FONT,
-                      command=lambda p=path, f2=fn, w=ent: self._label(p, f2, w)
-                      ).pack(side=tk.LEFT, padx=4)
+            card = tk.Frame(self.pinner, bg=PANEL)
+            card.grid(row=i // COLS, column=i % COLS, padx=6, pady=6, sticky="nsew")
+            tk.Label(card, image=ph, bg=PANEL).pack(padx=8, pady=(8, 2))
+            tk.Label(card, text=fn, bg=PANEL, fg=DIM, font=("Consolas", 8)).pack()
+            ent = tk.Entry(card, bg=CARD, fg=TXT, insertbackground=TXT,
+                           relief=tk.FLAT, font=F, width=14, justify="center")
+            ent.pack(padx=8, pady=(4, 0))
+            ent.bind("<Return>", lambda e, pa=path, f2=fn, w=ent: self._label(pa, f2, w))
+            flat_button(card, "保存", lambda pa=path, f2=fn, w=ent: self._label(pa, f2, w),
+                        bg=CARD, padx=10, pady=3).pack(padx=8, pady=6)
 
     def _label(self, path, filename, entry):
         name = (entry.get() or "").strip()
         if not name:
             return
-        if not all(c.isalnum() or c == "_" or ord(c) > 127 for c in name) or len(name) > 24:
+        if len(name) > 24 or not all(c.isalnum() or c == "_" or ord(c) > 127 for c in name):
             messagebox.showerror("名字不合法", "只允许中英文/数字/下划线，最长 24 字")
             return
         dst = os.path.join(PORTRAIT_DIR, name + ".png")
@@ -418,38 +546,37 @@ class App(tk.Tk):
         except OSError as e:
             messagebox.showerror("改名失败", str(e))
             return
-        self._log_user("头像标注: %s -> %s.png" % (filename, name))
+        self._append_log("[ui] 头像标注: %s -> %s.png" % (filename, name))
         self._refresh_portraits()
 
-    def _log_user(self, text):
-        self._append_log("[ui] " + text)
-
-    # ---------------- 底部按钮
-    def _build_buttons(self):
-        bar = tk.Frame(self, bg="#161b22", height=40)
-        bar.pack(side=tk.BOTTOM, fill=tk.X)
-        bar.pack_propagate(False)
-        mk = lambda t, cmd, bg: tk.Button(bar, text=t, command=cmd, bg=bg,
-                                          fg="white", relief=tk.FLAT, font=FONT_B,
-                                          padx=14)
-        mk("启动机器人", self.start_bot, "#238636").pack(side=tk.LEFT, padx=8, pady=7)
-        mk("停止机器人", self.stop_bot, "#da3633").pack(side=tk.LEFT, padx=4, pady=7)
-        mk("打开日志目录", self.open_logs, "#21262d").pack(side=tk.LEFT, padx=4, pady=7)
+    # ---------------- 底部
+    def _build_footer(self):
+        f = tk.Frame(self, bg=PANEL, height=52)
+        f.pack(side=tk.BOTTOM, fill=tk.X)
+        f.pack_propagate(False)
+        flat_button(f, "启动机器人", self.start_bot, bg=OK, fg="#08130a",
+                    hover="#4ecb5f").pack(side=tk.LEFT, padx=(14, 6), pady=8)
+        flat_button(f, "停止机器人", self.stop_bot, bg=BAD, fg="white",
+                    hover="#ff6259").pack(side=tk.LEFT, padx=6, pady=8)
+        flat_button(f, "打开日志目录", self.open_logs).pack(side=tk.LEFT, padx=6, pady=8)
+        tk.Label(f, text="espfast 需先启动", bg=PANEL, fg=DIM,
+                 font=("Microsoft YaHei UI", 8)).pack(side=tk.RIGHT, padx=16)
 
     def start_bot(self):
         if robot_pid():
             messagebox.showinfo("已在运行", "机器人已经在跑了")
             return
         try:
-            f = open(LOG_FILE, "a", encoding="utf-8")
-            subprocess.Popen([PYTHON, "-W", "ignore", "-u", "robot.py", "--seconds", "7200"],
+            fh = open(LOG_FILE, "a", encoding="utf-8")
+            subprocess.Popen([PYTHON, "-W", "ignore", "-u", "robot.py",
+                              "--seconds", "7200"],
                              cwd=SRC_DIR, stdin=subprocess.DEVNULL,
-                             stdout=f, stderr=subprocess.STDOUT)
-            f.close()
+                             stdout=fh, stderr=subprocess.STDOUT)
+            fh.close()
         except Exception as e:
             messagebox.showerror("启动失败", str(e))
             return
-        self._log_user("已启动机器人")
+        self._append_log("[ui] 已启动机器人")
 
     def stop_bot(self):
         pid = robot_pid()
@@ -460,7 +587,7 @@ class App(tk.Tk):
             return
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                        capture_output=True, creationflags=0x08000000)
-        self._log_user("已停止机器人 PID %s" % pid)
+        self._append_log("[ui] 已停止机器人 PID %s" % pid)
 
     def open_logs(self):
         os.startfile(LOG_DIR)
@@ -471,21 +598,14 @@ class App(tk.Tk):
             self._poll_log()
             pid = robot_pid()
             if pid:
-                self.lb_status.config(text="● 运行中", fg="#3fb950")
-                self.lb_pid.config(text="PID: %s" % pid)
+                self.lb_status.config(text="运行中", fg=TXT)
+                self.dot.itemconfig(self.dot_id, fill=OK)
+                self.lb_meta.config(text="PID %s   ·   最后日志 %s" % (
+                    pid, self._last_log_clock()))
             else:
-                self.lb_status.config(text="● 已停止", fg="#f85149")
-                self.lb_pid.config(text="PID: —")
-            try:
-                mtime = os.path.getmtime(LOG_FILE)
-                ago = int(time.time() - mtime)
-                self.lb_last.config(text="最后日志: %s  (%ds 前)" % (
-                    time.strftime("%H:%M:%S", time.localtime(mtime)), ago))
-            except OSError:
-                self.lb_last.config(text="最后日志: —")
-            st = stat(read_jsonl(RESULTS))
-            self.lb_rate.config(text="今日胜率: %.1f%%  (%d 胜 %d 负 %d 未判定)" % (
-                st["rate"] * 100, st["win"], st["loss"], st["flat"]))
+                self.lb_status.config(text="已停止", fg=DIM)
+                self.dot.itemconfig(self.dot_id, fill="#3a4150")
+                self.lb_meta.config(text="PID —   ·   最后日志 %s" % self._last_log_clock())
             self._refresh_results()
             self._refresh_turns()
             self._refresh_portraits()
@@ -493,15 +613,79 @@ class App(tk.Tk):
             self._append_log("[ui] tick error: %s: %s" % (type(e).__name__, e))
         self.after(2000, self._tick)
 
+    def _last_log_clock(self):
+        try:
+            mtime = os.path.getmtime(LOG_FILE)
+            return "%s（%ds 前）" % (time.strftime("%H:%M:%S", time.localtime(mtime)),
+                                    int(time.time() - mtime))
+        except OSError:
+            return "—"
+
+
+# ---------------------------------------------------------------- 离屏截图
+def snapshot(path, tab=None):
+    """把窗口画出来并存成 png，用来在不动鼠标的情况下检查样式。"""
+    app = App()
+    if tab:
+        app.tabbar.select(tab)
+    app.update_idletasks()
+    app.update()
+    hwnd = int(app.frame(), 16) if app.frame().startswith("0x") else int(app.frame())
+    u = ctypes.windll.user32
+    u.SetWindowPos(hwnd, 1, 0, 0, 0, 0, 0x0001 | 0x0004)   # 不激活
+    time.sleep(0.4)
+    app.update()
+    w = app.winfo_width()
+    h = app.winfo_height()
+    # 抓整个窗口（含标题栏）再裁到客户区，避免 PrintWindow 的坐标偏移
+    import ctypes.wintypes as wt
+    wr = wt.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(wr))
+    ww, wh = wr.right - wr.left, wr.bottom - wr.top
+    crect = wt.RECT()
+    u.GetClientRect(hwnd, ctypes.byref(crect))
+    pt = wt.POINT(0, 0)
+    u.ClientToScreen(hwnd, ctypes.byref(pt))
+    dx, dy = pt.x - wr.left, pt.y - wr.top
+    hdc = u.GetWindowDC(hwnd)
+    gdi = ctypes.windll.gdi32
+    mem = gdi.CreateCompatibleDC(hdc)
+    bmp = gdi.CreateCompatibleBitmap(hdc, ww, wh)
+    gdi.SelectObject(mem, bmp)
+    u.PrintWindow(hwnd, mem, 2)       # PW_RENDERFULLCONTENT
+    from PIL import Image
+    buf = ctypes.create_string_buffer(ww * wh * 4)
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [("biSize", ctypes.c_uint32), ("biWidth", ctypes.c_int32),
+                    ("biHeight", ctypes.c_int32), ("biPlanes", ctypes.c_uint16),
+                    ("biBitCount", ctypes.c_uint16), ("biCompression", ctypes.c_uint32),
+                    ("biSizeImage", ctypes.c_uint32), ("biXPelsPerMeter", ctypes.c_int32),
+                    ("biYPelsPerMeter", ctypes.c_int32), ("biClrUsed", ctypes.c_uint32),
+                    ("biClrImportant", ctypes.c_uint32)]
+    bi = BITMAPINFOHEADER()
+    bi.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bi.biWidth = ww
+    bi.biHeight = -wh
+    bi.biPlanes = 1
+    bi.biBitCount = 32
+    bi.biCompression = 0
+    gdi.GetDIBits(mem, bmp, 0, wh, buf, ctypes.byref(bi), 0)
+    img = Image.frombuffer("RGBA", (ww, wh), buf, "raw", "BGRA", 0, 1).convert("RGB")
+    img = img.crop((dx, dy, dx + crect.right, dy + crect.bottom))
+    img.save(path)
+    gdi.DeleteObject(bmp)
+    gdi.DeleteDC(mem)
+    u.ReleaseDC(hwnd, hdc)
+    app.destroy()
+    print("snapshot ->", path)
+
 
 if __name__ == "__main__":
-    if "--selftest" in sys.argv:
-        app = App()
-        app.withdraw()
-        app.update()
-        app.update_idletasks()
-        print("gui selftest ok")
-        app.destroy()
+    if "--snapshot" in sys.argv:
+        out = sys.argv[sys.argv.index("--snapshot") + 1]
+        tab = None
+        if "--tab" in sys.argv:
+            tab = sys.argv[sys.argv.index("--tab") + 1]
+        snapshot(out, tab)
         sys.exit(0)
-    app = App()
-    app.mainloop()
+    App().mainloop()
