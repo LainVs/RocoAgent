@@ -1,0 +1,183 @@
+"""pvp_engine.py - data-driven matchup maths for the PvP bot.
+
+The bot currently picks skills by looking at the number printed on the card.
+That number already includes type effectiveness and our own buffs, so it answers
+"how hard do I hit this turn" - but it says nothing about the other half of the
+decision: how many turns we have left.
+
+Everything needed for that half is already in the local dataset (ported from the
+S5 build of roco-cal / roco-claude):
+
+    pokemon.json    stats, attributes_list, ability,
+                    defense_profile {takes_3x_from, takes_2x_from,
+                                     takes_half_from, takes_one_third_from},
+                    skills {moves, jinengshi, xuemai}
+    skills.json     per-skill power / attribute / energy cost / category
+    type_chart.json 18-type matrix (verified against roco-cal's _CHART)
+
+Formulas cross-checked against the in-game numbers at 2026-11-18:
+    隼鳞 (龙, 140) from 寂灭骨龙 vs 水灵  ->  card showed 175, we compute 175
+    隼鳞 vs 公平鸽                        ->  card showed 175, panel showed base 140
+
+usage:
+    python pvp_engine.py 水灵 寂灭骨龙      # matchup report
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import damage as D
+
+
+def pet(name):
+    return D.pokemon(name)
+
+
+def taken_multiplier(def_name, atk_type):
+    """Damage multiplier `def_name` takes from `atk_type` (18-type rules)."""
+    p = pet(def_name)
+    if not p:
+        return None
+    prof = p.get("defense_profile") or {}
+    if atk_type in (prof.get("takes_3x_from") or []):
+        return 3.0
+    if atk_type in (prof.get("takes_2x_from") or []):
+        return 2.0
+    if atk_type in (prof.get("takes_one_third_from") or []):
+        return 1.0 / 3.0
+    if atk_type in (prof.get("takes_half_from") or []):
+        return 0.5
+    return 1.0
+
+
+_CACHE = {}
+
+
+def move_pool(name):
+    """Every skill the pet could legally have (moves + stones + bloodline)."""
+    p = pet(name)
+    if not p:
+        return []
+    raw = p.get("skills") or {}
+    out = []
+    for key in ("moves", "jinengshi", "xuemai"):
+        for s in raw.get(key) or []:
+            if s not in out:
+                out.append(s)
+    return out
+
+
+def worst_incoming(foe_name, my_name, top=5):
+    """Biggest hits the opponent *could* land on us, as (skill, dmg, pct_of_my_hp).
+
+    The opponent's actual four moves are unknown until revealed, so this is the
+    worst case over the whole legal pool. Conservative on purpose: it is used to
+    decide whether standing still is survivable, and over-estimating that is the
+    safe direction.
+    """
+    key = (foe_name, my_name, top)
+    if key in _CACHE:
+        return _CACHE[key]
+    me = pet(my_name)
+    if not me:
+        return []
+    hp = D.calc_hp(int(me["stats"]["hp"]))
+    rows = []
+    for skill in move_pool(foe_name):
+        try:
+            r = D.estimate(skill, foe_name, my_name)
+        except Exception:
+            continue
+        if not r or not r.get("dmg"):
+            continue
+        rows.append({"skill": skill, "dmg": int(r["dmg"]),
+                     "pct": round(100.0 * r["dmg"] / hp, 1) if hp else 0.0,
+                     "attribute": (D.skill(skill) or {}).get("attribute")})
+    rows.sort(key=lambda r: r["dmg"], reverse=True)
+    out = rows[:top]
+    _CACHE[key] = out
+    return out
+
+
+def expected_incoming(foe_name, my_name, skill_name=None):
+    """Damage for one specific skill; falls back to the worst case."""
+    r = D.estimate(skill_name, foe_name, my_name) if skill_name else None
+    if r and r.get("dmg"):
+        return int(r["dmg"])
+    rows = worst_incoming(foe_name, my_name)
+    return rows[0]["dmg"] if rows else 0
+
+
+def ko_turns(target_hp, per_turn):
+    """How many turns of `per_turn` damage are needed. None when it cannot."""
+    if not per_turn or per_turn <= 0:
+        return None
+    return max(1, -(-int(target_hp) // int(per_turn)))
+
+
+def my_max_hp(name):
+    p = pet(name)
+    if not p:
+        return None
+    return D.calc_hp(int(p["stats"]["hp"]))
+
+
+def foe_max_hp(name):
+    return my_max_hp(name)
+
+
+def matchup(foe_name, my_name, my_pct=100.0, foe_pct=100.0):
+    """One-shot report for a single pair."""
+    me = pet(my_name)
+    you = pet(foe_name)
+    if not me or not you:
+        return None
+    my_hp = my_max_hp(my_name)
+    foe_hp = foe_max_hp(foe_name)
+    inc = worst_incoming(foe_name, my_name)
+    return {
+        "me": my_name, "me_types": me.get("attributes_list"),
+        "me_hp": my_hp, "me_hp_now": round(my_hp * my_pct / 100.0),
+        "me_ability": me.get("ability"),
+        "foe": foe_name, "foe_types": you.get("attributes_list"),
+        "foe_hp": foe_hp, "foe_hp_now": round(foe_hp * foe_pct / 100.0),
+        "foe_ability": you.get("ability"),
+        "foe_defense_profile": you.get("defense_profile"),
+        "incoming": inc,
+    }
+
+
+def _selftest():
+    ok = True
+
+    # The in-game card printed 175 for this exact pair (2026-11-18 10:59).
+    r = D.estimate("隼鳞", "寂灭骨龙", "水灵")
+    want = 175
+    line = "  shown power 隼鳞 vs 水灵: %s (card showed %s)" % (
+        r["shown"] if r else None, want)
+    hit = bool(r) and abs(r["shown"] - want) < 1e-6
+    ok &= hit
+    print(line + ("  OK" if hit else "  **FAIL**"))
+
+    m = matchup("水灵", "寂灭骨龙")
+    for row in m["incoming"]:
+        print("  incoming %-8s %4d dmg  %.1f%% of my HP  (%s)" % (
+            row["skill"], row["dmg"], row["pct"], row["attribute"]))
+    if not m["incoming"]:
+        print("  **FAIL** no incoming moves resolved")
+        ok = False
+
+    print("  ko_turns(434, 196) = %s (expect 3)" % ko_turns(434, 196))
+    ok &= ko_turns(434, 196) == 3
+    return 0 if ok else 1
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 3:
+        rep = matchup(sys.argv[1], sys.argv[2])
+        print(json.dumps(rep, ensure_ascii=False, indent=2) if rep else "unknown pet")
+    else:
+        sys.exit(_selftest())
