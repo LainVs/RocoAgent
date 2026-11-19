@@ -1,4 +1,4 @@
-# RocoAgent 交接笔记（2026-11-18 凌晨 03:xx）
+﻿# RocoAgent 交接笔记（2026-11-18 凌晨 03:xx）
 
 给下一个接手的人：先读这页，再动代码。
 
@@ -12,8 +12,8 @@ bot 会在战斗中途消失，而且日志停在那一条，看起来像"卡住
 用后台 shell 调用（harness 的 `background: true`），它活到 `--seconds` 到期：
 
 ```powershell
-cd D:\Tools
-C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe `
+cd <ROCO_TOOLS>
+<CV_ESP_Game_1>\.venv\Scripts\python.exe `
   -W ignore -u botsup.py --seconds 5400
 ```
 
@@ -81,7 +81,7 @@ C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe `
   右半窗 (1900,250,300,300) ≈(196,96,22) 橙。全游戏没有第二处这么纯的双色分割。
   这是"绝对不许点击"的护栏。
 * **伤害数字**：胶囊底色 (61,61,61) 反解 alpha → 模板匹配。
-  `D:\Tools\digitread.py` 能读，但**必须注意**它当时是坏的：模板是 22×18，
+  `<ROCO_TOOLS>\digitread.py` 能读，但**必须注意**它当时是坏的：模板是 22×18，
   常量 `GW,GH` 是 14×18，`classify()` 直接抛 `matmul` 维度错。已改成按模板实际尺寸缩放。
 
 ### 不可靠 / 别再依赖
@@ -246,7 +246,7 @@ HEAL_BY_DASH = {(1, 3, 4): 4}   # 奶龙: 泥浆铠甲/电磁偏转/休息回复
 `_end_match()` 会 fire-and-forget 调
 
 ```
-python D:\Tools\review.py --from <开始HHMMSS> --to <结束HHMMSS> --out logs\review_xxx.md
+python <ROCO_TOOLS>\review.py --from <开始HHMMSS> --to <结束HHMMSS> --out logs\review_xxx.md
 ```
 
 `creationflags=DETACHED_PROCESS` 让它脱离进程树，bot 不被它拖慢。
@@ -308,18 +308,18 @@ python D:\Tools\review.py --from <开始HHMMSS> --to <结束HHMMSS> --out logs\r
 
 ```powershell
 # 单次观测（不出招），看检测对不对
-python D:\Projects\RocoAgent\src\probe20.py 10
+python .\src\probe20.py 10
 
 # 抓一帧全窗
-python D:\Projects\RocoAgent\src\cap.py D:\Projects\RocoAgent\logs\x.png
+python .\src\cap.py .\logs\x.png
 
 # 定点裁图（1:1，别用缩略图估坐标）
-python D:\Projects\RocoAgent\src\cap.py D:\Projects\RocoAgent\logs\x.png 250 480 530 1040
+python .\src\cap.py .\logs\x.png 250 480 530 1040
 
 # 硬件点击（唯一允许的游戏内输入方式，走 ESP32）
-python D:\Tools\rocs.py click 2648 1605
-python D:\Tools\rocs.py key 2
-python D:\Tools\rocs.py key 1 sleep 300 key space     # 换人
+python <ROCO_TOOLS>\rocs.py click 2648 1605
+python <ROCO_TOOLS>\rocs.py key 2
+python <ROCO_TOOLS>\rocs.py key 1 sleep 300 key space     # 换人
 ```
 
 **绝对不要**用 windows-desktop 的 Click / pyautogui / SendInput —— 有 ACE 反作弊，

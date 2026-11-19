@@ -6,6 +6,8 @@ number that matters for the win rate: an unread card is a wasted turn.
 usage: python bench_skillbar.py [--limit N]
 """
 from __future__ import annotations
+import tempfile
+import paths
 
 import argparse
 import glob
@@ -17,12 +19,12 @@ from collections import Counter
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import robot          # noqa: E402
 import digitread as dr  # noqa: E402
 
-CAP = r"C:\Users\Lenovo\AppData\Local\Temp\opencode\roco_cap"
+CAP = os.path.join(tempfile.gettempdir(), "roco_cap")
 
 
 def main():

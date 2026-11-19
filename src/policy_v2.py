@@ -28,6 +28,7 @@ usage:
     action, reason, detail = decide(state)
 """
 from __future__ import annotations
+import paths
 
 import json
 import os
@@ -35,7 +36,7 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 
 import damage as D
 import pvp_engine as E

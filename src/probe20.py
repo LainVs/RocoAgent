@@ -3,10 +3,12 @@ against a screenshot. No input is sent.
 
 usage: python probe20.py [n]
 """
+import os
+import paths
 import sys
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import robot  # noqa: E402
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 20

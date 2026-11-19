@@ -12,11 +12,13 @@
     （用户确认过：不含防御）
     把已知量代进去，看剩下的常数是不是同一个值。
 """
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *([".."] * 0), "src"))
+import paths
 import json
 import os
 import sys
 
-BASE = r"D:\GameData\roco_data\game"
+BASE = str(paths.GAME_DATA)
 OUT = os.path.join(os.environ["TEMP"], "oc_calib.txt")
 
 def load(name):

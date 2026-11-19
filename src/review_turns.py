@@ -10,6 +10,7 @@ usage:
     python review_turns.py --last 3
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import json
@@ -18,7 +19,7 @@ import sys
 import time
 from collections import Counter
 
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+LOG_DIR = str(paths.ROOT / "logs")
 TURNS = os.path.join(LOG_DIR, "turns.jsonl")
 ROUNDS = os.path.join(LOG_DIR, "rounds.jsonl")
 

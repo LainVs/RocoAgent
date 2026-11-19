@@ -8,18 +8,19 @@ Every case below is a real frame that broke the bot at some point:
 
 usage: python test_skillbar.py
 """
+import paths
 import os
 import sys
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import digitread as dr  # noqa: E402
 import robot  # noqa: E402
 
-LOGS = r"D:\Projects\RocoAgent\logs"
+LOGS = str(paths.ROOT / "logs")
 X0, Y0, X1, Y1 = dr.BAR
 REG = (0, 0, X1 - X0, Y1 - Y0)
 

@@ -2,12 +2,13 @@
 
 usage: python test_state_bus.py
 """
+import paths
 import os
 import sys
 import time
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 from state_bus import StateBus  # noqa: E402
 from providers import SyntheticProvider  # noqa: E402
 

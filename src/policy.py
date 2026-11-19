@@ -13,6 +13,8 @@
   {"action": "switch", "slot": 4, "reason": "..."}
   {"action": "charge", "reason": "能量不足"}
 """
+import os
+import paths
 
 import io
 import json
@@ -20,7 +22,7 @@ import sys
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8")
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
+sys.path.insert(0, str(paths.ROOT / "src"))
 import damage as D
 
 

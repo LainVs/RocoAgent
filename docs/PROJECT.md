@@ -1,4 +1,4 @@
-# RocoAgent 项目总览
+﻿# RocoAgent 项目总览
 
 > 最后更新：2026-11-19 · 配套文档：`PVP_NOTES.md`（游戏机制）、`SYSTEM.md`（架构设计）
 
@@ -39,7 +39,7 @@
 ## 三、目录结构
 
 ```
-D:\Projects\RocoAgent\
+.\
 ├── src\                      核心代码
 ├── docs\                     文档（PVP_NOTES / SYSTEM / PLAN_v1.1）
 ├── assets\portraits\         我方头像模板（19 张）
@@ -246,7 +246,7 @@ buff 图标识别
 
 ```powershell
 # 依赖顺序：espfast（BLE 守护）→ 机器人
-pythonw D:\Tools\espfast.py            # 或等 watchdog 拉起
+pythonw <ROCO_TOOLS>\espfast.py            # 或等 watchdog 拉起
 pythonw src\robot.py --seconds 7200    # 排位代打
 pythonw src\watchdog.py                # 巡检（计划任务每 2 分钟 --once）
 pythonw src\roco_gui.py                # 管理面板

@@ -1,11 +1,13 @@
 """speedtest.py - where does the grab time go?"""
+import os
+import paths
 import sys
 import time
 
 import mss
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
+sys.path.insert(0, str(paths.ROOT / "src"))
 from cap import game_rect  # noqa: E402
 
 r = game_rect()

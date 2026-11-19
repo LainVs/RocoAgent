@@ -14,14 +14,15 @@ usage:
     python rank.py --selftest      run the parser on known strings
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import os
 import re
 import sys
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
 RANK_ROI = (2010, 625, 120, 32)      # the "N/3" digits only
 DIV_ROI = (1890, 636, 430, 62)       # "中级决斗家 III"
@@ -38,7 +39,7 @@ _STAR_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 def _ocr(img_path):
     """Windows OCR via the existing long-lived worker in announce.py."""
     try:
-        sys.path.insert(0, r"D:\Tools")
+        sys.path.insert(0, str(paths.TOOLS))
         import announce
         worker = _worker()
         if worker is None:

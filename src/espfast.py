@@ -25,6 +25,8 @@ usage:
     python espfast.py            # run the daemon (foreground)
 """
 from __future__ import annotations
+import os
+import paths
 
 import asyncio
 import ctypes
@@ -33,14 +35,14 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 from bleak import BleakClient  # noqa: E402
 
 ADDR = "14:C1:9F:3A:BB:35"
 NAME = "ESP32_AimAssist"
 CHAR = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 PORT = 9998
-LOG = r"D:\Projects\RocoAgent\logs\espfast.log"
+LOG = str(paths.ROOT / "logs/espfast.log")
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)

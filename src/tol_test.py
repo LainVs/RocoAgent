@@ -6,6 +6,7 @@ window, and find_pills keeps only the cost badges - so every slot reads '--'.
 
 This measures strict vs relaxed on frames where the bot reported failure.
 """
+import paths
 import glob
 import os
 import sys
@@ -13,7 +14,7 @@ import sys
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 import digitread as dr  # noqa: E402
 
 BAR = dr.BAR
@@ -62,7 +63,7 @@ def probe(path):
     return res
 
 
-files = sorted(glob.glob(r"D:\Projects\RocoAgent\logs\frames2\0343*.png"))[::3]
+files = sorted(glob.glob(str(paths.ROOT / "logs/frames2/0343*.png")))[::3]
 print("%-20s %-12s %-12s %-12s %-12s" % ("frame", "tol8", "tol14", "tol20", "tol26"))
 agg = {t: [0, 0] for t in (8, 14, 20, 26)}
 for f in files[:18]:

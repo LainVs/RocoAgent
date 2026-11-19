@@ -15,13 +15,14 @@ It uses the frames captured in logs/litcap2 (full skill-bar crops, real
 matches); when they are missing it says so and exits 0.
 """
 from __future__ import annotations
+import paths
 
 import glob
 import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 
 import cv2          # noqa: E402
 import numpy as np  # noqa: E402

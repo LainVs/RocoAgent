@@ -16,6 +16,7 @@
     python watchdog.py --once  （只检查一次，调试用）
 """
 from __future__ import annotations
+import paths
 
 import os
 import subprocess
@@ -30,7 +31,7 @@ PID_FILE = os.path.join(LOG_DIR, "bot.pid")
 WD_PID = os.path.join(LOG_DIR, "watchdog.pid")
 WD_LOG = os.path.join(LOG_DIR, "watchdog.log")
 FLAG = os.path.join(LOG_DIR, "restart.flag")
-ESPAST = r"D:\Tools\espfast.py"
+ESPAST = str(paths.TOOLS / "espfast.py")
 PY = sys.executable
 CREATE_NO_WINDOW = 0x08000000
 DETACHED = 0x00000008

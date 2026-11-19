@@ -11,12 +11,14 @@
     只要存在一个我方攻击属性，使 该技能的倍率 ≥ 1.0，就算"打得动"。
 """
 from __future__ import annotations
+import os
+import paths
 
 import itertools
 import sqlite3
 import sys
 
-DB = r"D:\Projects\RocoAgent\data\roco.sqlite3"
+DB = str(paths.ROOT / "data/roco.sqlite3")
 
 
 def load():

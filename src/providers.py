@@ -10,6 +10,7 @@ Each one is deliberately dumb: read, return fields, no fusion, no decisions.
   synthetic   - the test double.
 """
 from __future__ import annotations
+import paths
 
 import json
 import os
@@ -17,7 +18,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 
 from state_bus import Provider
 

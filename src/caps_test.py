@@ -11,12 +11,14 @@ Ground truth:
   024605  --   425  140  100
   g1      --   --   162  150
 """
+import os
+import paths
 import sys
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 import digitread as dr  # noqa: E402
 
 BOX = dr.BAR
@@ -90,12 +92,12 @@ def report(label, im):
 
 
 CASES = [
-    ("k1", r"D:\Projects\RocoAgent\logs\k1.png"),
-    ("q1", r"D:\Projects\RocoAgent\logs\q1.png"),
-    ("024605", r"D:\Projects\RocoAgent\logs\frames2\024605_0416.png"),
-    ("g1", r"D:\Projects\RocoAgent\logs\g1.png"),
-    ("024605b", r"D:\Projects\RocoAgent\logs\burst\b013.png"),
-    ("livebar", r"D:\Projects\RocoAgent\logs\livebar.png"),
+    ("k1", str(paths.ROOT / "logs/k1.png")),
+    ("q1", str(paths.ROOT / "logs/q1.png")),
+    ("024605", str(paths.ROOT / "logs/frames2/024605_0416.png")),
+    ("g1", str(paths.ROOT / "logs/g1.png")),
+    ("024605b", str(paths.ROOT / "logs/burst/b013.png")),
+    ("livebar", str(paths.ROOT / "logs/livebar.png")),
 ]
 for label, p in CASES:
     try:

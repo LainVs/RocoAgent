@@ -7,11 +7,13 @@ state_bus can ever be implemented.
 Result is written to a file because an elevated child process does not inherit
 the parent's console.
 """
+import os
+import paths
 import ctypes
 import io
 import sys
 
-OUT = r"D:\Projects\RocoAgent\logs\memtest.txt"
+OUT = str(paths.ROOT / "logs/memtest.txt")
 
 
 def log(msg):

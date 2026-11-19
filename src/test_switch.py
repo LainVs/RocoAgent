@@ -13,6 +13,7 @@ the four seconds between our pet dying (02:13:20) and the game replacing it
 
 usage: python test_switch.py
 """
+import paths
 import os
 import sys
 import types
@@ -20,11 +21,11 @@ import types
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import robot  # noqa: E402
 
-FRAMES = r"D:\Projects\RocoAgent\logs\frames"
+FRAMES = str(paths.ROOT / "logs/frames")
 RECT = (443, 39, 2586, 1671)
 
 PANEL = ["021323_0915.png", "021329_0916.png", "021334_0917.png",

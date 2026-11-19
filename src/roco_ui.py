@@ -5,10 +5,12 @@
 机器人进程并发写入，因此所有读取都容错、坏行跳过、文件缺失返回空数据）。
 
 启动方式:
-    C:\\Users\\Lenovo\\Desktop\\hardwork\\CV_ESP_Game_1\\.venv\\Scripts\\python.exe roco_ui.py
+    python roco_ui.py
 """
-
 from __future__ import annotations
+
+import paths
+import sys
 
 import json
 import os
@@ -24,7 +26,7 @@ from pydantic import BaseModel
 # --------------------------------------------------------------------------
 # 绝对路径常量
 # --------------------------------------------------------------------------
-BASE_DIR = r"D:\Projects\RocoAgent"
+BASE_DIR = str(paths.ROOT)
 SRC_DIR = os.path.join(BASE_DIR, "src")
 UI_DIR = os.path.join(BASE_DIR, "ui")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
@@ -35,7 +37,7 @@ RESULTS_FILE = os.path.join(LOG_DIR, "results.jsonl")
 ROUNDS_FILE = os.path.join(LOG_DIR, "rounds.jsonl")
 TURNS_FILE = os.path.join(LOG_DIR, "turns.jsonl")
 
-PYTHON = r"C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
+PYTHON = sys.executable
 ROBOT_ARGS = ["-W", "ignore", "-u", "robot.py", "--seconds", "7200"]
 
 HOST = "127.0.0.1"

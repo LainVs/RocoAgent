@@ -6,13 +6,14 @@
     而且没有"按属性查克制""按特性反查精灵"这种查询。伤害计算器和对手识别
     需要毫秒级、可联表的访问，所以先把数据落库。
 
-库文件：data/roco.sqlite3（可以随时删掉重建，源数据在 D:\\GameData 只读）
+库文件：data/roco.sqlite3（可以随时删掉重建，源数据在原始游戏目录（环境变量 ROCO_GAME_DATA）只读）
 
 用法：
     python gamedb.py            # 建库 + 打印体检报告
     python gamedb.py --report   # 只读库打印报告（不重建）
 """
 from __future__ import annotations
+import paths
 
 import json
 import os
@@ -20,7 +21,7 @@ import sqlite3
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.environ.get("ROCO_DATA", r"D:\GameData\roco_data\game")
+DATA_DIR = os.environ.get("ROCO_DATA", str(paths.GAME_DATA))
 DB_PATH = os.path.join(ROOT, "data", "roco.sqlite3")
 
 SCHEMA = """

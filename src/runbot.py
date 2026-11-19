@@ -13,6 +13,7 @@ usage:
     python runbot.py [--seconds 3600] [--no-topmost]
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import ctypes
@@ -23,10 +24,10 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
-BOT = r"D:\Projects\RocoAgent\src\robot.py"
+BOT = str(paths.ROOT / "src/robot.py")
 PY = sys.executable
 
 

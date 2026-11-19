@@ -6,12 +6,14 @@ Runs N polls. For each poll it records:
   * bar / npills from a FRESH rect grab (to test a stale rect hypothesis)
   * the countdown-ROI white count (the 'my turn' signal)
 """
+import os
+import paths
 import sys
 
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import digitread as dr  # noqa: E402
 import robot  # noqa: E402
 

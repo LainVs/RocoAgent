@@ -1,7 +1,7 @@
-# pktmon_probe.ps1 - start a pktmon capture on the game's port.
+﻿# pktmon_probe.ps1 - start a pktmon capture on the game's port.
 # Must run elevated. Writes its own log because the elevated child does not
 # share the parent console.
-$log = "D:\Projects\RocoAgent\logs\pktmon.txt"
+$log = Join-Path $PSScriptRoot "..\logs\pktmon.txt"
 "start $(Get-Date -Format 'HH:mm:ss') admin=$([bool]([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))" | Out-File $log -Encoding utf8
 
 pktmon filter remove 2>&1 | Out-File $log -Append -Encoding utf8

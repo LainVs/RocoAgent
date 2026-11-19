@@ -19,13 +19,15 @@
 所有写入都是"有则更新、无则插入"，重复导入同一份日志不会翻倍。
 """
 from __future__ import annotations
+import sys
+import paths
 
 import json
 import os
 import sqlite3
 import time
 
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+LOG_DIR = str(paths.ROOT / "logs")
 DB_PATH = os.path.join(LOG_DIR, "roco.db")
 
 SCHEMA = """

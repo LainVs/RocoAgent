@@ -1,4 +1,4 @@
-# 坐标体系改造任务书 · 修订版（2026-11-18）
+﻿# 坐标体系改造任务书 · 修订版（2026-11-18）
 
 > 由主会话下达。用户原话：
 > **「我们应该优先选用最有效、最精确、最普适的算法。并且进行逐步验证。」**
@@ -10,12 +10,12 @@
 
 ## 零、重大发现：方案已存在
 
-`禁忌魔法` = `C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1`（打包为 `禁忌魔法.exe`）。
+`禁忌魔法` = `<CV_ESP_Game_1>`（打包为 `禁忌魔法.exe`）。
 
 **RocoAgent 现在跑的就是这个项目的 `.venv`**，所以可以直接 import，不用重写：
 
 ```python
-sys.path.insert(0, r"C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1")
+sys.path.insert(0, r"<CV_ESP_Game_1>")
 from src.script import _mode4_shared as M
 ```
 
@@ -162,7 +162,7 @@ D3 按钮 y > 0.8 * 窗高
 
 ### Step 0 · 独立探测器（不改 robot.py）
 
-新写 `D:\Tools\probe_layout.py`：
+新写 `<ROCO_TOOLS>\probe_layout.py`：
 
 ```
 前置    import _mode4_shared，用 get_game_window 拿 rect（不再自己 EnumWindows）
@@ -275,12 +275,12 @@ Step 5 切换实测       同上
 ## 九、文件
 
 ```
-D:\Projects\RocoAgent\src\robot.py                    主程序（Step 3 才动）
-D:\Projects\RocoAgent\TASK_LAYOUT.md                  本文件
-D:\Projects\RocoAgent\NEXT.md                         上一轮换人补丁待验证
-D:\Projects\RocoAgent\logs\HANDOFF.md                 完整背景
-D:\Tools\probe_layout.py                              Step 0 新增
+.\src\robot.py                    主程序（Step 3 才动）
+.\TASK_LAYOUT.md                  本文件
+.\NEXT.md                         上一轮换人补丁待验证
+.\logs\HANDOFF.md                 完整背景
+<ROCO_TOOLS>\probe_layout.py                              Step 0 新增
 
-C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\src\script\_mode4_shared.py   复用源
-C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\docs\cv_training_guide.md     YOLO 归一化说明
+<CV_ESP_Game_1>\src\script\_mode4_shared.py   复用源
+<CV_ESP_Game_1>\docs\cv_training_guide.md     YOLO 归一化说明
 ```

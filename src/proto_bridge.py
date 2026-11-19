@@ -22,9 +22,10 @@ Contract -> bus fields (see rocom-helper src/analysis/contracts.py):
 usage:
     python proto_bridge.py --selftest
     python proto_bridge.py --url http://127.0.0.1:18731/api/battle/state \
-                           --out D:\\Projects\\RocoAgent\\logs\\proto_state.jsonl
+                           --out logs/proto_state.jsonl
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import json
@@ -33,7 +34,7 @@ import sys
 import time
 import urllib.request
 
-OUT_DEFAULT = r"D:\Projects\RocoAgent\logs\proto_state.jsonl"
+OUT_DEFAULT = str(paths.ROOT / "logs/proto_state.jsonl")
 URL_DEFAULT = "http://127.0.0.1:18731/api/battle/state"
 
 

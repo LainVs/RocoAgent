@@ -1,9 +1,12 @@
 # -*- coding: utf-8 -*-
 """搞清楚 skill_map 的字段语义 + battle_config 里的公式常数。"""
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *([".."] * 0), "src"))
+import paths
 import json
 import os
 
-BASE = r"D:\GameData\roco_data\game"
+BASE = str(paths.GAME_DATA)
 OUT = os.path.join(os.environ["TEMP"], "oc_fields.txt")
 
 

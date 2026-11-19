@@ -7,6 +7,7 @@
   python perception.py --calibrate      保存各区域截图，用于人工核对
   python perception.py --state          输出当前 state.json
 """
+import paths
 
 import io
 import json
@@ -19,8 +20,8 @@ import sys
 sys.path.insert(0, os.path.dirname(__file__))
 import capture
 
-OCR_PS1 = r"D:\Tools\winocr.ps1"
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+OCR_PS1 = str(paths.TOOLS / "winocr.ps1")
+LOG_DIR = str(paths.ROOT / "logs")
 
 # 区域（相对窗口左上角，物理像素）——首次使用需校准
 REGIONS = {

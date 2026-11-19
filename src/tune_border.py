@@ -4,6 +4,7 @@ Ground truth by filename:
   battle  : f0 f1 f4 g1 k1
   menu    : h2 h3 h5 h6 h8   (victory / result / lobby)
 """
+import paths
 import glob
 import os
 import sys
@@ -11,7 +12,7 @@ import sys
 import cv2
 import numpy as np
 
-LOGS = r"D:\Projects\RocoAgent\logs"
+LOGS = str(paths.ROOT / "logs")
 MY = (166, 170, 244, 20)
 FOE = (2251, 170, 245, 20)
 

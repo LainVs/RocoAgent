@@ -1,4 +1,4 @@
-# 技能播报（出招提示条）定位与读取
+﻿# 技能播报（出招提示条）定位与读取
 
 扫描素材：`logs/frames/`（240 张，00:54–01:29）+ `logs/frames2/`（抽 1/4，226 张，02:50–03:21），
 均为 2586×1671、约 0.4 s 一帧。逐帧跑过 **467 帧**，命中 **26 条播报**。
@@ -40,7 +40,7 @@
 
 ---
 
-## 三、识别方法（D:\Tools\announce.py）
+## 三、识别方法（<ROCO_TOOLS>\announce.py）
 
 1. 用文字行的上下留白行（y 263–272 / 315–326）判定横幅左边缘——横幅内是均匀暗色，外面是场景，从右往左扫即可。
 2. 取「白字」+「亮彩色字」两个掩膜并集，二值化成黑字白底（**不能直接喂彩图**，彩图 Windows OCR 会整段丢掉彩色部分）。
@@ -117,16 +117,16 @@
 
 ```powershell
 # 单张：打印播报（无播报输出空）
-python D:\Tools\announce.py D:\Projects\RocoAgent\logs\frames2\025114_0519.png
+python <ROCO_TOOLS>\announce.py .\logs\frames2\025114_0519.png
 
 # 整个目录（推荐，启动开销摊薄，241 张约 3 分钟）
-python D:\Tools\announce.py D:\Projects\RocoAgent\logs\frames2 --out result.tsv
+python <ROCO_TOOLS>\announce.py .\logs\frames2 --out result.tsv
 ```
 
 Python 里实时用，请复用常驻进程，否则每帧要付 ~9 s 的 PowerShell 冷启动：
 
 ```python
-import sys; sys.path.insert(0, r'D:\Tools')
+import sys; sys.path.insert(0, r'<ROCO_TOOLS>')
 import announce
 worker = announce._Ocr()                       # 只启动一次，约 2 s
 txt = announce.read_announce(shot_path, ocr=worker)   # 之后每帧约 1.6 s

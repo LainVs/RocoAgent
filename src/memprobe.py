@@ -14,6 +14,8 @@ Read-only throughout. Nothing is written, injected or patched.
 usage: python memprobe.py
 """
 from __future__ import annotations
+import os
+import paths
 
 import ctypes
 import ctypes.wintypes as wt
@@ -21,7 +23,7 @@ import io
 import subprocess
 import sys
 
-OUT = r"D:\Projects\RocoAgent\logs\memprobe.txt"
+OUT = str(paths.ROOT / "logs/memprobe.txt")
 lines = []
 
 

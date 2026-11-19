@@ -7,6 +7,7 @@ No game input, no capture. It only probes.
 Each line is one link: OK / DEGRADED / DOWN, with the reason.
 """
 from __future__ import annotations
+import paths
 
 import json
 import os
@@ -14,13 +15,13 @@ import socket
 import sys
 import time
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
-ROOT = r"D:\Projects\RocoAgent"
+ROOT = str(paths.ROOT)
 PROTO_STATE = os.path.join(ROOT, "logs", "proto_state.jsonl")
-DATA = r"D:\GameData\洛克王国世界\roco-claude\data\raw"
-HELPER = r"D:\GameData\洛克王国世界\rocom-helper"
+DATA = str(paths.RAW_DATA)
+HELPER = str(paths.HELPER)
 
 rows = []
 

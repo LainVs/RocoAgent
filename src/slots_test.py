@@ -6,14 +6,15 @@ Ground truth (read off 1:1 crops by eye):
   g1.png       冥古龙   : --   --   162  150
   b013.png     奶龙     : --   302  --   --
 """
+import paths
 import os
 import sys
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import digitread as dr  # noqa: E402
 
 BOX = dr.BAR
@@ -47,7 +48,7 @@ def classify_pills(crop, region):
 
 
 def report(name):
-    p = os.path.join(r"D:\Projects\RocoAgent\logs", name)
+    p = os.path.join(str(paths.ROOT / "logs"), name)
     if not os.path.exists(p):
         print("missing", name)
         return

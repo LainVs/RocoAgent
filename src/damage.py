@@ -8,13 +8,15 @@
   有效威力 = 基础威力 × 本系(1.25) × 属性克制 × (1 + 攻击buff层数×0.1)
   伤害 = INT(ROUND(攻 × 连击 × 有效威力 × 减伤 × 37/41) / 防)
 """
+import os
+import paths
 
 import io
 import json
 import sys
 
 
-DATA = r"D:\GameData\洛克王国世界\roco-claude\data\raw"
+DATA = str(paths.RAW_DATA)
 
 NATURE_MULT = {"加": 1.2, "无": 1.0, "减": 0.9}
 

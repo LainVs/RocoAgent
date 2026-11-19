@@ -10,10 +10,13 @@
 battle_config 给出的倍率：
     单倍克制 1.00 / 双倍克制 2.00 / 单倍被克 0.50 / 双倍被克 0.75
 """
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *([".."] * 0), "src"))
+import paths
 import json
 import os
 
-BASE = r"D:\GameData\roco_data\game"
+BASE = str(paths.GAME_DATA)
 OUT = os.path.join(os.environ["TEMP"], "oc_fit.txt")
 
 CARDS = [

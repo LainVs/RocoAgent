@@ -1,7 +1,7 @@
-"""build_templates.py - 从已知截图里自动建字形模板 + 拼贴图
+﻿"""build_templates.py - 从已知截图里自动建字形模板 + 拼贴图
 
 跑法：
-    python D:\\Tools\\digitread.py build
+    python <ROCO_TOOLS>\digitread.py build
 
 字形来源有三种，全部来自同一套艺术字：
   1. 伤害胶囊里的绿色数字（已知数值，来自 manifest.json）

@@ -20,6 +20,8 @@ usage:
     st, conflicts = bus.poll()
 """
 from __future__ import annotations
+import sys
+import paths
 
 import json
 import os
@@ -27,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+LOG_DIR = str(paths.ROOT / "logs")
 CONFLICT_LOG = os.path.join(LOG_DIR, "state_conflicts.jsonl")
 
 # field -> (tolerance for "same value", max age in seconds)

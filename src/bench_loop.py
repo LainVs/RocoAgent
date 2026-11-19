@@ -11,6 +11,7 @@ usage:
     python bench_loop.py [--n 30] [--ble]
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import json
@@ -20,8 +21,8 @@ import statistics
 import sys
 import time
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
 import robot          # noqa: E402
 import policy_v2      # noqa: E402

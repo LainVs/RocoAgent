@@ -1,4 +1,4 @@
-# RocoAgent 架构与决策模型
+﻿# RocoAgent 架构与决策模型
 
 > 最后更新：2026-11-18
 > 目标：排位胜率 ≥ 60%，且可量化、可迭代
@@ -26,7 +26,7 @@ delta = +1 胜 / -1 负 / 0 保分
 
 | 来源 | 内容 | 用途 |
 |---|---|---|
-| `D:\GameData\洛克王国世界\roco-claude\data\raw\` | pokemon / skills / type_chart | 伤害与克制 |
+| `<ROCO_RAW>\` | pokemon / skills / type_chart | 伤害与克制 |
 | `...\roco-cal` | README 明示「已同步至 S5」的完整战斗模拟 | 伤害引擎参照 |
 | `...\rocom-helper` | 协议解析 + 状态机 + 战术引擎 + buff_map | 精确状态 / 决策参照 |
 | `...\game-automation\...\memory_reader.py` | 通用 ReadProcessMemory 封装（无洛克偏移） | 备选 |

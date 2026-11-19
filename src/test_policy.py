@@ -5,10 +5,12 @@ means the engine would have made a different call in a real game.
 
 usage: python test_policy.py
 """
+import os
+import paths
 import sys
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import policy_v2  # noqa: E402
 
 fails = 0

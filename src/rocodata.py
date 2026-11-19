@@ -3,7 +3,7 @@
 
 数据来自 rocom-helper 导出的 game/*.json（1015 只精灵、1378 个技能）。
 路径通过目录联接规避中文路径（PowerShell 写 ASCII 脚本时中文路径会乱码）：
-    D:\\GameData\\roco_data  ->  D:\\GameData\\洛克王国世界\\rocom-helper\\data
+    原始解包目录（ROCO_GAME_DATA）  ->  第三方助手目录（ROCO_HELPER）\\data
 
 重要字段（踩过的坑）：
 - skill_map[key]["skill_type_id"] 才是属性 id（0 普通 / 1 火 / 16 恶 ...）
@@ -13,12 +13,14 @@
 - pet_species[key]["stats"] 是种族值，不是实际属性值
 """
 from __future__ import annotations
+import sys
+import paths
 
 import json
 import os
 from functools import lru_cache
 
-DATA_DIR = os.environ.get("ROCO_DATA", r"D:\GameData\roco_data\game")
+DATA_DIR = os.environ.get("ROCO_DATA", str(paths.GAME_DATA))
 
 # 属性 id -> 中文名（来自 type_chart.json，固定不变）
 TYPE_NAMES = [

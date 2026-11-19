@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 """用已有数据找优化点：1290 条回合记录能看出什么。"""
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *([".."] * 0), "src"))
+import paths
 import json
 import os
 from collections import Counter
 
-LOG = r"D:\Projects\RocoAgent\logs"
+LOG = str(paths.ROOT / "logs")
 OUT = os.path.join(os.environ["TEMP"], "oc_analysis.txt")
 
 

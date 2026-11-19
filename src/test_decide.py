@@ -3,10 +3,12 @@
 Replays the exact states from logs/review_after_fix.md, where the bot healed
 eight turns in a row at 54-99% HP while the foe stayed on 100%.
 """
+import os
+import paths
 import sys
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import robot  # noqa: E402
 
 

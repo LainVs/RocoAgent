@@ -8,6 +8,7 @@ usage:
     python verify_channels.py --seconds 300 --proto logs/proto_state.jsonl
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import collections
@@ -15,13 +16,13 @@ import os
 import sys
 import time
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
 from state_bus import StateBus  # noqa: E402
 from providers import VisionProvider, FileProtocolProvider  # noqa: E402
 
-PROTO_DEFAULT = r"D:\Projects\RocoAgent\logs\proto_state.jsonl"
+PROTO_DEFAULT = str(paths.ROOT / "logs/proto_state.jsonl")
 
 
 def main():

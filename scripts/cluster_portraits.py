@@ -1,13 +1,16 @@
 # -*- coding: utf-8 -*-
 """把未标注头像按相似度聚类，输出分组，方便一次性命名。"""
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), *([".."] * 0), "src"))
+import paths
 import glob
 import os
 
 import cv2
 import numpy as np
 
-LIB = r"D:\Projects\RocoAgent\assets\portraits"
-OUT_IMG = r"D:\Projects\RocoAgent\logs\portrait_groups.png"
+LIB = str(paths.ROOT / "assets/portraits")
+OUT_IMG = str(paths.ROOT / "logs/portrait_groups.png")
 OUT_TXT = os.path.join(os.environ["TEMP"], "oc_groups.txt")
 
 

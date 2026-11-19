@@ -1,4 +1,4 @@
-# 技能栏伤害数字读取（digitread）
+﻿# 技能栏伤害数字读取（digitread）
 
 结论先给：**能排序，实测 5/5 帧排序全对**，留帧验证 4/5。下面第 1 节先说
 素材的真实情况（和任务描述有出入），第 7 节直接回答准确率。
@@ -7,7 +7,7 @@
 
 ## 1. 素材真相：不是「300 张带技能栏的帧」
 
-`D:\Tools\rec2.py` 是个**滚动缓冲区**：
+`<ROCO_TOOLS>\rec2.py` 是个**滚动缓冲区**：
 
 ```
 INTERVAL = 0.4      # 每 0.4 秒一张
@@ -117,7 +117,7 @@ a = ((pixel - C_bg) · (C_text - C_bg)) / |C_text - C_bg|²
 
 ```powershell
 # 读一张截图（可多张，-j 出 JSON）
-python D:\Tools\digitread.py read D:\Projects\RocoAgent\logs\digits\frames\020511_305.png
+python <ROCO_TOOLS>\digitread.py read .\logs\digits\frames\020511_305.png
 ```
 
 输出：
@@ -145,7 +145,7 @@ python D:\Tools\digitread.py read D:\Projects\RocoAgent\logs\digits\frames\02051
 代码里调用：
 
 ```python
-import sys; sys.path.insert(0, r"D:\Tools")
+import sys; sys.path.insert(0, r"<ROCO_TOOLS>")
 import digitread
 r = digitread.read_image(r"...\frame.png")
 r["visible"]                     # 技能栏是否可见
@@ -229,19 +229,19 @@ r["order"]                       # [2, 4, 3, 1]
 `build` 会自动把新帧聚类自举进模板，人工只需要标注几帧真值。
 
 ```powershell
-python D:\Tools\digitread.py watch 900        # 抓 15 分钟
+python <ROCO_TOOLS>\digitread.py watch 900        # 抓 15 分钟
 # 挑几张肉眼读数值，填进 manifest.json
-python D:\Tools\digitread.py build
-python D:\Tools\digitread.py cv
+python <ROCO_TOOLS>\digitread.py build
+python <ROCO_TOOLS>\digitread.py cv
 ```
 
 优先补：含 9 的数值、含 3 的数值（尤其绿字/白字都要有）。
 
 ## 9. 文件清单
 
-`D:\Tools\digitread.py` — 读取器（定位、切字、分类、排序）
+`<ROCO_TOOLS>\digitread.py` — 读取器（定位、切字、分类、排序）
 
-`D:\Projects\RocoAgent\logs\digits\`
+`.\logs\digits\`
 
 | 文件 | 说明 |
 |---|---|

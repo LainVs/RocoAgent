@@ -20,6 +20,7 @@ usage:
     python robot.py --panic-guard            (default on) heal/switch when low
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import ctypes
@@ -33,7 +34,7 @@ import time
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.TOOLS))
 
 import cv2  # noqa: E402
 import mss  # noqa: E402
@@ -48,7 +49,7 @@ try:
 except Exception:
     pass
 
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+LOG_DIR = str(paths.ROOT / "logs")
 TURN_LOG = os.path.join(LOG_DIR, "turns.jsonl")
 ROUND_LOG = os.path.join(LOG_DIR, "rounds.jsonl")
 

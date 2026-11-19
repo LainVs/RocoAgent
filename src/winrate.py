@@ -8,6 +8,7 @@ usage:
     python winrate.py --last 20
 """
 from __future__ import annotations
+import paths
 
 import argparse
 import json
@@ -15,7 +16,7 @@ import os
 import sys
 from collections import Counter
 
-LOG_DIR = r"D:\Projects\RocoAgent\logs"
+LOG_DIR = str(paths.ROOT / "logs")
 RESULTS = os.path.join(LOG_DIR, "results.jsonl")
 
 

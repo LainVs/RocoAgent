@@ -16,11 +16,13 @@ usage:
     python energy.py --selftest
 """
 from __future__ import annotations
+import os
+import paths
 
 import sys
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 
 PIP_BAND = (160, 196, 250, 48)      # x, y, w, h  (window-relative)
 PIP_COUNT = 6
@@ -101,7 +103,7 @@ def selftest():
 
     ok = True
     for path, want in (
-        (r"D:\Projects\RocoAgent\logs\estars.png", 0),
+        (str(paths.ROOT / "logs/estars.png"), 0),
     ):
         import os
         if not os.path.exists(path):

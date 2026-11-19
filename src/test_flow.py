@@ -6,17 +6,18 @@ too high. These cases pin the behaviour down.
 
 usage: python test_flow.py
 """
+import paths
 import os
 import sys
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, r"D:\Projects\RocoAgent\src")
-sys.path.insert(0, r"D:\Tools")
+sys.path.insert(0, str(paths.ROOT / "src"))
+sys.path.insert(0, str(paths.TOOLS))
 import robot  # noqa: E402
 
-LOGS = r"D:\Projects\RocoAgent\logs"
+LOGS = str(paths.ROOT / "logs")
 RECT = (443, 39, 2586, 1671)
 
 

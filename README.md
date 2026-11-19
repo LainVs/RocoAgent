@@ -1,4 +1,4 @@
-# RocoAgent — 洛克王国世界 PvP 自动对战系统
+﻿# RocoAgent — 洛克王国世界 PvP 自动对战系统
 
 > 立项：2026-11-17
 > 目标：打进人类排位前 50%
@@ -58,7 +58,7 @@
 ## 三、目录
 
 ```
-D:\Projects\RocoAgent\
+.\
 ├── README.md
 ├── config\
 │   ├── regions.json      屏幕区域坐标（需校准）
@@ -71,8 +71,35 @@ D:\Projects\RocoAgent\
 │   ├── actuator.py       ESP32 出招
 │   ├── logger.py         对局记录
 │   └── main.py           主循环
-├── data\                 指向 D:\GameData\洛克王国世界
+├── data\                 精灵库 roco.sqlite3（随仓库）
 └── logs\
+```
+
+### 路径与环境变量
+
+代码里不出现任何绝对路径，全部集中在 `src/paths.py`。仓库内的目录由
+`paths.py` 自身位置推出，克隆到任何盘符都能直接跑：
+
+| 文件 | 作用 |
+|---|---|
+| `paths.ROOT` | 仓库根 |
+| `paths.DATA` / `paths.DB` | `data/` 与 `roco.sqlite3` |
+| `paths.LOGS` | `logs/` |
+| `paths.ASSETS` / `paths.CONFIG` / `paths.UI` | 其余目录 |
+
+仓库外的东西（不在版本库里，需要自己准备）用环境变量指：
+
+| 变量 | 说明 |
+|---|---|
+| `ROCO_TOOLS` | 外部工具目录：`esp_shim`、`digitread`、`winocr.ps1` |
+| `ROCO_GAME_DATA` | 游戏原始解包数据 |
+| `ROCO_RAW` | 图鉴原始 json |
+| `ROCO_HELPER` | 第三方助手目录 |
+| `ROCO_ROOT` / `ROCO_DATA_DIR` / `ROCO_LOGS` | 需要把数据放到别处时才设 |
+
+```powershell
+$env:ROCO_TOOLS = "E:\my-tools"
+python src\robot.py
 ```
 
 ---
