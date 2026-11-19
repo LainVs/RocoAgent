@@ -2418,10 +2418,17 @@ class Bot:
                 pass
 
             ratio = max_dmg / foe_cur
-            # ④ 属性劣势：对面打我 > 1.0 倍
+
+            # ④ 进攻克制（用户要的那个方向）：我的技能能不能打穿对面
+            #    卡面颜色就是答案：绿=克制(2.0)、白=中性(1.0)、红=被抵抗(0.5)
             their_types = json.loads(sp_foe["types"] or "[]")
             my_types = json.loads(sp_me["types"] or "[]")
-            incoming_mult = max([F.type_mult([t], my_types) for t in their_types] or [1.0])
+            colors = [c.get("color") for c in cards if c.get("color")]
+            n_red = sum(1 for c in colors if c == "red")
+            n_green = sum(1 for c in colors if c == "green")
+            # 再叠加"我方属性打对面"的理论倍率（技能属性未知时用它兜底）
+            off_mult = max([F.type_mult([t], their_types) for t in my_types] or [1.0])
+            resisted = (n_green == 0 and n_red >= max(2, len(colors) - 1))
 
             bench = self.next_switch_slot()
             if not bench:
@@ -2434,9 +2441,11 @@ class Bot:
                 return bench, "会被秒（它最凶一击 >= 我当前血）"
             if ratio < 0.15:
                 return bench, "打不动（%.0f%% 血/手）" % (ratio * 100)
-            if incoming_mult > 1.0 and ratio < 0.30:
-                return bench, "被属性克制(×%.1f)且伤害低(%.0f%%)" % (
-                    incoming_mult, ratio * 100)
+            if resisted and ratio < 0.35:
+                return bench, "打不动对面（%d 张被抵抗、无克制）" % n_red
+            if off_mult < 1.0 and ratio < 0.25:
+                return bench, "本系被对面抵抗(×%.1f)且伤害低(%.0f%%)" % (
+                    off_mult, ratio * 100)
         except Exception as e:
             log("switch advice failed: %s" % e)
         return None
