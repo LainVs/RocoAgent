@@ -2362,6 +2362,85 @@ class Bot:
         mp = st.get("my_pct")
         return mp is not None and mp <= 0.5
 
+    def _switch_advice(self, st):
+        """该不该换人。返回 (slot, reason) 或 None。
+
+        顺序严格按 SWITCH_B/C 的推导：
+          ① void：我先手且最大伤害 >= 对面当前血 → 不换（对面这手作废）
+          ② 被秒：对面一击 >= 我当前血 → 换（能扛的那只）
+          ③ 打不动：最大伤害/对面血 < 15% → 换
+          ④ 属性劣势：对面属性克我 且 伤害比 < 30% → 换（保状态轮转）
+        """
+        if not st.get("battle") or not st.get("bar"):
+            return None
+        if getattr(self, "faint_at", None) is not None:
+            return None
+
+        cards = [c for c in st["skills"] if c]
+        vals = [c["value"] for c in cards if c.get("value") is not None]
+        if not vals:
+            return None
+        max_dmg = max(vals)
+
+        try:
+            import foe_damage as F
+            foe = getattr(self, "foe_name", None)
+            me = getattr(self, "my_name", None)
+            if not foe or not me:
+                return None
+            sp_foe = F.species(foe)
+            sp_me = F.species(me)
+            if not sp_foe or not sp_me:
+                return None
+            foe_hp_max = F.panel(sp_foe["hp"], 60, 1.0, hp=True)
+            foe_cur = foe_hp_max * (st.get("foe_pct") or 0) / 100.0
+            if foe_cur <= 0:
+                return None
+
+            # ① void：能一击必杀就不换
+            if max_dmg >= foe_cur:
+                return None
+
+            # ② 被秒：对面最凶的一击能不能打死我
+            lethal = False
+            try:
+                import foe_moves
+                my_types = json.loads(sp_me["types"] or "[]")
+                worst = 0
+                for ent in foe_moves.evaluate(foe, my_types, sample=6):
+                    r = F.incoming(foe, ent["skill"], me)
+                    if r:
+                        worst = max(worst, r[1])
+                my_hp_max = F.panel(sp_me["hp"], 60, 1.0, hp=True)
+                my_cur = my_hp_max * (st.get("my_pct") or 0) / 100.0
+                lethal = worst >= my_cur
+            except Exception:
+                pass
+
+            ratio = max_dmg / foe_cur
+            # ④ 属性劣势：对面打我 > 1.0 倍
+            their_types = json.loads(sp_foe["types"] or "[]")
+            my_types = json.loads(sp_me["types"] or "[]")
+            incoming_mult = max([F.type_mult([t], my_types) for t in their_types] or [1.0])
+
+            bench = self.next_switch_slot()
+            if not bench:
+                return None
+            lives = 4 - getattr(self, "dead_count", 0)
+            if lives < 2:
+                return None
+
+            if lethal:
+                return bench, "会被秒（它最凶一击 >= 我当前血）"
+            if ratio < 0.15:
+                return bench, "打不动（%.0f%% 血/手）" % (ratio * 100)
+            if incoming_mult > 1.0 and ratio < 0.30:
+                return bench, "被属性克制(×%.1f)且伤害低(%.0f%%)" % (
+                    incoming_mult, ratio * 100)
+        except Exception as e:
+            log("switch advice failed: %s" % e)
+        return None
+
     def _shadow_switch(self, st):
         """影子：算这一回合"该不该换人"，只记录不执行。
 
@@ -2830,6 +2909,13 @@ class Bot:
             self._shadow_switch(st)
         except Exception:
             pass
+
+        # 换人优先：判据命中就换，不再出招
+        adv = self._switch_advice(st)
+        if adv:
+            slot, reason = adv
+            log("SWITCH advised -> slot %d (%s)" % (slot, reason))
+            action = ("switch", slot)
 
         ok = False
         if action[0] == "skill":
