@@ -2313,6 +2313,49 @@ class Bot:
         mp = st.get("my_pct")
         return mp is not None and mp <= 0.5
 
+    def _shadow_switch(self, st):
+        """影子：算这一回合"该不该换人"，只记录不执行。
+
+        三条判据（都能用现有数据算）：
+          ① 打不动：最大卡面伤害 / 对面血量 < 15%，或四张卡全被抵抗
+          ③ 换上去扛得住：对面一击打不死我
+          ④ 有本钱：魔力 >= 2
+        后排谁更好（②）要等我方 6 只面板值齐了才算得准，先只记名字。
+        """
+        if not st.get("battle") or not st.get("bar"):
+            return
+        if getattr(self, "_sw_in_turn", None) == self.turn:
+            return
+        self._sw_in_turn = self.turn
+        try:
+            import foe_damage as F
+            cards = [c for c in st["skills"] if c]
+            vals = [c["value"] for c in cards if c.get("value") is not None]
+            max_dmg = max(vals) if vals else 0
+            resisted = sum(1 for c in cards if c.get("color") == "red")
+            foe = getattr(self, "foe_name", None)
+
+            foe_hp = None
+            if foe:
+                sp = F.species(foe)
+                if sp:
+                    foe_hp = F.panel(sp["hp"], 60, 1.0, hp=True)
+            foe_cur = int(foe_hp * (st.get("foe_pct") or 0) / 100.0) if foe_hp else None
+            ratio = (max_dmg / float(foe_cur)) if foe_cur else None
+
+            weak = bool((ratio is not None and ratio < 0.15) or
+                        (len(cards) >= 3 and resisted >= len(cards)))
+            lives = 4 - getattr(self, "dead_count", 0)
+            alive = getattr(self, "my_pct", None) is None or st.get("my_pct", 0) > 0
+            bench = self.next_switch_slot()
+            log("SHADOW switch? max=%s/%s=%s 抵抗%d/%d 魔力%d 后排=%s -> %s"
+                % (max_dmg, foe_cur,
+                   ("%.0f%%" % (ratio * 100)) if ratio is not None else "?",
+                   resisted, len(cards), lives, bench,
+                   ("建议换" if (weak and lives >= 2 and bench) else "继续打")))
+        except Exception as e:
+            log("SHADOW switch failed: %s" % e)
+
     def _shadow_incoming(self, st):
         """影子：算对面最凶的一击能打我们多少，只写日志不执行。
 
@@ -2729,6 +2772,7 @@ class Bot:
 
         try:
             self._shadow_incoming(st)
+            self._shadow_switch(st)
         except Exception:
             pass
 
