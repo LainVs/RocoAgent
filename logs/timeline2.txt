@@ -1,5 +1,5 @@
-# timeline2.txt - 由 D:\Tools\hpwatch.py --analyze 生成
-# 素材: D:\Projects\RocoAgent\logs\frames2  共 600 帧（跳过 0 帧读取失败）
+# timeline2.txt - 由 <ROCO_TOOLS>/hpwatch.py --analyze 生成
+# 素材: logs/frames2  共 600 帧（跳过 0 帧读取失败）
 # 战斗画面帧数: 486
 # 血条矩形（窗口相对）: 我方 (166, 170, 244, 20)  敌方 (2251, 170, 245, 20)
 # 颜色档: green=正常 orange=残血 red=濒危 ；pct 为占满血槽宽度的百分比
