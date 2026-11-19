@@ -1638,9 +1638,15 @@ class Bot:
         return ok
 
     def run(self):
-        if not self.connect():
-            log("BLE FAILED - aborting")
-            return 1
+        # 板子可能比机器人晚就位（刚上电、刚重启）。以前这里直接 abort，
+        # 现在就等它最多 3 分钟，中间每 3 秒重试一次。
+        deadline = time.time() + 180
+        while not self.connect():
+            if time.time() >= deadline:
+                log("BLE FAILED - 180s 内没等到板子，退出")
+                return 1
+            log("BLE waiting for board …")
+            time.sleep(3)
         self.ensure_focus()
         log("bot up; rect=%s" % (self.screen.rect,))
         # PID 文件：UI 用它判断"机器人是否在跑"，避免每次轮询都 spawn 一个

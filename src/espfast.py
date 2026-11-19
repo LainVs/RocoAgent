@@ -2,47 +2,60 @@
 
 Why this exists
 ---------------
-rocs.py spawns a fresh process per command and re-connects the board every
-time. Measured on this machine: 5.0-5.6 s per connect, 5/5 success. So every
-`key w` costs five seconds, which makes walking in the world impossible and
-makes the bot miss whole turns.
+A fresh connect costs 5 s, so every `key w` would cost five seconds. One
+long-lived link costs 54 ms per command instead.
 
-An established link is rock solid: connected in 2.3 s, still up after 20 s of
-silence, and fine for 30 s with a keepalive write every 5 s. So the fix is to
-connect once and stay connected.
+Discovery (this is the part that keeps breaking)
+------------------------------------------------
+The board's BLE address is not guaranteed to stay the same across reflashes
+and it never matches a hard-coded constant forever. So the daemon resolves
+the board in this order, and remembers whatever worked:
+
+    1. logs/board.json  上次连上的地址（命中就秒连）
+    2. PINNED           历史地址，兼容老机器
+    3. 按名字扫描       ESP32 / AimAssist（大小写无关）
+    4. 按 Service UUID  6E400001-…（名字改了也能找回来）
+
+连上之后把地址写回 board.json，下次直接命中，不用再扫。
+板子不在时守护进程**不退出**：端口照常监听，后台每 5 秒重试一次，
+这样"先启动机器人、后给板子上电"也能自己接上。
 
 Protocol: one command per line on 127.0.0.1:9998, one reply line.
-    ping                 -> pong
+    ping                 -> pong（板子在线） / offline（守护进程在，板子没连上）
+    pingd                -> pong（只测守护进程是否活着）
     key <k>              -> ok        (k = single char, or "space"/"esc"/...)
     key <k> <ms> <k> ...  -> ok       (sequence with sleeps, same syntax as rocs)
     click <x> <y>        -> ok        (moves the hardware cursor, then clicks)
     click <x> <y> <alt>  -> ok        (hold Alt while clicking)
     move <dx> <dy>       -> ok        (relative mouse move, for turning)
     raw <text>           -> ok        (anything the firmware understands)
-    state                -> connected=<0|1> errors=<n> reconnects=<n>
+    state                -> connected=<0|1> errors=<n> reconnects=<n> addr=<..>
 
 usage:
     python espfast.py            # run the daemon (foreground)
 """
 from __future__ import annotations
-import os
-import paths
 
 import asyncio
 import ctypes
+import json
+import os
 import socketserver
 import sys
 import threading
 import time
 
-sys.path.insert(0, str(paths.TOOLS))
-from bleak import BleakClient  # noqa: E402
+sys.path.insert(0, r"D:\Tools")
+from bleak import BleakClient, BleakScanner  # noqa: E402
 
-ADDR = "14:C1:9F:3A:BB:35"
+PINNED = "14:C1:9F:3A:BB:35"          # 历史地址，只作为候选
 NAME = "ESP32_AimAssist"
+SERVICE_UUID = "6E400001-B5A3-F393-E0A9-E50E24DCCA9E"
 CHAR = "6E400002-B5A3-F393-E0A9-E50E24DCCA9E"
 PORT = 9998
-LOG = str(paths.ROOT / "logs/espfast.log")
+LOG = r"D:\Projects\RocoAgent\logs\espfast.log"
+HERE = os.path.dirname(os.path.abspath(__file__))
+BOARD_FILE = os.path.join(HERE, "board.json")
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -69,44 +82,109 @@ def log(msg):
         pass
 
 
+def load_hint():
+    try:
+        with open(BOARD_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_hint(addr, name, how):
+    try:
+        with open(BOARD_FILE, "w", encoding="utf-8") as f:
+            json.dump({"address": addr, "name": name, "how": how,
+                       "updated": time.strftime("%Y-%m-%d %H:%M:%S")},
+                      f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
 class Board:
     """One long-lived BLE link with automatic recovery."""
 
     def __init__(self):
         self.loop = asyncio.new_event_loop()
         self.client = None
+        self.address = None
         self.lock = threading.Lock()
         self.errors = 0
         self.reconnects = 0
+        self.waiting = True
         self._start()
 
     # ---------------- connection ----------------
     def _start(self):
         def runner():
             asyncio.set_event_loop(self.loop)
-            self.loop.run_until_complete(self._connect())
-            self.loop.create_task(self._keepalive())
+
+            async def boot():
+                while True:
+                    if await self._connect():
+                        self.waiting = False
+                        break
+                    log("board not found, retry in 5 s")
+                    await asyncio.sleep(5)
+                self.loop.create_task(self._keepalive())
+
+            self.loop.run_until_complete(boot())
             self.loop.run_forever()
+
         t = threading.Thread(target=runner, daemon=True)
         t.start()
-        # wait for the first connection
-        for _ in range(100):
-            if self.client is not None and self.client.is_connected:
-                return
-            time.sleep(0.1)
+
+    async def _open(self, addr, how):
+        try:
+            c = BleakClient(addr, timeout=8)
+            await c.connect()
+            if c.is_connected:
+                self.client = c
+                self.address = addr
+                save_hint(addr, NAME, how)
+                log("connected %s (%s)" % (addr, how))
+                return True
+        except Exception as e:
+            log("%s->%s failed: %s" % (how, addr, str(e)[:70]))
+        return False
+
+    async def _scan(self, mode, timeout=6.0):
+        """按名字或 Service UUID 扫，返回候选地址。"""
+        try:
+            devs = await BleakScanner.discover(timeout=timeout, return_adv=True)
+        except Exception as e:
+            log("scan failed: %s" % str(e)[:70])
+            return []
+        out = []
+        for addr, (d, adv) in devs.items():
+            n = d.name or ""
+            if mode == "name":
+                if NAME.lower() in n.lower() or "esp32" in n.lower():
+                    out.append(addr)
+            else:
+                uu = [u.lower() for u in (adv.service_uuids or [])]
+                if SERVICE_UUID.lower() in uu:
+                    out.append(addr)
+        log("scan/%s: %d devices, %d match" % (mode, len(devs), len(out)))
+        return out
 
     async def _connect(self):
-        for attempt in range(2):
-            try:
-                c = BleakClient(ADDR, timeout=8)
-                await c.connect()
-                if c.is_connected:
-                    self.client = c
-                    log("connected")
-                    return True
-            except Exception as e:
-                log("connect attempt %d failed: %s" % (attempt + 1, e))
-            await asyncio.sleep(0.5)
+        # 1) 上次成功的地址
+        hint = load_hint().get("address")
+        if hint and hint != PINNED:
+            if await self._open(hint, "cached"):
+                return True
+
+        # 2) 历史固定地址
+        if await self._open(PINNED, "pinned"):
+            return True
+
+        # 3) 名字 / 4) service uuid，各扫两轮
+        for mode in ("name", "uuid"):
+            for attempt in (1, 2):
+                for addr in await self._scan(mode):
+                    if await self._open(addr, "%s#%d" % (mode, attempt)):
+                        return True
+                await asyncio.sleep(1.0)
         return False
 
     async def _ensure(self):
@@ -188,8 +266,8 @@ class Board:
 
     def state(self):
         ok = self.client is not None and self.client.is_connected
-        return "connected=%d errors=%d reconnects=%d" % (
-            int(ok), self.errors, self.reconnects)
+        return "connected=%d errors=%d reconnects=%d addr=%s" % (
+            int(ok), self.errors, self.reconnects, self.address or "-")
 
 
 BOARD = None
@@ -208,6 +286,10 @@ class Handler(socketserver.StreamRequestHandler):
         out = "ok"
         try:
             if cmd == "ping":
+                # 板子真在线才回 pong：机器人据此判断能不能打
+                ok = BOARD.client is not None and BOARD.client.is_connected
+                out = "pong" if ok else "offline"
+            elif cmd == "pingd":
                 out = "pong"
             elif cmd == "state":
                 out = BOARD.state()
@@ -247,11 +329,9 @@ class Server(socketserver.ThreadingTCPServer):
 def main():
     global BOARD
     BOARD = Board()
-    if BOARD.client is None or not BOARD.client.is_connected:
-        print("board connect failed")
-        return 1
+    # 板子没连上也要把端口开起来：机器人可以先起来等它
     print("espfast up on %d, %s" % (PORT, BOARD.state()), flush=True)
-    log("daemon up")
+    log("daemon up (waiting=%d)" % int(BOARD.waiting))
     with Server(("127.0.0.1", PORT), Handler) as srv:
         srv.serve_forever()
     return 0

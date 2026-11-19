@@ -38,3 +38,6 @@ data/*.bak*
 
 # 本机路径配置不入库
 config/paths.local.json
+
+# 板子地址缓存（本机）
+board.json
