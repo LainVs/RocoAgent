@@ -29,8 +29,8 @@ DIV_ROI = (1890, 636, 430, 62)       # "中级决斗家 III"
 # 结算页的段位卡：★N/M 在上一行，段位名在下一行。大厅和结算页的徽章位置
 # 不一样，所以胜负判定统一从"结算页的卡"读 —— 每次都在同一个位置读同一个
 # 元素，才不会把大厅的徽章读成结算页的。
-RESULT_STAR_ROI = (1995, 610, 150, 52)
-RESULT_DIV_ROI = (1885, 655, 460, 62)
+RESULT_STAR_ROI = (1975, 553, 130, 42)
+RESULT_DIV_ROI = (1910, 596, 250, 42)
 
 _STAR_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 
@@ -121,30 +121,27 @@ def read_star_count(crop):
     import numpy as np
 
     m = _white_mask(crop)
-    # A "0" is a ring, so a plain connected-components pass reports the hole as
-    # its own blob and the count comes out one too high. Keep only outer
-    # contours (RETR_EXTERNAL) so each glyph is exactly one blob.
     cnts, _hier = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     blobs = []
     for c in cnts:
         x, y, w, h = cv2.boundingRect(c)
         area = int(cv2.contourArea(c))
-        if area < 60 or h < 18 or h > 48:
+        if area < 60 or h < 14 or h > 34:
+            continue
+        if w > 20:              # 右边那个奖杯图标，不是数字
             continue
         blobs.append((x, y, w, h, area))
     blobs.sort(key=lambda t: t[0])
     if len(blobs) < 3:
         return None
-    # Blobs run left to right: [count] [slash] [total]. The count is everything
-    # before the slash, so its blob index is len-2 for "N/3" and len-3 for
-    # "NN/3" - i.e. always the blob immediately left of the slash.
-    left = blobs[:-2]
-    if not left:
-        return None
-    n = _glyph_to_int(crop, left[-1])
+    # 从左到右：[计数] [/] [上限]。计数永远是最左边那个 blob。
+    # 旧写法取"斜杠左边那个"，实际取到了斜杠本身（细长、fill 0.32），
+    # 被判成 2 —— 这就是"0/3 读成 2/3"的根源。
+    n = _glyph_to_int(crop, blobs[0])
+    total = _glyph_to_int(crop, blobs[-1])
     if n is None:
         return None
-    return n, len(blobs) - 1
+    return n, (total if total else 3)
 
 
 def read_badge(screen=None):
@@ -214,13 +211,56 @@ def read_card(screen=None):
     if scr.rect is None:
         return None
     div = scr.grab(RESULT_DIV_ROI)
-    if _purple_frac(div) < 0.06:
-        return None
     got = read_star_count(scr.grab(RESULT_STAR_ROI))
     if not got:
         return None
     stars, of = got
     return {"stars": stars, "of": of, "sig": _div_sig(div)}
+
+
+def read_ladder(screen=None, ocr=None):
+    """读大厅/结算页右侧那张段位卡：星数 + 段位名（OCR）。
+
+    星级读法改成 OCR：那张卡里的"0/3"是美术字，用连通域数形状的分法
+    实测会把 0 认成 2（背景白块混进来了）。一场只读一次，2 秒可接受。
+    """
+    import cv2
+    import ocr_cn
+    import robot
+
+    scr = screen or robot.Screen()
+    if scr.rect is None:
+        return None
+    if ocr is None:
+        ocr = ocr_cn.Ocr()
+    star_img = scr.grab(RESULT_STAR_ROI)
+    div_img = scr.grab(RESULT_DIV_ROI)
+    if star_img is None or div_img is None:
+        return None
+    star_big = cv2.resize(star_img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    div_big = cv2.resize(div_img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    star_txt = " ".join(t for t, _c in ocr.read_region(star_big))
+    div_txt = " ".join(t for t, _c in ocr.read_region(div_big))
+    got = parse_stars(star_txt)
+    if not got:
+        return None
+    return {"stars": got[0], "of": got[1], "div": div_txt.strip()}
+
+
+def ladder_result(before, after):
+    """两次读段位卡 -> 1 胜 / -1 负 / 0 没变 / None 判不出。"""
+    if not before or not after:
+        return None
+    same_div = (before.get("div") or "") == (after.get("div") or "")
+    if same_div:
+        d = after["stars"] - before["stars"]
+        return 1 if d > 0 else (-1 if d < 0 else 0)
+    # 段位名变了：满星清零=升段（胜），零星变多=掉段（负）
+    if before["stars"] >= before["of"] - 1 and after["stars"] <= 1:
+        return 1
+    if before["stars"] <= 0 and after["stars"] >= max(0, after["of"] - 2):
+        return -1
+    return None
 
 
 def result_between(before, after):

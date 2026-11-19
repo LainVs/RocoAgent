@@ -60,6 +60,8 @@ SKILL_BOX = dr.BAR                # (250, 480, 780, 1520)
 POLL_S = 0.12
 # 辅助模式兜底时限（秒）。回合窗口约 15 秒，9 秒留足余量。
 ASSIST_DEADLINE = 6.0
+# 技能播报区域（对面出招/换宠时滚动的文字条）
+CAST_BANNER_BOX = (1500, 150, 1000, 130)
 ACT_COOLDOWN_S = 1.0
 SWITCH_COOLDOWN_S = 2.5
 SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
@@ -1260,6 +1262,12 @@ def decide(st, ctx):
         v = _est_value(s)
         if v is not None:
             damaged.append((s, v))
+    # 只要有一张卡读得清，就只在读得清的里面选；读不清的（"??"/None）
+    # 无论推算值多高都不参与。实测它按过"dmg ??"去打一只残血对手。
+    exact = [p for p in damaged if p[0].get("value") is not None]
+    if exact:
+        damaged = exact
+
     if not damaged:
         if usable:
             # Cards are lit but no damage number could be read: that is a failed
@@ -1378,13 +1386,13 @@ class Bot:
         # 槽位 -> 种族名，靠上场时认头像学出来（我方 6 只没有手填也能用）
         self.slot_species = {}
         # 结算页段位卡上一次读到的值，跨重启保留（否则重启后第一场判不出胜负）
-        self.card_prev = None
+        self.ladder_prev = None
         try:
             with open(os.path.join(LOG_DIR, "rank_card.json"), encoding="utf-8") as f:
                 d = json.load(f)
             if d.get("sig") is not None:
                 d["sig"] = np.asarray(d["sig"], np.float32)
-            self.card_prev = d
+            self.ladder_prev = d
         except Exception:
             pass
         self.foe_name = None
@@ -1652,6 +1660,7 @@ class Bot:
                 # stacks - the trait scales with fainted allies by itself.
                 self._check_active_pet(st, now)
                 self._check_foe(st, now)
+                self._cast_banner(st)
                 if self.cur_slot and st.get("my_pct") is not None:
                     self.slot_hp[self.cur_slot] = st["my_pct"]
                 # 首领化确认：变成狼的"银白发光"头像说明已经首领化过，
@@ -1844,8 +1853,10 @@ class Bot:
             return
         if img is None or img.size == 0:
             return
-        name, sc = portraits.identify(img, target=(box[2] - 2 * m, box[3] - 2 * m))
-        if name is not None and sc >= 0.62:
+        name, sc, margin = self._identify_with_margin(img, box, m)
+        # 阈值 + 领先优势：只高 0.02 的"最佳"很可能是两个相似头像在打架，
+        # 那种情况宁可判"不确定"（实测把我方卡瓦重认成音速犬）。
+        if name is not None and sc >= 0.72 and margin >= 0.06:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
                 self.active_pet = name
@@ -1925,7 +1936,7 @@ class Bot:
                 self._foe_sig_streak = 0
         else:
             self._foe_sig_streak = 0
-        if name is not None and sc >= 0.62:
+        if name is not None and sc >= 0.72 and (margin if 'margin' in dir() else 1.0) >= 0.06:
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
                 log("FOE -> %s (%.2f)" % (sp, sc))
@@ -1954,6 +1965,37 @@ class Bot:
                         % (sc, os.path.basename(path)))
             except Exception:
                 pass
+
+    def _identify_with_margin(self, img, box, m, lib=None):
+        """返回 (名字, 最佳分, 与第二名的分差)。"""
+        try:
+            items = portraits.load_library(lib or portraits.LIB_DIR)
+        except Exception:
+            return None, -1.0, 0.0
+        if not items:
+            return None, -1.0, 0.0
+        target = (box[2] - 2 * m, box[3] - 2 * m)
+        scores = []
+        a = None
+        for name, tpl in items:
+            try:
+                import cv2
+                ai = portraits._prepare(img)
+                b = tpl
+                if tuple(b.shape[:2][::-1]) != tuple(target):
+                    b = cv2.resize(b, (int(target[0]), int(target[1])))
+                if ai.shape[0] < b.shape[0] or ai.shape[1] < b.shape[1]:
+                    b = cv2.resize(b, (ai.shape[1], ai.shape[0]))
+                r = cv2.matchTemplate(ai, b, cv2.TM_CCOEFF_NORMED)
+                scores.append((float(r.max()), name))
+            except Exception:
+                continue
+        scores.sort(reverse=True)
+        if not scores:
+            return None, -1.0, 0.0
+        best = scores[0]
+        margin = best[0] - (scores[1][0] if len(scores) > 1 else 0.0)
+        return best[1], best[0], margin
 
     def _portrait_species(self, stem, side):
         """头像文件名 -> 种族名。wolf.png 这种老文件名靠库里的映射。"""
@@ -2000,6 +2042,38 @@ class Bot:
             self.foe_bust = data["name"]
             return True
         return False
+
+    def _cast_banner(self, st):
+        """存一张"技能播报"区域（对面出招时会显示'XX 使出了 YY!'）。
+
+        这是唯一能知道对面带什么招的来源。识别先不做，先存图：
+        一次对局几十张，事后 OCR 一次就能建出对手的招式池。
+        """
+        try:
+            if not st.get("battle"):
+                return
+            img = self.screen.grab_client(CAST_BANNER_BOX)
+            if img is None or img.size == 0:
+                return
+            # 播报出现时这块区域会明显变亮；平静场景直接跳过，省磁盘
+            if float(img.max(axis=2).mean()) < 110:
+                return
+            d = os.path.join(LOG_DIR, "cast")
+            os.makedirs(d, exist_ok=True)
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(d, "%s.jpg" % ts)
+            if os.path.exists(path):
+                return
+            cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+                        [cv2.IMWRITE_JPEG_QUALITY, 80])
+            files = sorted(os.listdir(d))
+            for f in files[:-600]:
+                try:
+                    os.remove(os.path.join(d, f))
+                except OSError:
+                    pass
+        except Exception:
+            pass
 
     def _shot(self, tag):
         """动作留痕：机器人每做一个动作就存一张运行画面。
@@ -2147,6 +2221,15 @@ class Bot:
         log("ASSIST TIMEOUT -> fallback %s" % (self._as_shadow,))
         return True
 
+    def _faint_pending(self, st):
+        """现在是不是"我方倒下、等换人"的状态。"""
+        if getattr(self, "switch_pending", None) is not None:
+            return True
+        if getattr(self, "faint_at", None) is not None:
+            return True
+        mp = st.get("my_pct")
+        return mp is not None and mp <= 0.5
+
     def _shadow_choice(self, st):
         """不动手，只算"如果交给机器人，它会选什么"。"""
         try:
@@ -2169,8 +2252,11 @@ class Bot:
         # ---- 辅助模式：我只在"回合快超时"时兜底放一手 ---------------------
         # 用来让我（或你）用 computeruse 亲自打，机器人只防止超时。
         # 同时把"如果交给它，它想按哪个"打进日志，形成对照数据。
-        if getattr(self.args, "assist", False) and not self._assist_go(st, now):
-            return
+        if getattr(self.args, "assist", False):
+            # 倒下/强制换人必须永远放行：那时候技能栏是关的，辅助窗口
+            # 根本不会打开。之前被这道闸挡住，结果"精灵死了完全没反应"。
+            if not (self._faint_pending(st) or self._assist_go(st, now)):
+                return
 
         # fainted -> forced switch.
         # Sticky once entered: while the switch panel is open the HP bar is often
@@ -2433,6 +2519,12 @@ class Bot:
                 why = "slot %d greyed -> gather energy" % action[1]
                 action = ("energy",)
 
+        # 聚能（F）只在倒计时可见（= 真的是我的回合）时才按。动画期间技能栏
+        # 也是画着的，但那时候按 F 不会推进回合，只会一秒一次地空按。
+        if action[0] == "energy" and not st.get("countdown"):
+            self._gate(now, "energy held: not my turn yet")
+            return
+
         ok = False
         if action[0] == "skill":
             ok = self.send_key(action[1])
@@ -2578,58 +2670,25 @@ class Bot:
         # 结算/升段页：点右上角"略略略"跳过。不占 ADVANCE 配额、不受
         # "只在一场结束后 120 秒内才允许点"的限制 —— 这个页面本身就是
         # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）。
-        # 结算页判定完全靠段位卡本身（见 rank.read_card）
-        if True:
-            # 胜负判定：读结算页那张段位卡（★N/M + 段位名），和上一场留下的
-            # 卡比较。星级一场可能 +1 也可能 +2，升段还会清零，所以必须
-            # 连"段位名字有没有变"一起比，光看星数差会把它判成 flat。
-            #
-            # 段位卡读不出来 => 这不是结算页。技能栏的形状和"左边 6 行亮字"
-            # 很像，只看那个条件一晚上能误判几百次（实测 316 次空点）。
-            card = None
-            if not getattr(self, "_card_tried", False):
-                self._card_tried = True
-                try:
-                    import rank as _rank
-                    card = _rank.read_card(self.screen)
-                except Exception as e:
-                    log("card read failed: %s" % e)
-            if card is not None:
-                try:
-                    import rank as _rank
-                    prev = getattr(self, "card_prev", None)
-                    # 同一个结算页会被读到两次（点跳过前后），第二次不能
-                    # 当成"另一场 2/3 -> 2/3"记成 flat。
-                    same = bool(prev and card["stars"] == prev["stars"]
-                                and _rank._div_same(prev.get("sig"), card.get("sig")))
-                    if not same:
-                        res = _rank.result_between(prev, card)
-                        log("result card %d/%d prev=%s -> %s" % (
-                            card["stars"], card["of"],
-                            ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
-                            res))
-                        if res is not None and prev is not None:
-                            self._log_result(prev, card, res)
-                        self.card_prev = card
-                    try:
-                        with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
-                            json.dump({k: (v if k != "sig" else list(v or b""))
-                                       for k, v in card.items()}, f)
-                    except Exception:
-                        pass
-                except Exception as e:
-                    log("result compare failed: %s" % e)
-                if now - self.advance_at >= ADVANCE_COOLDOWN_S:
-                    if not getattr(self, "_skip_logged", False):
-                        self._skip_logged = True
-                        log("result screen -> click 略略略")
-                    self.ensure_focus()
-                    self.click_rel(*RESULT_SKIP_REL)
-                    self.advance_at = now
-                    self.advance_count = 0
-                    self.advance_gave_up = False
-                    self.last_progress_at = now
-                return
+        # 结算页只负责"点略略略跳过"。胜负判定统一在大厅排队时读段位卡
+        # 完成（那里卡片位置固定、可以慢慢读，也不会一个页面读两次）。
+        import rank as _rank_now
+        try:
+            _card = _rank_now.read_card(self.screen)
+        except Exception:
+            _card = None
+        if _card is not None:
+            if now - self.advance_at >= ADVANCE_COOLDOWN_S:
+                if not getattr(self, "_skip_logged", False):
+                    self._skip_logged = True
+                    log("result screen -> click skip")
+                self.ensure_focus()
+                self.click_rel(*RESULT_SKIP_REL)
+                self.advance_at = now
+                self.advance_count = 0
+                self.advance_gave_up = False
+                self.last_progress_at = now
+            return
         self._skip_logged = False
         self._card_tried = False
 
@@ -2674,6 +2733,31 @@ class Bot:
         self.idle_seen = None
         # 胜负判定全部改到结算页的段位卡上（见 _idle_tick）。大厅徽章和
         # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值。
+        # 胜负判定：排队前读一次段位卡（大厅里卡片位置固定），
+        # 和上一场留下的比较。星级一场 +1 或 +2，升段会清零，
+        # 所以还要看段位名有没有变。
+        try:
+            import rank as _rank
+            ladder = _rank.read_card(self.screen)
+            if ladder:
+                prev = getattr(self, "ladder_prev", None)
+                if prev is not None:
+                    res = _rank.result_between(prev, ladder)
+                    if res is not None:
+                        self._log_result(prev, ladder, res)
+                    log("ladder %d/%d prev=%d/%d -> %s" % (
+                        ladder["stars"], ladder["of"],
+                        prev["stars"], prev["of"], res))
+                self.ladder_prev = ladder
+                try:
+                    with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
+                        json.dump({k: (v if k != "sig"
+                                       else (v.tolist() if hasattr(v, "tolist") else None))
+                                   for k, v in ladder.items()}, f)
+                except Exception:
+                    pass
+        except Exception as e:
+            log("ladder read failed: %s" % e)
         log("lobby -> \u5f00\u59cb\u6311\u6218")
         self.ensure_focus()
         self.click_rel(*LOBBY_BTN_REL)
