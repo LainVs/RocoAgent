@@ -144,6 +144,21 @@ class Board:
             c = BleakClient(target, timeout=10)
             await c.connect()
             if c.is_connected:
+                # 连接成功不等于服务发现成功：重连后偶发
+                # BleakCharacteristicNotFoundError，写命令直接废掉。
+                # 这里显式确认那条特征值真的在，不在就当这次没连上。
+                ch = None
+                try:
+                    ch = c.services.get_characteristic(CHAR)
+                except Exception:
+                    ch = None
+                if ch is None:
+                    log("connected but characteristic missing, retry")
+                    try:
+                        await c.disconnect()
+                    except Exception:
+                        pass
+                    return False
                 self.client = c
                 self.address = getattr(target, "address", target)
                 save_hint(self.address, NAME, how)
