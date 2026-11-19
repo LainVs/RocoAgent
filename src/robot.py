@@ -1616,8 +1616,16 @@ class Bot:
         try:
             if self.screen.hwnd:
                 _raise_topmost(self.screen.hwnd)
+            # 必须点客户区正中偏下（战斗场地中央），不能用 r[0]+700。
+            # 那个写死的偏移在窗口变小时落在**左上角**：
+            # 窗口宽 2586 时 700 是 27%，窗口宽 1293 时 700 是 54% 但仍在
+            # 上半部分，一旦再缩就正正落在"退出/返回"那一排按钮上 ——
+            # 这就是"结算页老是点左上角"的真正原因。
+            cr = self.screen.client_rect_on_screen()
+            if cr is None:
+                return False
             self.loop.run_until_complete(
-                self.ble.click_at(r[0] + 700, r[1] + 300))
+                self.ble.click_at(cr[0] + cr[2] // 2, cr[1] + int(cr[3] * 0.62)))
             time.sleep(0.35)
         except Exception:
             return False
@@ -1678,8 +1686,10 @@ class Bot:
                     # 08:20-08:23 就是这么空转了 3 分钟）。
                     _raise_topmost(hwnd)
                     time.sleep(0.15)
-                    self._ble(lambda: self.ble.click_at(r[0] + 700, r[1] + 18),
-                              "titlebar")
+                    # 标题栏相对窗口按比例取，别用固定 700：窗口一窄就落到
+                    # 左上角的关闭/返回按钮上。
+                    self._ble(lambda: self.ble.click_at(
+                        r[0] + int(r[2] * 0.5), r[1] + 18), "titlebar")
                     time.sleep(0.25)
             except Exception:
                 pass
@@ -3076,10 +3086,11 @@ class Bot:
                 # gets the foreground and also confirms the choice.
                 rows = find_switch_rows(self.screen, bar_visible=False)
                 idx = action[1] - 1
-                r = self.screen.rect
-                if rows and r is not None and 0 <= idx < len(rows):
+                if rows and 0 <= idx < len(rows):
                     tx, ty = rows[idx]
-                    px, py = r[0] + tx, r[1] + ty
+                    # rows 是窗口坐标（基准分辨率），必须走 phys 换算；
+                    # 直接 r[0]+tx 在换分辨率后会点到别处。
+                    px, py = self.screen.phys(tx, ty)
                     log("SWITCH -> click card at %d,%d" % (px, py))
                     # precheck=False: a focus click would dismiss the panel.
                     ok = self.click_abs(px, py, precheck=False)
@@ -3639,7 +3650,7 @@ class Bot:
                 break
         r = self.screen.rect
         if target is not None and r is not None:
-            px, py = r[0] + target[0], r[1] + target[1]
+            px, py = self.screen.phys(target[0], target[1])
             log("FAINT -> click card at %d,%d" % (px, py))
             # precheck=False: a focus click in the middle of the screen would
             # dismiss the panel before the card is hit.
