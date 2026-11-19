@@ -87,7 +87,8 @@
 | `paths.LOGS` | `logs/` |
 | `paths.ASSETS` / `paths.CONFIG` / `paths.UI` | 其余目录 |
 
-仓库外的东西（不在版本库里，需要自己准备）用环境变量指：
+仓库外的东西（不在版本库里，需要自己准备）用环境变量指，或者写进
+`config/paths.local.json`（不入库，样板见 `config/paths.example.json`）：
 
 | 变量 | 说明 |
 |---|---|
@@ -98,7 +99,7 @@
 | `ROCO_ROOT` / `ROCO_DATA_DIR` / `ROCO_LOGS` | 需要把数据放到别处时才设 |
 
 ```powershell
-$env:ROCO_TOOLS = "E:\my-tools"
+$env:ROCO_TOOLS = "<你的工具目录>"
 python src\robot.py
 ```
 

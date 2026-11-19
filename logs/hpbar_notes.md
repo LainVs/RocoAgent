@@ -1,4 +1,4 @@
-# 血条测量笔记（2026-11-18）
+﻿# 血条测量笔记（2026-11-18）
 
 ## 1. 矩形：原值不对，已按像素实测修正
 
@@ -60,11 +60,11 @@
 ## 3. hpwatch.py
 
 ```
-python D:\Tools\hpwatch.py                 # 常驻，0.5s 一次 -> logs\hp.jsonl
-python D:\Tools\hpwatch.py --duration 300  # 限时
-python D:\Tools\hpwatch.py --once          # 读一次，打印一行
-python D:\Tools\hpwatch.py --analyze D:\Projects\RocoAgent\logs\frames2
-python D:\Tools\hpwatch.py --selftest      # 4 张已知战斗帧回归 + 菜单帧误判检查
+python <ROCO_TOOLS>/hpwatch.py                 # 常驻，0.5s 一次 -> logs\hp.jsonl
+python <ROCO_TOOLS>/hpwatch.py --duration 300  # 限时
+python <ROCO_TOOLS>/hpwatch.py --once          # 读一次，打印一行
+python <ROCO_TOOLS>/hpwatch.py --analyze logs\frames2
+python <ROCO_TOOLS>/hpwatch.py --selftest      # 4 张已知战斗帧回归 + 菜单帧误判检查
 ```
 
 - `hp.jsonl` 每行：`{"ts","my_pct","foe_pct","判定"}`。非战斗时 pct 为 `null`、判定

@@ -35,3 +35,6 @@ logs/roco.db*
 
 # 数据库备份不入库
 data/*.bak*
+
+# 本机路径配置不入库
+config/paths.local.json

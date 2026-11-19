@@ -1,8 +1,10 @@
 # -*- coding: utf-8 -*-
 """全项目唯一的路径来源。
 
-仓库内的目录一律由本文件位置推出，克隆到任何地方都能跑；
-仓库外的依赖（BLE 注入、OCR、原始游戏数据）用环境变量覆盖。
+· 仓库内的目录：由本文件位置推出，克隆到任何盘符都能跑
+· 仓库外的依赖：来自环境变量或 config/paths.local.json（不入库）
+
+优先级：环境变量 > config/paths.local.json > 报错（不静默用错路径）
 
     ROCO_ROOT        仓库根（默认 = 本文件上一级）
     ROCO_DATA_DIR    数据库目录（默认 <root>/data）
@@ -14,6 +16,8 @@
 """
 from __future__ import annotations
 
+import io
+import json
 import os
 import sys
 from pathlib import Path
@@ -28,11 +32,33 @@ UI = ROOT / "ui"
 SCRIPTS = ROOT / "scripts"
 DB = DATA / "roco.sqlite3"
 
-# ---- 仓库外：不随仓库分发，没有环境变量时才用本机默认值 ----
-TOOLS = Path(os.environ.get("ROCO_TOOLS") or r"D:\\Tools")
-GAME_DATA = Path(os.environ.get("ROCO_GAME_DATA") or r"D:\\GameData\\roco_data\\game")
-RAW_DATA = Path(os.environ.get("ROCO_RAW") or r"D:\\GameData\\洛克王国世界\\roco-claude\\data\\raw")
-HELPER = Path(os.environ.get("ROCO_HELPER") or r"D:\\GameData\\洛克王国世界\\rocom-helper")
+CONFIG_FILE = CONFIG / "paths.local.json"
+
+
+def _local():
+    try:
+        return json.load(io.open(CONFIG_FILE, encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+_LOCAL = _local()
+
+
+def _need(key, env, purpose):
+    """仓库外的路径：环境变量 > config/paths.local.json > 明确报错。"""
+    v = os.environ.get(env) or _LOCAL.get(key)
+    if not v:
+        raise RuntimeError(
+            "缺少 %s：请设环境变量 %s，或写进 %s（样板见 config/paths.example.json）。用途：%s"
+            % (key, env, CONFIG_FILE, purpose))
+    return Path(v)
+
+
+TOOLS = _need("tools", "ROCO_TOOLS", "esp_shim / digitread / winocr，BLE 注入与 OCR 依赖")
+GAME_DATA = _need("game_data", "ROCO_GAME_DATA", "游戏原始解包数据")
+RAW_DATA = _need("raw", "ROCO_RAW", "图鉴原始 json")
+HELPER = _need("helper", "ROCO_HELPER", "第三方助手目录")
 
 
 def ensure_dirs():

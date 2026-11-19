@@ -1,0 +1,7 @@
+{
+  "_comment": "本机路径配置（不入库）。复制成 paths.local.json 后按自己机器填；也可以改用环境变量 ROCO_TOOLS / ROCO_GAME_DATA / ROCO_RAW / ROCO_HELPER 覆盖。",
+  "tools": "X:/path/to/tools",
+  "game_data": "X:/path/to/game_data",
+  "raw": "X:/path/to/raw_json",
+  "helper": "X:/path/to/helper"
+}
