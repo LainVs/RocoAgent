@@ -2222,6 +2222,11 @@ class Bot:
         # 置了 True 就等于"发完即成功"，失败了整场不再重试。
         self._leader_tries = getattr(self, "_leader_tries", 0) + 1
         log("LEADER -> sequence sent (attempt %d)" % self._leader_tries)
+        # 用户实测：首领化按下之后，需要**这回合放一次技能**才算落定。
+        # 而且成功之后绝不能重复按 Q —— 再按会取消首领形态并卡在背包里。
+        # 所以：发完就当作完成，把这一回合交回给正常出招。
+        self.leader_done = True
+        log("LEADER -> done, acting this turn")
         # Keep a snapshot of the bust right after the sequence. If the leader
         # form changes the portrait (it should), this frame is the template we
         # need to verify the next transformation automatically instead of
@@ -2400,13 +2405,12 @@ class Bot:
             log("LEADER -> HUD name confirmed 恶魔狼, transforming")
         if now - getattr(self, "pet_at", 0.0) < 1.2:
             return False
-        if getattr(self, "_leader_tries", 0) >= 4:
-            return False
         if not (self._ui_ready() or st.get("bar")):
             return False
         log("LEADER -> transforming before acting")
         self._leader_transform()
-        return True
+        # 变身不占回合：做完立刻交回给正常出招，不要吞掉这一回合
+        return False
 
     def _battle_tick(self, st, now):
         # ---- 辅助模式：我只在"回合快超时"时兜底放一手 ---------------------

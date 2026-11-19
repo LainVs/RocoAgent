@@ -193,7 +193,9 @@ def read(screen, ocr=None, vocab=None):
     best_name = (None, 0.0)
     best_feat = (None, 0.0)
     best_skill = (None, 0.0)
-    for item in res:
+    feat_idx = None      # 记住特性是哪一行，技能匹配时排除它
+    best_feat_i = -1
+    for idx, item in enumerate(res):
         text = item["text"].strip()
         if not text:
             continue
@@ -208,6 +210,9 @@ def read(screen, ocr=None, vocab=None):
         f, fs = ocr_cn.Ocr.match(text, vocab["features"])
         if f and fs > best_feat[1]:
             best_feat = (f, fs)
+            best_feat_i = idx
+        if idx == best_feat_i:
+            continue          # 同一行不能既是特性又是技能
         k, ks = ocr_cn.Ocr.match(text, vocab["skills"])
         if k and ks > best_skill[1]:
             best_skill = (k, ks)
