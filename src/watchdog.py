@@ -174,7 +174,9 @@ def main():
                     os.remove(FLAG)
                 except OSError:
                     pass
-            ensure_monitor()
+            # monitor.py 属于另一个项目（CV_ESP_Game_1），和机器人无关。
+            # 以前每次巡检都拉一个，一晚上堆了 46 个、吃掉 1.8 GB 内存。
+            # 需要的时候手动开，watchdog 不再负责它。
             if not alive:
                 now = time.time()
                 crashes = [t for t in crashes if now - t < 60.0]

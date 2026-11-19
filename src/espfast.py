@@ -169,44 +169,52 @@ class Board:
                                        str(e)[:70]))
         return False
 
-    async def _scan(self, mode, timeout=6.0):
-        """按名字或 Service UUID 扫，返回候选 BLEDevice。"""
+    async def _scan_until_found(self, timeout=15.0):
+        """边扫边等：一看到板子就返回，不等到超时。
+
+        Windows 上 BleakScanner.discover() 是"扫满 N 秒再返回列表"，
+        6 秒经常一个都收不到（实测同一时刻单独扫 20 秒能看到板子 -25 dBm）。
+        改成回调式扫描，命中立刻收工，既快又稳。
+        """
+        found = []
+
+        def on_detect(dev, adv):
+            name = (dev.name or "")
+            uuids = [u.lower() for u in (adv.service_uuids or [])]
+            if (NAME.lower() in name.lower()
+                    or "esp32" in name.lower()
+                    or SERVICE_UUID.lower() in uuids):
+                if not found:
+                    found.append((dev, adv.rssi, name))
+                    log("scan hit %s name=%r rssi=%s"
+                        % (dev.address, name, adv.rssi))
+
         try:
-            devs = await BleakScanner.discover(timeout=timeout, return_adv=True)
+            async with BleakScanner(on_detect):
+                deadline = time.time() + timeout
+                while time.time() < deadline and not found:
+                    await asyncio.sleep(0.2)
         except Exception as e:
             log("scan failed: %s" % str(e)[:70])
-            return []
-        out = []
-        for addr, (d, adv) in devs.items():
-            n = d.name or ""
-            if mode == "name":
-                if NAME.lower() in n.lower() or "esp32" in n.lower():
-                    out.append(d)
-            else:
-                uu = [u.lower() for u in (adv.service_uuids or [])]
-                if SERVICE_UUID.lower() in uu:
-                    out.append(d)
-        log("scan/%s: %d devices, %d match" % (mode, len(devs), len(out)))
-        return out
+            return None
+        return found[0][0] if found else None
 
     async def _connect(self):
         # 1) 上次成功的地址
         hint = load_hint().get("address")
-        if hint and hint != PINNED:
+        if hint:
             if await self._open(hint, "cached"):
                 return True
 
         # 2) 历史固定地址
-        if await self._open(PINNED, "pinned"):
+        if PINNED != hint and await self._open(PINNED, "pinned"):
             return True
 
-        # 3) 名字 / 4) service uuid，各扫两轮
-        for mode in ("name", "uuid"):
-            for attempt in (1, 2):
-                for addr in await self._scan(mode):
-                    if await self._open(addr, "%s#%d" % (mode, attempt)):
-                        return True
-                await asyncio.sleep(1.0)
+        # 3) 边扫边等，命中就直连
+        dev = await self._scan_until_found(15.0)
+        if dev is not None:
+            if await self._open(dev, "scan"):
+                return True
         return False
 
     async def _ensure(self):
@@ -350,12 +358,21 @@ class Server(socketserver.ThreadingTCPServer):
 
 def main():
     global BOARD
-    BOARD = Board()
-    # 板子没连上也要把端口开起来：机器人可以先起来等它
-    print("espfast up on %d, %s" % (PORT, BOARD.state()), flush=True)
-    log("daemon up (waiting=%d)" % int(BOARD.waiting))
-    with Server(("127.0.0.1", PORT), Handler) as srv:
-        srv.serve_forever()
+    # 守护进程是整条链路的地基：它一死，机器人就变成"BLE waiting"空转。
+    # 任何未捕获异常都不许退出，记下来继续跑。
+    while True:
+        try:
+            BOARD = Board()
+            print("espfast up on %d, %s" % (PORT, BOARD.state()), flush=True)
+            log("daemon up (waiting=%d)" % int(BOARD.waiting))
+            with Server(("127.0.0.1", PORT), Handler) as srv:
+                srv.serve_forever()
+        except KeyboardInterrupt:
+            return 0
+        except Exception as e:
+            log("daemon crashed: %s: %s" % (type(e).__name__, e))
+            print("daemon crashed: %s" % e, flush=True)
+            time.sleep(3)
     return 0
 
 
