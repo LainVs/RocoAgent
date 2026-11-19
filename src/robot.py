@@ -2313,6 +2313,55 @@ class Bot:
         mp = st.get("my_pct")
         return mp is not None and mp <= 0.5
 
+    def _shadow_incoming(self, st):
+        """影子：算对面最凶的一击能打我们多少，只写日志不执行。
+
+        换人决策的核心输入就是"我会不会被秒"，而这个数现在还没校准过。
+        先跑影子，攒真实挨打样本，再校准。
+        """
+        if not st.get("battle") or not st.get("bar"):
+            return
+        if getattr(self, "_sh_in_turn", None) == self.turn:
+            return
+        foe = getattr(self, "foe_name", None)
+        me = getattr(self, "my_name", None)
+        if not foe or not me:
+            return
+        self._sh_in_turn = self.turn
+        try:
+            import foe_damage as F
+            # 优先用"看到它放过"的技能；否则用它可学技能里威力最高的（上界）
+            sk = getattr(self, "foe_skill_seen", None)
+            if not sk:
+                db = F._db()
+                row = db.execute(
+                    """SELECT s.name FROM species sp
+                       JOIN species_skills ss ON ss.species_id=sp.id
+                       JOIN skills s ON s.id=ss.skill_id
+                       WHERE sp.name=? AND s.power>0 ORDER BY s.power DESC LIMIT 1""",
+                    (foe,)).fetchone()
+                db.close()
+                sk = row["name"] if row else None
+            if not sk:
+                return
+            r = F.incoming(foe, sk, me)
+            if not r:
+                return
+            hp_max = 400
+            try:
+                import team_db
+                team = {t["name"]: t for t in team_db.dump_team() if t.get("name")}
+                if me in team and team[me].get("max_hp"):
+                    hp_max = team[me]["max_hp"]
+            except Exception:
+                pass
+            v = F.lethal(r[0], r[1], hp_max, st.get("my_pct"))
+            log("SHADOW dmg %s+%s vs %s: %d-%d | 我血%d(%.0f%%) -> %s"
+                % (foe, sk, me, r[0], r[1], v["cur_hp"], st.get("my_pct") or 0,
+                   "会被秒" if v["now_hi"] else ("下限即死" if v["now_lo"] else "扛得住")))
+        except Exception as e:
+            log("SHADOW dmg failed: %s" % e)
+
     def _shadow_choice(self, st):
         """不动手，只算"如果交给机器人，它会选什么"。"""
         try:
@@ -2677,6 +2726,11 @@ class Bot:
         if action[0] == "energy" and not st.get("countdown"):
             self._gate(now, "energy held: not my turn yet")
             return
+
+        try:
+            self._shadow_incoming(st)
+        except Exception:
+            pass
 
         ok = False
         if action[0] == "skill":
