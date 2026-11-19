@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 # 点这里打开面板（对面头像中心）。实测位置随 HUD 状态浮动，给三个候选点。
 FOE_BUST_CLICK = (2192, 95)
-FOE_BUST_CLICKS = ((2192, 95), (2194, 114), (2185, 80), (2190, 145))
+FOE_BUST_CLICKS = ((2192, 95), (2194, 114), (2185, 80))
 # 关闭面板：点面板下方的空白处（ESC 关不干净，下次点头像会点不动）
 PANEL_CLOSE_CLICK = (1250, 1440)
 # 对面 HUD 头像框，用来建模板库
@@ -80,8 +80,8 @@ def open_panel(screen, click=None, session=None):
                     session.click_at(cx + tx, cy + ty))
             else:
                 session.click_at(cx + tx, cy + ty)
-        for _ in range(5):
-            time.sleep(0.2)
+        for _ in range(3):
+            time.sleep(0.18)
             if is_open(screen):
                 return True
     return False

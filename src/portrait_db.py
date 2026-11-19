@@ -113,6 +113,24 @@ def species_of(filename, side="foe", path=DB_PATH):
     return resolve(filename, side, path)[0]
 
 
+def template_quality(img_bgr):
+    """头像质量分：灰度标准差 × (1 + 边缘密度)。
+
+    空白/纯色/被 UI 挡住的截图分数接近 0（实测 7.6），正常头像 60-200。
+    """
+    import cv2
+    if img_bgr is None or getattr(img_bgr, "size", 0) == 0:
+        return 0.0
+    g = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY) if img_bgr.ndim == 3 else img_bgr
+    std = float(g.std())
+    edges = float(cv2.Laplacian(g, cv2.CV_8U).mean())
+    return std * (1.0 + edges / 10.0)
+
+
+def template_ok(img_bgr, minimum=20.0):
+    return template_quality(img_bgr) >= minimum
+
+
 def species_name(species_id, path=DB_PATH):
     if not species_id:
         return None

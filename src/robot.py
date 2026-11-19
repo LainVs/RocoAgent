@@ -1355,6 +1355,7 @@ class Bot:
         self._foe_scan_sig = None
         self._foe_tries = 0
         self._foe_try_at = 0.0
+        self.foe_sig_at = 0.0
         # 每个队伍槽位最后一次看到的血量（%）。换人按这个挑后备，
         # 而不是按固定轮转 —— 否则会换回一只残血的再立刻换走。
         self.slot_hp = {}
@@ -1896,12 +1897,14 @@ class Bot:
         sig = _bust_sig(img)
         if self.foe_sig is None:
             self.foe_sig = sig
+            self.foe_sig_at = now
         elif _sig_dist(sig, self.foe_sig) > 14.0:
             # 连续两帧都对不上才算换人：受击闪光/镜头推拉只影响一帧。
             self._foe_sig_streak = getattr(self, "_foe_sig_streak", 0) + 1
             if self._foe_sig_streak >= 2:
                 log("FOE -> new bust (switch?)")
                 self.foe_sig = sig
+                self.foe_sig_at = now
                 self.foe_name = None
                 self.foe_bust = None
                 self._foe_sig_streak = 0
@@ -1920,16 +1923,20 @@ class Bot:
             path = os.path.join(portraits.FOE_LIB_DIR, "_unknown_%s.png" % ts)
             try:
                 bh, bw = img.shape[:2]
-                portraits.save_template(img[m:bh - m, m:bw - m], path)
-                # 名字条一起存：对面 HUD 名字在头像右边。只存头像的话，
-                # 离线没法标注（之前就是这样，库里全是认不出的一堆图）。
-                strip = self.screen.grab_client(FOE_NAME_BOX)
-                if strip is not None and strip.size:
-                    cv2.imwrite(os.path.join(
-                        portraits.FOE_LIB_DIR, "_unknown_%s_name.png" % ts),
-                        cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
-                log("FOE -> unknown bust (%.2f) saved %s"
-                    % (sc, os.path.basename(path)))
+                bust = img[m:bh - m, m:bw - m]
+                import portrait_db as _pdb
+                # 只存"头像稳定 + 有内容"的样本：换人动画中途和被 UI 挡住的
+                # 截图质量分只有 7，存进去只会污染模板库。
+                if (now - getattr(self, "foe_sig_at", 0.0) > 1.5
+                        and _pdb.template_ok(cv2.cvtColor(bust, cv2.COLOR_RGB2BGR))):
+                    portraits.save_template(bust, path)
+                    strip = self.screen.grab_client(FOE_NAME_BOX)
+                    if strip is not None and strip.size:
+                        cv2.imwrite(os.path.join(
+                            portraits.FOE_LIB_DIR, "_unknown_%s_name.png" % ts),
+                            cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
+                    log("FOE -> unknown bust (%.2f) saved %s"
+                        % (sc, os.path.basename(path)))
             except Exception:
                 pass
 
@@ -1951,10 +1958,17 @@ class Bot:
         import foe_panel
         log("FOE SCAN -> opening panel")
         t0 = time.time()
+
+        def _click(x, y):
+            ok = self.click_abs(x, y)
+            log("FOE SCAN click %d,%d -> %s (fg=%s)"
+                % (x, y, ok, _UD.GetForegroundWindow() == self.screen.hwnd))
+            return ok
+
         try:
             data = foe_panel.learn_from_panel(
                 self.screen,
-                click=lambda x, y: self.click_abs(x, y),
+                click=_click,
                 esc=lambda: self.send_key("esc", allow_focus_click=False))
         except Exception as e:
             log("FOE SCAN failed: %s: %s" % (type(e).__name__, e))
@@ -1971,6 +1985,33 @@ class Bot:
             self.foe_bust = data["name"]
             return True
         return False
+
+    def _shot(self, tag):
+        """动作留痕：机器人每做一个动作就存一张运行画面。
+
+        日志只写"我做了什么"，不写"我当时看到什么"。诊断"为什么按了这张卡"
+        必须两者对照，所以动作和截图要成对出现。
+        """
+        try:
+            img = self.screen.grab_client((0, 0, 2560, 1600))
+            if img is None or img.size == 0:
+                return
+            d = os.path.join(LOG_DIR, "shot")
+            os.makedirs(d, exist_ok=True)
+            ts = time.strftime("%H%M%S")
+            path = os.path.join(d, "%s_%s.jpg" % (ts, tag))
+            small = cv2.resize(img, None, fx=0.5, fy=0.5,
+                               interpolation=cv2.INTER_AREA)
+            cv2.imwrite(path, cv2.cvtColor(small, cv2.COLOR_RGB2BGR),
+                        [cv2.IMWRITE_JPEG_QUALITY, 60])
+            files = sorted(os.listdir(d))
+            for f in files[:-400]:
+                try:
+                    os.remove(os.path.join(d, f))
+                except OSError:
+                    pass
+        except Exception:
+            pass
 
     def _dump_bar(self, tag):
         """存一张技能栏截图（认不全数字时用），每 8 秒最多一张。"""
@@ -2183,13 +2224,16 @@ class Bot:
         if (not getattr(self.args, "no_foe_scan", False)
                 and self.foe_name is None
                 and self.foe_sig is not None
+                # 头像必须稳定 1.5 秒再点：换人/登场动画期间 HUD 在滑动，
+                # 这时候点下去落在空处，实测连点三次都开不出来。
+                and now - getattr(self, "foe_sig_at", 0.0) > 1.5
                 and st.get("bar")):
             if (self._foe_scan_sig is None
                     or _sig_dist(self.foe_sig, self._foe_scan_sig) > 2.0):
                 self._foe_scan_sig = self.foe_sig.copy()
                 self._foe_tries = 0
             if (self._foe_tries < 3
-                    and now - self._foe_try_at > 12.0):
+                    and now - self._foe_try_at > 20.0):
                 self._foe_try_at = now
                 self._foe_tries += 1
                 if self._scan_foe_panel():
@@ -2399,6 +2443,8 @@ class Bot:
             else ("SWITCH %d" % action[1]) if action[0] == "switch" else "ENERGY F",
             why, st["my_pct"], st["foe_pct"], lit, int(st["countdown"]), detail))
         self._dump(st, action, why)
+        self._shot("T%d_%s" % (self.turn, action[0] if len(action) == 1
+                               else "%s%d" % (action[0], action[1])))
 
     def _screen_fingerprint(self):
         """8x6 灰度指纹：同一个画面卡住才计数，画面一变就重置。"""
