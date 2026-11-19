@@ -1368,6 +1368,8 @@ class Bot:
         self._foe_scan_sig = None
         self._foe_tries = 0
         self._foe_try_at = 0.0
+        self._rec_prev = None
+        self._rec_done_for = -1
         # 辅助模式：决策窗口状态
         self._as_win = False
         self._as_at = 0.0
@@ -1644,6 +1646,7 @@ class Bot:
                         self._foe_scanned = False
                         self._foe_tries = 0
                         self._foe_try_at = 0.0
+                        self._foe_match_tries = 0
                         self.foe_sig = None
                         self._foe_scan_sig = None
                         # Per-match tally: a lifetime counter made the panel
@@ -2196,12 +2199,14 @@ class Bot:
           - 窗口开满 ASSIST_DEADLINE 秒还没人出手 -> 兜底放一手
         这样我和机器人不会同时按，也不会因为我不动而超时。
         """
-        bar = bool(st.get("bar"))
+        # 倒计时比技能栏稳：技能栏在一回合里会消失好几秒，倒计时不会。
+        bar = bool(st.get("countdown") or st.get("bar"))
         win = getattr(self, "_as_win", False)
         if bar and not win:
             self._as_win = True
             self._as_at = now
             self._as_acted = False
+            self._as_logged = False
             self._as_shadow = self._shadow_choice(st)
             log("ASSIST open me=%s%% foe=%s%% cards=%s shadow=%s"
                 % (st.get("my_pct"), st.get("foe_pct"),
@@ -2209,16 +2214,28 @@ class Bot:
                    self._as_shadow))
             return False
         if not bar and win:
-            self._as_win = False
-            if not getattr(self, "_as_acted", False):
+            # 技能栏检测会抖（动画/遮挡时一帧读不到），不能一抖就重置窗口，
+            # 否则 _as_at 永远回到 0，6 秒兜底永远等不到 —— 表现就是"一直不按技能"。
+            if getattr(self, "_as_gone_at", None) is None:
+                self._as_gone_at = now
+            if now - self._as_gone_at > 2.0:
+                self._as_win = False
+                self._as_gone_at = None
                 log("ASSIST window closed")
             return False
-        if not win or getattr(self, "_as_acted", False):
+        if bar:
+            self._as_gone_at = None
+        if not win:
             return False
         if now - getattr(self, "_as_at", now) < ASSIST_DEADLINE:
             return False
-        self._as_acted = True
-        log("ASSIST TIMEOUT -> fallback %s" % (self._as_shadow,))
+        # 注意：这里不能"只放行一次"。放行后 _battle_tick 可能被
+        # "read not stable / 8 秒重按闸" 之类的门挡回来，如果只放行一次，
+        # 这一次没按出去就整个窗口报废 —— 实测就是"一局一个技能都不放"。
+        # 真正的防重复按下由 _battle_tick 里的 acted_at 负责。
+        if not getattr(self, "_as_logged", False):
+            self._as_logged = True
+            log("ASSIST TIMEOUT -> fallback %s" % (self._as_shadow,))
         return True
 
     def _faint_pending(self, st):
@@ -2392,9 +2409,12 @@ class Bot:
                 self._foe_scan_sig = self.foe_sig.copy()
                 self._foe_tries = 0
             if (self._foe_tries < 3
-                    and now - self._foe_try_at > 20.0):
+                    and getattr(self, "_foe_match_tries", 0) < 4
+                    and now - self._foe_try_at > 20.0
+                    and st.get("countdown")):
                 self._foe_try_at = now
                 self._foe_tries += 1
+                self._foe_match_tries = getattr(self, "_foe_match_tries", 0) + 1
                 if self._scan_foe_panel():
                     self._foe_tries = 0
 
@@ -2733,6 +2753,40 @@ class Bot:
         self.idle_seen = None
         # 胜负判定全部改到结算页的段位卡上（见 _idle_tick）。大厅徽章和
         # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值。
+        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。
+        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。
+        if (self.match_ended_at
+                and self.match_count != getattr(self, "_rec_done_for", -1)
+                and now - self.match_ended_at < 90.0):
+            self._rec_done_for = self.match_count
+            try:
+                import record
+                cur = record.read(self.screen, lambda x, y: self.click_abs(x, y),
+                                  log=log)
+                prev = getattr(self, "_rec_prev", None) or record.load_state()
+                if cur:
+                    verdict = record.diff(prev, cur)
+                    log("record %dW/%dL prev=%s -> %s"
+                        % (cur[0], cur[1], prev, verdict))
+                    if verdict and prev:
+                        rec = {"ts": time.strftime("%H:%M:%S"),
+                               "before": prev[0], "after": cur[0],
+                               "of": prev[1] + cur[0],
+                               "delta": 1 if verdict == "win" else -1,
+                               "result": verdict}
+                        try:
+                            with open(os.path.join(LOG_DIR, "results.jsonl"), "a",
+                                      encoding="utf-8") as f:
+                                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        log("RESULT %s (%dW/%dL)" % (verdict, cur[0], cur[1]))
+                    self._rec_prev = cur
+                    record.save_state(*cur)
+                self.suppress_until = now + 2.0
+            except Exception as e:
+                log("record read failed: %s" % e)
+
         # 胜负判定：排队前读一次段位卡（大厅里卡片位置固定），
         # 和上一场留下的比较。星级一场 +1 或 +2，升段会清零，
         # 所以还要看段位名有没有变。
