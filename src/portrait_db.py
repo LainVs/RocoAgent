@@ -231,7 +231,7 @@ def species_by_feature(name, path=DB_PATH):
             """SELECT s.id, s.name, s.type_names, s.total
                FROM features f JOIN feature_pets fp ON fp.feature_id=f.id
                JOIN species s ON s.id=fp.species_id
-               WHERE f.name=? ORDER BY s.total DESC""", (name,))]
+               WHERE f.name=? ORDER BY s.provisional ASC, s.total DESC""", (name,))]
     finally:
         db.close()
 
