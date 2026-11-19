@@ -96,3 +96,22 @@ def skill_vocab(db_path=None):
                 db.execute("SELECT DISTINCT name FROM skills WHERE name IS NOT NULL")]
     finally:
         db.close()
+
+_last_text = (None, 0.0)
+
+
+def read_cast_text(screen):
+    """播报条的原始文本（缓存 1.2 秒）。分流交给调用方。"""
+    global _last_text
+    import time
+    if time.time() - _last_text[1] < 1.2:
+        return _last_text[0]
+    img = screen.grab_client(CAST_BOX)
+    if img is None or img.size == 0:
+        return None
+    if float(img.max(axis=2).mean()) < 110:
+        return None
+    texts = _ocr(img, 1.5)
+    text = " ".join(texts).strip()
+    _last_text = (text or None, time.time())
+    return text or None

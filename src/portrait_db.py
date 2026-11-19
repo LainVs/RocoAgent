@@ -311,3 +311,52 @@ if __name__ == "__main__":
     print("self dir:", SELF_DIR)
     for r in db.execute("SELECT side, count(*) c FROM portrait GROUP BY side"):
         print("  %s %d" % (r[0], r[1]))
+
+# ---------------------------------------------------------------- 昵称表
+NICK_SCHEMA = """
+CREATE TABLE IF NOT EXISTS nickname_map (
+    nickname TEXT PRIMARY KEY, species_id INTEGER,
+    hits INTEGER DEFAULT 1, first_seen TEXT, last_seen TEXT
+);
+"""
+
+
+def nickname_connect(path=DB_PATH):
+    db = connect(path)
+    db.executescript(NICK_SCHEMA)
+    return db
+
+
+def nickname_species(nickname, path=DB_PATH):
+    """昵称 -> species_id（没见过返回 None）。"""
+    if not nickname:
+        return None
+    db = nickname_connect(path)
+    try:
+        r = db.execute("SELECT species_id FROM nickname_map WHERE nickname=?",
+                       (nickname,)).fetchone()
+        return r["species_id"] if r else None
+    finally:
+        db.close()
+
+
+def bind_nickname(nickname, species_id, path=DB_PATH):
+    """把昵称绑到 species（头像/特性确认过一次之后调用）。"""
+    if not nickname or not species_id:
+        return
+    import time
+    db = nickname_connect(path)
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M")
+        r = db.execute("SELECT hits FROM nickname_map WHERE nickname=?",
+                       (nickname,)).fetchone()
+        if r:
+            db.execute("UPDATE nickname_map SET hits=hits+1, last_seen=?, "
+                       "species_id=? WHERE nickname=?",
+                       (now, species_id, nickname))
+        else:
+            db.execute("INSERT INTO nickname_map VALUES(?,?,1,?,?)",
+                       (nickname, species_id, now, now))
+        db.commit()
+    finally:
+        db.close()

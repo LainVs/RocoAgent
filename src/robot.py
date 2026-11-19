@@ -2017,6 +2017,16 @@ class Bot:
                 log("FOE -> %s (%.2f)" % (sp, sc))
                 self.foe_name = sp
                 self.foe_bust = name
+            nick = getattr(self, "_cast_nick", None)
+            if sp and nick:
+                try:
+                    import portrait_db as P
+                    sid = P.species_of(name + ".png", "foe")
+                    if sid:
+                        P.bind_nickname(nick, sid)
+                        self._cast_nick = None
+                except Exception:
+                    pass
             return
         if now - self._foe_unknown_at > 12.0:
             self._foe_unknown_at = now
@@ -2145,27 +2155,48 @@ class Bot:
         return False
 
     def _cast_ocr(self, st):
-        """播报条亮起时读一次技能名，记进"对面带什么"的观测库。
-
-        播报是**它真的用了**的证据，比面板更硬（面板只显示 1 个）。
+        """播报分流：
+             "XX 使出了 YY！"     -> 技能观测（YT 是真实技能名）
+             "XX 召唤了 [称号昵称]！" -> 只记昵称（不是物种名！），
+                                      见过的昵称直接反查，没见过的等头像/特性确认后绑定
         """
         if not st.get("battle"):
             return
         if time.time() - getattr(self, "_cast_at", 0) < 2.0:
             return
-        foe = getattr(self, "foe_name", None)
-        if not foe:
-            return
         self._cast_at = time.time()
         try:
             import hud
-            name = hud.read_cast(self.screen, self._skill_vocab())
-            if not name:
+            text = hud.read_cast_text(self.screen)
+            if not text:
                 return
-            import foe_moves
-            if foe_moves.skill(name):
-                foe_moves.note_observation(foe, name)
-                log("CAST -> %s 用过 %s" % (foe, name))
+            import re
+            if "使出了" in text:
+                tail = text.split("使出了", 1)[1]
+                tail = re.sub(r"[！!\s]", "", tail)
+                import ocr_cn
+                name, sc = ocr_cn.Ocr.match(tail, self._skill_vocab())
+                foe = getattr(self, "foe_name", None)
+                if name and sc >= 0.6 and foe:
+                    import foe_moves
+                    if foe_moves.skill(name):
+                        foe_moves.note_observation(foe, name)
+                        log("CAST -> %s 用过 %s" % (foe, name))
+                return
+            if "召唤了" in text:
+                tail = text.split("召唤了", 1)[1]
+                tail = re.sub(r"[！!\s]", "", tail)
+                self._cast_nick = tail[:12]
+                try:
+                    import portrait_db as P
+                    sid = P.nickname_species(self._cast_nick)
+                    if sid:
+                        nm = P.species_name(sid)
+                        if nm and nm != getattr(self, "foe_name", None):
+                            log("FOE -> %s (nickname %s)" % (nm, self._cast_nick))
+                            self.foe_name = nm
+                except Exception:
+                    pass
         except Exception:
             pass
 
