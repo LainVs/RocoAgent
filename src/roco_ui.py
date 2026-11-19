@@ -16,10 +16,12 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -50,6 +52,16 @@ STAMP_RE = re.compile(r"^_unknown_(\d+)\.png$")
 CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 app = FastAPI(title="RocoAgent 管理面板")
+app.add_middleware(GZipMiddleware, minimum_size=1024)
+
+
+@app.middleware("http")
+async def _no_store(request, call_next):
+    """接口不缓存：轮询要的是最新值，浏览器别再问一遍磁盘。"""
+    resp = await call_next(request)
+    if request.url.path.startswith("/api/"):
+        resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 # --------------------------------------------------------------------------
@@ -127,6 +139,59 @@ def read_jsonl(path: str, tail: int | None = None) -> list[dict]:
     return items
 
 
+# --------------------------------------------------------------------------
+# jsonl 增量读取 + 缓存
+#
+# 以前每次轮询都把整个文件读进来（turns.jsonl 已经快 1 MB、还在长），
+# 浏览器每 3 秒问一次，磁盘和 CPU 都在做无用功。
+# 现在：只读尾部 max_bytes，并且按 (mtime, size) 缓存 —— 文件没变就直接返回。
+# --------------------------------------------------------------------------
+_jsonl_cache: dict[str, tuple[tuple[int, int], list[dict]]] = {}
+
+
+def _tail_jsonl(path: str, size: int, max_bytes: int) -> list[dict]:
+    start = max(0, size - max_bytes)
+    try:
+        with open(path, "rb") as f:
+            if start:
+                f.seek(start)
+            data = f.read()
+    except OSError:
+        return []
+    text = data.decode("utf-8", "replace")
+    if start:
+        # 从中间切进来的第一行多半是半截的，丢掉
+        idx = text.find("\n")
+        text = text[idx + 1:] if idx >= 0 else ""
+    items: list[dict] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(obj, dict):
+            items.append(obj)
+    return items
+
+
+def cached_jsonl(path: str, max_bytes: int = 512 * 1024) -> list[dict]:
+    """按文件戳缓存的尾部读取；文件没变时零 IO。"""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return []
+    stamp = (st.st_mtime_ns, st.st_size)
+    ent = _jsonl_cache.get(path)
+    if ent and ent[0] == stamp:
+        return ent[1]
+    items = _tail_jsonl(path, st.st_size, max_bytes)
+    _jsonl_cache[path] = (stamp, items)
+    return items
+
+
 def fmt_action(action) -> str:
     """把 action 字段（list 或 str）规整成展示用字符串。"""
     if isinstance(action, list):
@@ -139,7 +204,7 @@ def fmt_action(action) -> str:
 # --------------------------------------------------------------------------
 # 机器人进程探测（CIM/WMI）
 # --------------------------------------------------------------------------
-_proc_cache = {"ts": 0.0, "pids": []}
+_proc_cache = {"ts": 0.0, "pids": [], "wmi_ts": 0.0, "wmi_pids": []}
 
 
 PID_FILE = os.path.join(LOG_DIR, "bot.pid")
@@ -163,12 +228,15 @@ def _pid_alive(pid: int) -> bool:
         k32.CloseHandle(h)
 
 
-def _pids_from_pidfile() -> list[int]:
+def _pids_from_pidfile():
+    """返回 pid 列表；**None 表示没有 pid 文件**（和"文件在但进程已死"区分开）。"""
     try:
         with open(PID_FILE) as f:
             pid = int((f.read() or "0").strip())
+    except FileNotFoundError:
+        return None
     except (OSError, ValueError):
-        return []
+        return None
     return [pid] if pid and _pid_alive(pid) else []
 
 
@@ -214,16 +282,26 @@ def query_robot_pids(force_wmi: bool = False) -> list[int]:
 
 
 def find_robot_pids(force: bool = False) -> list[int]:
-    """带短缓存的结果。PID 文件命中时几乎零开销，WMI 则缓存 15 秒。"""
+    """带缓存的结果。
+
+    pid 文件存在 → 直接信它（微秒级），**不再用 WMI 复查**；
+    只有连 pid 文件都没有时才退回 WMI，而且结果缓存 60 秒。
+    以前每 15 秒就要 spawn 一次 PowerShell（约 2 秒），轮询时页面就一卡一卡。
+    """
     now = time.time()
-    if not force and now - _proc_cache["ts"] < 15.0:
+    if not force and now - _proc_cache["ts"] < 5.0:
         return _proc_cache["pids"]
-    pids = _pids_from_pidfile()
-    if not pids:
+
+    from_file = _pids_from_pidfile()
+    if from_file is not None:
+        pids = from_file
+    elif not force and now - _proc_cache["wmi_ts"] < 60.0:
+        pids = _proc_cache["wmi_pids"]
+    else:
         pids = query_robot_pids()
-    _proc_cache["ts"] = now
-    _proc_cache["pids"] = pids
-    return pids
+        _proc_cache["wmi_ts"] = now
+        _proc_cache["wmi_pids"] = pids
+
     _proc_cache["ts"] = now
     _proc_cache["pids"] = pids
     return pids
@@ -247,7 +325,7 @@ def _stat(items: list[dict]) -> dict:
 
 def compute_results() -> dict:
     """汇总战绩：整体、近 20 场、近 30 场条形图与近 20 场表格数据。"""
-    items = read_jsonl(RESULTS_FILE)
+    items = cached_jsonl(RESULTS_FILE, max_bytes=4 * 1024 * 1024)
     total = _stat(items)
     recent20 = _stat(items[-20:])
     # 近 30 场条形图（倒序，最新的排前面由前端渲染）
@@ -314,6 +392,10 @@ def last_log_info() -> tuple[str | None, int | None]:
 # --------------------------------------------------------------------------
 @app.get("/api/status")
 def api_status():
+    return _status_payload()
+
+
+def _status_payload() -> dict:
     pids = find_robot_pids()
     ts, ago = last_log_info()
     results = compute_results()
@@ -323,6 +405,8 @@ def api_status():
         "last_log_time": ts,
         "seconds_ago": ago,
         "today": results["today"],
+        "recent20": results["recent20"],
+        "src_dir": SRC_DIR,
     }
 
 
@@ -369,7 +453,11 @@ def api_results():
 # --------------------------------------------------------------------------
 @app.get("/api/turns")
 def api_turns():
-    items = read_jsonl(TURNS_FILE, tail=200)
+    return _turns_payload()
+
+
+def _turns_payload() -> dict:
+    items = cached_jsonl(TURNS_FILE, max_bytes=1024 * 1024)[-240:]
     counts = {"skill": 0, "energy": 0, "switch": 0, "other": 0}
     my_vals: list[float] = []
     foe_vals: list[float] = []
@@ -415,6 +503,7 @@ def list_unknown_portraits() -> list[dict]:
     except FileNotFoundError:
         return []
     items: list[dict] = []
+    names = set(files)
     for f in sorted(files):
         if not f.lower().endswith(".png"):
             continue
@@ -425,19 +514,30 @@ def list_unknown_portraits() -> list[dict]:
             continue
         stamp = m.group(1)
         name_file = "_unknown_%s_name.png" % stamp
-        has_name = os.path.exists(os.path.join(PORTRAITS_DIR, name_file))
         items.append({
             "stamp": stamp,
             "file": f,
             "name_file": name_file,
-            "has_name": has_name,
+            "has_name": name_file in names,
         })
     return items
 
 
 @app.get("/api/portraits")
-def api_portraits():
-    return {"items": list_unknown_portraits()}
+def api_portraits(offset: int = 0, limit: int = 60, q: str = ""):
+    """分页返回待标注头像。目录里有 2000+ 张，一次全发会把页面拖死。"""
+    items = list_unknown_portraits()
+    if q:
+        items = [it for it in items if q in it["stamp"]]
+    total = len(items)
+    offset = max(0, offset)
+    limit = max(1, min(200, limit))
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "items": items[offset:offset + limit],
+    }
 
 
 class LabelRequest(BaseModel):
@@ -527,6 +627,46 @@ def api_open_logs():
         return {"ok": True, "msg": "已打开日志目录"}
     except Exception as e:
         return {"ok": False, "msg": str(e)}
+
+
+# --------------------------------------------------------------------------
+# API：首屏聚合 & 头像缩略图
+# --------------------------------------------------------------------------
+@app.get("/api/full")
+def api_full():
+    """首屏一次拿全：状态 + 战绩 + 回合，省掉三次往返。"""
+    return {
+        "status": _status_payload(),
+        "results": compute_results(),
+        "turns": _turns_payload(),
+        "portraits": {"total": len(list_unknown_portraits())},
+    }
+
+
+THUMB_DIR = os.path.join(tempfile.gettempdir(), "roco_ui_thumbs")
+
+
+@app.get("/thumb/{name}")
+def api_thumb(name: str, w: int = 120):
+    """头像缩略图（磁盘缓存）。标注页一次几十张原图，直接加载会明显卡顿。"""
+    fn = os.path.basename(name)
+    src = os.path.join(PORTRAITS_DIR, fn)
+    if not os.path.isfile(src):
+        return JSONResponse({"ok": False, "msg": "not found"}, status_code=404)
+    w = max(32, min(320, int(w)))
+    try:
+        os.makedirs(THUMB_DIR, exist_ok=True)
+        dst = os.path.join(THUMB_DIR, "%s_%d.png" % (os.path.splitext(fn)[0], w))
+        if (not os.path.exists(dst)
+                or os.path.getmtime(dst) < os.path.getmtime(src)):
+            from PIL import Image
+            im = Image.open(src).convert("RGBA")
+            h = max(1, int(im.height * w / float(im.width)))
+            im.resize((w, h), Image.LANCZOS).save(dst)
+        return FileResponse(dst, media_type="image/png",
+                            headers={"Cache-Control": "public, max-age=86400"})
+    except Exception:
+        return FileResponse(src, media_type="image/png")
 
 
 # --------------------------------------------------------------------------

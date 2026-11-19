@@ -1,85 +1,217 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>RocoAgent 管理面板</title>
-  <link rel="stylesheet" href="/style.css" />
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>RocoAgent · 战术台</title>
+<link rel="stylesheet" href="/style.css" />
 </head>
 <body>
-  <!-- 顶部固定状态条 -->
-  <header id="statusbar">
-    <span class="sb-item" id="sb-status"><span class="dot" id="sb-dot"></span><span id="sb-status-text">…</span></span>
-    <span class="sb-item" id="sb-pid">PID: —</span>
-    <span class="sb-item" id="sb-last">最后日志: —</span>
-    <span class="sb-item" id="sb-ago">距今: —</span>
-    <span class="sb-item sb-rate" id="sb-rate">今日胜率: —</span>
-  </header>
 
-  <!-- 标签页导航 -->
-  <nav id="tabs">
-    <button class="tab active" data-tab="log">实时日志</button>
-    <button class="tab" data-tab="control">机器人控制</button>
-    <button class="tab" data-tab="results">战绩</button>
-    <button class="tab" data-tab="turns">回合统计</button>
-    <button class="tab" data-tab="portraits">头像标注</button>
-  </nav>
+<div class="app">
 
-  <main>
-    <!-- 实时日志 -->
-    <section id="panel-log" class="panel active">
-      <div class="panel-bar">
-        <label class="follow">
-          <input type="checkbox" id="follow-toggle" checked /> 跟随
-        </label>
-        <button id="pause-btn" class="btn">暂停跟随</button>
-        <span class="hint" id="log-hint"></span>
+  <!-- ───────────────────────── 左侧导航 ───────────────────────── -->
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark"><span></span></div>
+      <div class="brand-txt">
+        <b>ROCAGENT</b>
+        <small>战术控制台</small>
       </div>
-      <pre id="log-view" class="log-view"></pre>
-    </section>
+    </div>
 
-    <!-- 机器人控制 -->
-    <section id="panel-control" class="panel">
-      <div class="control-grid">
-        <button id="start-btn" class="btn btn-go">启动</button>
-        <button id="stop-btn" class="btn btn-danger">停止</button>
-        <button id="openlogs-btn" class="btn">打开日志目录</button>
+    <nav class="nav" id="nav">
+      <button class="nav-item is-on" data-view="log">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M3 10h14M3 15h9"/></svg>
+        <span>实时日志</span>
+        <em id="nv-log">—</em>
+      </button>
+      <button class="nav-item" data-view="results">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 16V9M10 16V4M16 16v-5"/></svg>
+        <span>战绩</span>
+        <em id="nv-rate">—</em>
+      </button>
+      <button class="nav-item" data-view="turns">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 5h12M4 10h12M4 15h7"/><circle cx="15.5" cy="15" r="1.6"/></svg>
+        <span>回合</span>
+        <em id="nv-turns">—</em>
+      </button>
+      <button class="nav-item" data-view="portraits">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="8" r="3"/><path d="M4 16c1.5-3 3.6-4 6-4s4.5 1 6 4"/></svg>
+        <span>头像标注</span>
+        <em id="nv-portraits">—</em>
+      </button>
+      <button class="nav-item" data-view="control">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v4M10 13v4M3 10h4M13 10h4M5.5 5.5l2.5 2.5M12 12l2.5 2.5M14.5 5.5L12 8M8 12l-2.5 2.5"/></svg>
+        <span>控制</span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <div class="led-row">
+        <span class="led" id="led"></span>
+        <span id="led-text">连接中…</span>
       </div>
-      <div class="control-info" id="control-info">读取状态中…</div>
-    </section>
+      <div class="rail-actions">
+        <button class="btn btn-sm btn-go" id="rail-start">启动</button>
+        <button class="btn btn-sm btn-ghost" id="rail-stop">停止</button>
+      </div>
+    </div>
+  </aside>
 
-    <!-- 战绩 -->
-    <section id="panel-results" class="panel">
-      <div class="cards" id="result-cards"></div>
-      <h3>最近 30 场</h3>
-      <canvas id="bar-chart" width="900" height="180"></canvas>
-      <h3>最近 20 场</h3>
-      <table class="tbl" id="result-table">
-        <thead><tr><th>时间</th><th>结果</th><th>段位变化</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </section>
+  <!-- ───────────────────────── 主区 ───────────────────────── -->
+  <div class="stage">
 
-    <!-- 回合统计 -->
-    <section id="panel-turns" class="panel">
-      <div class="cards" id="turn-cards"></div>
-      <h3>最近回合</h3>
-      <table class="tbl" id="turn-table">
-        <thead><tr><th>时间</th><th>回合</th><th>我方%</th><th>对面%</th><th>动作</th><th>原因</th></tr></thead>
-        <tbody></tbody>
-      </table>
-    </section>
+    <header class="bar">
+      <div class="bar-title">
+        <h1 id="view-title">实时日志</h1>
+        <p id="view-sub">机器人在做什么，逐行看</p>
+      </div>
+      <div class="vitals">
+        <div class="vital">
+          <span>状态</span>
+          <b id="v-state">—</b>
+        </div>
+        <div class="vital">
+          <span>PID</span>
+          <b id="v-pid">—</b>
+        </div>
+        <div class="vital">
+          <span>最后输出</span>
+          <b id="v-last">—</b>
+        </div>
+        <div class="vital">
+          <span>今日</span>
+          <b id="v-today">—</b>
+        </div>
+        <div class="vital vital-hl">
+          <span>今日胜率</span>
+          <b id="v-rate">—</b>
+        </div>
+      </div>
+    </header>
 
-    <!-- 头像标注 -->
-    <section id="panel-portraits" class="panel">
-      <p class="hint" id="portrait-hint">共 0 个未标注头像</p>
-      <div id="portrait-list" class="portrait-list"></div>
-    </section>
-  </main>
+    <main class="views">
 
-  <!-- 放大图片遮罩 -->
-  <div id="modal" class="modal hidden"><img id="modal-img" alt="" /></div>
+      <!-- ══════════ 实时日志 ══════════ -->
+      <section class="view is-on" id="view-log">
+        <div class="toolbar">
+          <div class="field">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/></svg>
+            <input id="log-filter" type="search" placeholder="过滤关键字：ERROR / 换人 / 恶魔狼 …" autocomplete="off" />
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="log-follow" checked />
+            <span class="track"><i></i></span>
+            <span class="switch-txt">跟随</span>
+          </label>
+          <button class="btn btn-sm btn-ghost" id="log-clear">清屏</button>
+          <div class="toolbar-spacer"></div>
+          <span class="hint" id="log-hint">—</span>
+        </div>
+        <div class="log-shell">
+          <div class="log-view" id="log-view"></div>
+        </div>
+      </section>
 
-  <script src="/app.js"></script>
+      <!-- ══════════ 战绩 ══════════ -->
+      <section class="view" id="view-results">
+        <div class="stat-row" id="result-stats"></div>
+
+        <div class="card strip-card">
+          <div class="card-head">
+            <h2>最近 30 场</h2>
+            <span class="legend">
+              <i class="sw win"></i>胜
+              <i class="sw loss"></i>负
+              <i class="sw flat"></i>未判定
+            </span>
+          </div>
+          <div class="strip" id="result-strip"></div>
+          <div class="spark-wrap">
+            <svg id="rate-spark" viewBox="0 0 600 88" preserveAspectRatio="none"></svg>
+            <div class="spark-axis"><span>30 场前</span><span>现在</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>最近 20 场</h2><span class="hint" id="result-hint"></span></div>
+          <div class="table-wrap">
+            <table class="tbl" id="result-table">
+              <thead><tr><th>时间</th><th>结果</th><th>段位变化</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ 回合 ══════════ -->
+      <section class="view" id="view-turns">
+        <div class="chip-row" id="turn-chips"></div>
+
+        <div class="card">
+          <div class="card-head">
+            <h2>最近出招</h2>
+            <span class="hint" id="turn-hint">—</span>
+          </div>
+          <div class="table-wrap tall">
+            <table class="tbl tbl-turns" id="turn-table">
+              <thead>
+                <tr><th>时间</th><th>回合</th><th>血量（我 / 对面）</th><th>动作</th><th>判断依据</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ══════════ 头像标注 ══════════ -->
+      <section class="view" id="view-portraits">
+        <div class="toolbar">
+          <div class="field">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="9" cy="9" r="5"/><path d="M13 13l4 4"/></svg>
+            <input id="portrait-filter" type="search" placeholder="按编号过滤…" autocomplete="off" />
+          </div>
+          <div class="toolbar-spacer"></div>
+          <span class="hint" id="portrait-hint">—</span>
+          <button class="btn btn-sm btn-ghost" id="portrait-more">加载更多</button>
+        </div>
+        <div class="portrait-grid" id="portrait-list"></div>
+      </section>
+
+      <!-- ══════════ 控制 ══════════ -->
+      <section class="view" id="view-control">
+        <div class="card control-card">
+          <div class="control-main">
+            <div class="control-state">
+              <span class="led" id="ctl-led"></span>
+              <div>
+                <h2 id="ctl-title">—</h2>
+                <p id="ctl-sub">—</p>
+              </div>
+            </div>
+            <div class="control-btns">
+              <button class="btn btn-go" id="start-btn">启动机器人</button>
+              <button class="btn btn-danger" id="stop-btn">停止</button>
+            </div>
+          </div>
+          <div class="control-meta">
+            <div><span>启动参数</span><code>-W ignore -u robot.py --seconds 7200</code></div>
+            <div><span>工作目录</span><code id="ctl-cwd">—</code></div>
+            <div><span>提示</span><code id="ctl-msg">—</code></div>
+          </div>
+          <button class="btn btn-ghost btn-wide" id="openlogs-btn">打开日志目录</button>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="modal is-hidden" id="modal">
+  <img id="modal-img" alt="" />
+</div>
+
+<script src="/app.js"></script>
 </body>
 </html>
