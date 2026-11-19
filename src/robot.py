@@ -128,7 +128,9 @@ def acquire_lock():
     except OSError:
         return False
     except Exception:
-        return True                     # never block on an unexpected FS error
+        # 拿不到锁就别启动：两个机器人会双倍按键、抢同一条 BLE 链路。
+        # 以前这里 return True，正好让"面板 + 计划任务同时拉起"变成两个实例。
+        return False
     fh.seek(0)
     fh.truncate()
     fh.write(str(os.getpid()))
