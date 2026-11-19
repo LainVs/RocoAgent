@@ -58,6 +58,8 @@ FOE_BAR = (2251, 170, 245, 20)
 SKILL_BOX = dr.BAR                # (250, 480, 780, 1520)
 
 POLL_S = 0.12
+# 辅助模式兜底时限（秒）。回合窗口约 15 秒，9 秒留足余量。
+ASSIST_DEADLINE = 6.0
 ACT_COOLDOWN_S = 1.0
 SWITCH_COOLDOWN_S = 2.5
 SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
@@ -1274,8 +1276,11 @@ def decide(st, ctx):
     # the hand was 120(red) + a stray "1" misread off slot 4, the filter threw
     # away the 120, kept the 1, and concluded "everything is weak" - so the bot
     # switched pets for nothing.
+    # 完整读出的数字永远优先于"推算值"。实测 09:44:25 出现过：
+    # 卡面 [152, 300, --, ???]，它按了第 4 张（读不全、推算值虚高），
+    # 把确定的 300 丢在一边。只要有一张读得清，就不该赌读不清的那张。
     pool = sorted(damaged,
-                  key=lambda p: (p[1], p[0].get("value") is not None,
+                  key=lambda p: (p[0].get("value") is not None, p[1],
                                  p[0]["color"] != "red"), reverse=True)
     best, best_v = pool[0]
 
@@ -1355,6 +1360,16 @@ class Bot:
         self._foe_scan_sig = None
         self._foe_tries = 0
         self._foe_try_at = 0.0
+        # 辅助模式：决策窗口状态
+        self._as_win = False
+        self._as_at = 0.0
+        self._as_acted = False
+        self._as_shadow = None
+        # 辅助模式：决策窗口状态
+        self._as_win = False
+        self._as_at = 0.0
+        self._as_acted = False
+        self._as_shadow = None
         self.foe_sig_at = 0.0
         # 每个队伍槽位最后一次看到的血量（%）。换人按这个挑后备，
         # 而不是按固定轮转 —— 否则会换回一只残血的再立刻换走。
@@ -2098,7 +2113,65 @@ class Bot:
             pass
         return True
 
+    def _assist_go(self, st, now):
+        """辅助模式闸门：只有"该我兜底"的时候才返回 True。
+
+        规则：
+          - 技能栏一出现 = 新的决策窗口，记下窗口开始时间和"影子选择"
+          - 窗口一消失 = 已经有人出手，本窗口不再兜底
+          - 窗口开满 ASSIST_DEADLINE 秒还没人出手 -> 兜底放一手
+        这样我和机器人不会同时按，也不会因为我不动而超时。
+        """
+        bar = bool(st.get("bar"))
+        win = getattr(self, "_as_win", False)
+        if bar and not win:
+            self._as_win = True
+            self._as_at = now
+            self._as_acted = False
+            self._as_shadow = self._shadow_choice(st)
+            log("ASSIST open me=%s%% foe=%s%% cards=%s shadow=%s"
+                % (st.get("my_pct"), st.get("foe_pct"),
+                   [s["value"] if s else None for s in st["skills"]],
+                   self._as_shadow))
+            return False
+        if not bar and win:
+            self._as_win = False
+            if not getattr(self, "_as_acted", False):
+                log("ASSIST window closed")
+            return False
+        if not win or getattr(self, "_as_acted", False):
+            return False
+        if now - getattr(self, "_as_at", now) < ASSIST_DEADLINE:
+            return False
+        self._as_acted = True
+        log("ASSIST TIMEOUT -> fallback %s" % (self._as_shadow,))
+        return True
+
+    def _shadow_choice(self, st):
+        """不动手，只算"如果交给机器人，它会选什么"。"""
+        try:
+            ctx = {
+                "panic_guard": True,
+                "took_damage": False,
+                "heal_streak": self.heal_streak,
+                "switch_slot": self.next_switch_slot(),
+                "switch_streak": self.turn - self.last_switch_turn,
+                "charge_streak": self.charge_streak,
+            }
+            action, why = decide(st, ctx)
+            if action is None:
+                return "none(%s)" % why
+            return "%s %s" % (action, why)
+        except Exception as e:
+            return "err(%s)" % e
+
     def _battle_tick(self, st, now):
+        # ---- 辅助模式：我只在"回合快超时"时兜底放一手 ---------------------
+        # 用来让我（或你）用 computeruse 亲自打，机器人只防止超时。
+        # 同时把"如果交给它，它想按哪个"打进日志，形成对照数据。
+        if getattr(self.args, "assist", False) and not self._assist_go(st, now):
+            return
+
         # fainted -> forced switch.
         # Sticky once entered: while the switch panel is open the HP bar is often
         # NOT drawn, so a per-poll `my_ui` test dropped out of this branch every
@@ -2505,7 +2578,8 @@ class Bot:
         # 结算/升段页：点右上角"略略略"跳过。不占 ADVANCE 配额、不受
         # "只在一场结束后 120 秒内才允许点"的限制 —— 这个页面本身就是
         # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）。
-        if is_result_screen(self.screen):
+        # 结算页判定完全靠段位卡本身（见 rank.read_card）
+        if True:
             # 胜负判定：读结算页那张段位卡（★N/M + 段位名），和上一场留下的
             # 卡比较。星级一场可能 +1 也可能 +2，升段还会清零，所以必须
             # 连"段位名字有没有变"一起比，光看星数差会把它判成 flat。
@@ -2524,14 +2598,19 @@ class Bot:
                 try:
                     import rank as _rank
                     prev = getattr(self, "card_prev", None)
-                    res = _rank.result_between(prev, card)
-                    log("result card %d/%d prev=%s -> %s" % (
-                        card["stars"], card["of"],
-                        ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
-                        res))
-                    if res is not None and prev is not None:
-                        self._log_result(prev, card, res)
-                    self.card_prev = card
+                    # 同一个结算页会被读到两次（点跳过前后），第二次不能
+                    # 当成"另一场 2/3 -> 2/3"记成 flat。
+                    same = bool(prev and card["stars"] == prev["stars"]
+                                and _rank._div_same(prev.get("sig"), card.get("sig")))
+                    if not same:
+                        res = _rank.result_between(prev, card)
+                        log("result card %d/%d prev=%s -> %s" % (
+                            card["stars"], card["of"],
+                            ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
+                            res))
+                        if res is not None and prev is not None:
+                            self._log_result(prev, card, res)
+                        self.card_prev = card
                     try:
                         with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
                             json.dump({k: (v if k != "sig" else list(v or b""))
@@ -3013,8 +3092,12 @@ class Bot:
             # 身份字段：只有头像库认得出来时才有值（目前只有恶魔狼）
             "our_pet": getattr(self, "active_pet", None),
             "foe_pet": getattr(self, "foe_name", None),
+            # lit/plate 一定要记：否则离线分析"为什么没选最大伤害"时，
+            # 分不清"那张卡是灰的"和"决策算错了"。
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],
-                        "t": s["text"]} if s else None for s in st["skills"]],
+                        "t": s["text"], "lit": bool(s.get("lit")),
+                        "plate": s.get("plate")} if s else None
+                       for s in st["skills"]],
         }
         # 有认不全的数字就留一张技能栏截图：事后能核对"为什么选这张卡"，
         # 只写日志的话，看到 "23?" 根本没法判断它到底是 230 还是 23。
@@ -3067,11 +3150,18 @@ def main():
     ap.add_argument("--no-guard", action="store_true")
     ap.add_argument("--no-policy-v2", action="store_true",                    help="disable the expected-value policy, use the legacy picker")
     ap.add_argument("--switch-slot", type=int, default=1)
+    ap.add_argument("--assist-deadline", type=float, default=6.0,
+                    help="seconds to wait before the safety net fires")
+    ap.add_argument("--assist", action="store_true",
+                    help="only act when the turn is about to expire (operator "
+                         "plays via computer use, bot is the safety net)")
     ap.add_argument("--no-foe-scan", action="store_true",
                     help="do not click the foe portrait to identify unknown pets")
     ap.add_argument("--seconds", type=int, default=0,
                     help="stop after N seconds (0 = run forever)")
     args = ap.parse_args()
+    global ASSIST_DEADLINE
+    ASSIST_DEADLINE = getattr(args, "assist_deadline", 6.0)
     if args.probe:
         probe(args.probe)
         return 0

@@ -187,23 +187,40 @@ def _div_same(a, b, tol=7.0):
         return False
 
 
+def _purple_frac(crop):
+    """段位名是紫色粗体。实测：结算页约 25% 像素是紫字，战斗/大厅 ≤0.1%。"""
+    import numpy as np
+    if crop is None or crop.size == 0:
+        return 0.0
+    r = crop[:, :, 0].astype(np.int16)
+    g = crop[:, :, 1].astype(np.int16)
+    b = crop[:, :, 2].astype(np.int16)
+    m = (b > 120) & (r > 60) & (b - g > 40) & (r - g > 10)
+    return float(m.mean())
+
+
 def read_card(screen=None):
-    """读结算页段位卡：{'stars': n, 'of': m, 'sig': 段位指纹}。
+    """读结算页段位卡：{'stars': n, 'of': m, 'sig': 段位灰度图}。
 
     星级每场加 1 或 2 颗，升段时清零，所以只看星数差是不够的 —— 必须把
     "段位名有没有变"也带上，才能区分"赢了一场但升段清零"和"输了一场"。
+
+    这张卡只出现在结算页，所以它本身就是"现在是不是结算页"的判据：
+    段位名那片紫色不够、或者星级读不出来，就返回 None。
     """
     import robot
 
     scr = screen or robot.Screen()
     if scr.rect is None:
         return None
+    div = scr.grab(RESULT_DIV_ROI)
+    if _purple_frac(div) < 0.06:
+        return None
     got = read_star_count(scr.grab(RESULT_STAR_ROI))
     if not got:
         return None
     stars, of = got
-    return {"stars": stars, "of": of,
-            "sig": _div_sig(scr.grab(RESULT_DIV_ROI))}
+    return {"stars": stars, "of": of, "sig": _div_sig(div)}
 
 
 def result_between(before, after):

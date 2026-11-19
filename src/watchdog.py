@@ -136,7 +136,11 @@ def ensure_monitor():
 
 def start_bot():
     fh = open(BOT_LOG, "a", encoding="utf-8")
-    p = subprocess.Popen([PY, "-W", "ignore", "-u", "robot.py", "--seconds", "7200"],
+    cmd = [PY, "-W", "ignore", "-u", "robot.py", "--seconds", "7200"]
+    if os.path.exists(os.path.join(LOG_DIR, "assist.flag")):
+        cmd.append("--assist")
+        log("mode: assist (operator plays, bot is the safety net)")
+    p = subprocess.Popen(cmd,
                          cwd=SRC, stdin=subprocess.DEVNULL,
                          stdout=fh, stderr=subprocess.STDOUT,
                          creationflags=DETACHED)

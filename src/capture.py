@@ -1,104 +1,92 @@
-﻿"""capture.py - 1:1 physical screenshots anchored to the game window.
+﻿# -*- coding: utf-8 -*-
+"""抓帧工具：把"以后要用的画面"存下来。
 
-All regions are stored relative to the game window's top-left corner, so they
-survive window moves.
+三种模式：
+    --watch-result   结算页一出现就连拍（全分辨率），用于研究胜负判定
+    --seq            常速连拍（默认 1.5 秒一张），用于找技能播报/buff 图标
+    --turn           每回合一张（机器人自己已经在存 logs/shot）
 
-usage:
-  python capture.py --rect                 print the game window rect
-  python capture.py --grab name x y w h    save a crop (window-relative)
-  python capture.py --full out.png         save the whole window
+为什么要它：
+    结算页只出现几秒，机器人的状态机这时在忙着点跳过，很容易错过。
+    这个进程不碰输入，只读画面，发现紫色段位卡就连拍 10 秒。
+
+    --seq 用来回答"对手放的技能在哪里显示、buff 图标在哪"，这些以后
+    要接进伤害计算器：对面用什么招决定我们该不该换人。
 """
+from __future__ import annotations
 
-import ctypes
-import ctypes.wintypes as wt
-import io
 import os
 import sys
+import time
+
+import cv2
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+LOGS = os.path.join(ROOT, "logs")
 
 
-try:
-    ctypes.windll.shcore.SetProcessDpiAwareness(2)
-except Exception:
-    try:
-        ctypes.windll.user32.SetProcessDPIAware()
-    except Exception:
-        pass
-
-TITLE_KEY = "洛克王国"
+def _save(img, path, scale=1.0, q=80):
+    if scale != 1.0:
+        img = cv2.resize(img, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
+    cv2.imwrite(path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR),
+                [cv2.IMWRITE_JPEG_QUALITY, q])
 
 
-def game_rect():
-    """Return physical (x, y, w, h) of the game window."""
-    u = ctypes.windll.user32
-    found = []
-
-    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
-    def cb(hwnd, lparam):
-        n = ctypes.create_unicode_buffer(256)
-        u.GetWindowTextW(hwnd, n, 256)
-        if TITLE_KEY in n.value and u.IsWindowVisible(hwnd):
-            cls = ctypes.create_unicode_buffer(256)
-            u.GetClassNameW(hwnd, cls, 256)
-            if "Unreal" in cls.value:
-                r = wt.RECT()
-                u.GetWindowRect(hwnd, ctypes.byref(r))
-                found.append((r.left, r.top, r.right - r.left, r.bottom - r.top))
-        return True
-
-    u.EnumWindows(cb, 0)
-    if not found:
-        return None
-    return found[0]
-
-
-def grab_rel(dx, dy, w, h):
-    """Grab a region given in window-relative physical pixels."""
-    import mss
-    import numpy as np
-    rect = game_rect()
-    if not rect:
-        raise RuntimeError("game window not found")
-    x, y = rect[0] + dx, rect[1] + dy
-    with mss.mss() as sct:
-        shot = sct.grab({"left": x, "top": y, "width": w, "height": h})
-        return np.array(shot)[:, :, :3]
+def watch_result(minutes=60):
+    import rank
+    import robot
+    out = os.path.join(LOGS, "resultshots")
+    os.makedirs(out, exist_ok=True)
+    scr = robot.Screen()
+    t_end = time.time() + minutes * 60
+    inside = False
+    while time.time() < t_end:
+        try:
+            purple = rank._purple_frac(scr.grab(rank.RESULT_DIV_ROI))
+            if purple > 0.06 and not inside:
+                inside = True
+                stamp = time.strftime("%H%M%S")
+                print("result screen at %s (purple %.3f)" % (stamp, purple), flush=True)
+                for i in range(12):
+                    img = scr.grab_client((0, 0, 2560, 1600))
+                    if img is not None and img.size:
+                        _save(img, os.path.join(out, "%s_%02d.jpg" % (stamp, i)), 1.0, 85)
+                    time.sleep(0.35)
+            elif purple <= 0.02:
+                inside = False
+        except Exception as e:
+            print("watch error: %s" % e, flush=True)
+        time.sleep(0.4)
 
 
-def save_png(arr, path):
-    from PIL import Image
-    Image.fromarray(arr[:, :, ::-1]).save(path)  # BGR -> RGB
-
-
-def main():
-    args = sys.argv[1:]
-    if not args or args[0] == "--rect":
-        r = game_rect()
-        print("game rect:", r)
-        return 0
-
-    if args[0] == "--full":
-        out = args[1] if len(args) > 1 else r"D:\Projects\RocoAgent\logs\full.png"
-        rect = game_rect()
-        arr = grab_rel(0, 0, rect[2], rect[3])
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        save_png(arr, out)
-        print("saved", out, arr.shape)
-        return 0
-
-    if args[0] == "--grab":
-        name = args[1]
-        dx, dy, w, h = (int(v) for v in args[2:6])
-        out = r"D:\Projects\RocoAgent\logs\%s.png" % name
-        arr = grab_rel(dx, dy, w, h)
-        os.makedirs(os.path.dirname(out), exist_ok=True)
-        save_png(arr, out)
-        print("saved", out, arr.shape)
-        return 0
-
-    print(__doc__)
-    return 2
+def seq(seconds=120, interval=1.5):
+    import robot
+    out = os.path.join(LOGS, "seq")
+    os.makedirs(out, exist_ok=True)
+    scr = robot.Screen()
+    n = 0
+    t_end = time.time() + seconds
+    while time.time() < t_end:
+        img = scr.grab_client((0, 0, 2560, 1600))
+        if img is not None and img.size:
+            n += 1
+            _save(img, os.path.join(out, "%s_%03d.jpg" % (time.strftime("%H%M"), n)), 0.5, 65)
+        time.sleep(interval)
+    print("frames", n)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
-
+    if "--watch-result" in sys.argv:
+        mins = 60
+        if "--minutes" in sys.argv:
+            mins = int(sys.argv[sys.argv.index("--minutes") + 1])
+        watch_result(mins)
+    elif "--seq" in sys.argv:
+        secs = 120
+        if "--seconds" in sys.argv:
+            secs = int(sys.argv[sys.argv.index("--seconds") + 1])
+        seq(secs)
+    else:
+        print(__doc__)

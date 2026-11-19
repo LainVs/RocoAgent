@@ -70,6 +70,10 @@ def open_panel(screen, click=None, session=None):
     """
     import time
     import asyncio
+    # 面板可能已经开着（上一轮扫描留下的）：这时候再点一下会把它关掉，
+    # 于是"点了却没反应"——实测就是被这个坑掉的。
+    if is_open(screen):
+        return True
     cx, cy = screen.client_rect_on_screen()[:2]
     for tx, ty in FOE_BUST_CLICKS:
         if click is not None:
@@ -116,6 +120,8 @@ def close_panel(screen=None, click=None, esc=None, session=None):
                 session.key("esc")
 
     if screen is not None:
+        if not is_open(screen):
+            return
         cx, cy = screen.client_rect_on_screen()[:2]
         tx, ty = PANEL_CLOSE_CLICK
         _click(cx + tx, cy + ty)
