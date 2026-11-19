@@ -53,6 +53,92 @@ def learnable(species_name):
         db.close()
 
 
+# ---------------------------------------------------------------- 持久化
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS foe_skill_obs (
+    species TEXT, skill TEXT, n INTEGER DEFAULT 0,
+    first_seen TEXT, last_seen TEXT,
+    PRIMARY KEY (species, skill)
+);
+"""
+
+
+def _obs_db():
+    db = sqlite3.connect(DB)
+    db.row_factory = sqlite3.Row
+    db.executescript(SCHEMA)
+    return db
+
+
+def note_observation(species, skill, n=1):
+    """记一次"这只精灵用过这个技能"。跨重启累积。"""
+    if not species or not skill or species == "None" or skill == "None":
+        return
+    import time
+    db = _obs_db()
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M")
+        row = db.execute("SELECT n FROM foe_skill_obs WHERE species=? AND skill=?",
+                         (species, skill)).fetchone()
+        if row:
+            db.execute("UPDATE foe_skill_obs SET n=n+?, last_seen=? "
+                       "WHERE species=? AND skill=?", (n, now, species, skill))
+        else:
+            db.execute("INSERT INTO foe_skill_obs VALUES(?,?,?,?,?)",
+                       (species, skill, n, now, now))
+        db.commit()
+    finally:
+        db.close()
+
+
+def backfill_from_log(log_path=LOG):
+    """把日志里 FOE SCAN 到的技能一次性回填进库。返回新增条数。"""
+    import time
+    pat = re.compile(r"FOE SCAN -> (\S+) lv\S* 特性=\S+ 技能=(\S+)")
+    seen = collections.Counter()
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as f:
+            for line in f:
+                m = pat.search(line)
+                if not m:
+                    continue
+                sp, sk = m.group(1), m.group(2)
+                if sp in ("None", "") or sk in ("None", ""):
+                    continue
+                seen[(sp, sk)] += 1
+    except OSError:
+        return 0
+    db = _obs_db()
+    added = 0
+    try:
+        now = time.strftime("%Y-%m-%d %H:%M")
+        for (sp, sk), n in seen.items():
+            row = db.execute("SELECT n FROM foe_skill_obs WHERE species=? AND skill=?",
+                             (sp, sk)).fetchone()
+            if row:
+                db.execute("UPDATE foe_skill_obs SET last_seen=? "
+                           "WHERE species=? AND skill=?", (now, sp, sk))
+            else:
+                db.execute("INSERT INTO foe_skill_obs VALUES(?,?,?,?,?)",
+                           (sp, sk, n, now, now))
+                added += 1
+        db.commit()
+    finally:
+        db.close()
+    return added
+
+
+def load_observations():
+    """从库里读全部观测 -> {species: Counter(skill)}。"""
+    db = _obs_db()
+    try:
+        out = collections.defaultdict(collections.Counter)
+        for r in db.execute("SELECT species, skill, n FROM foe_skill_obs"):
+            out[r["species"]][r["skill"]] += int(r["n"] or 0)
+        return out
+    finally:
+        db.close()
+
 _obs_cache = {"at": 0.0, "data": None}
 
 
@@ -85,7 +171,9 @@ def distribution(species_name, top=8):
     pool = learnable(species_name)
     if not pool:
         return []
-    obs = observed().get(species_name) or collections.Counter()
+    obs = collections.Counter(load_observations().get(species_name) or {})
+    for k, v in (observed().get(species_name) or {}).items():
+        obs[k] = max(obs[k], v)
     by_name = {p["name"]: p for p in pool}
     # 先验不是均匀的：玩家更可能带高威力技能。用 (威力/100)^1.5 加权，
     # 200 威力的权重是 100 威力的 2.8 倍，接近实际配招习惯。
