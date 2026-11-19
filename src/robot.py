@@ -1739,6 +1739,7 @@ class Bot:
                 self._check_foe(st, now)
                 self._maybe_scan_foe(st, now)
                 self._cast_banner(st)
+                self._cast_ocr(st)
                 if self.cur_slot and st.get("my_pct") is not None:
                     self.slot_hp[self.cur_slot] = st["my_pct"]
                 self._check_leader_confirmed()
@@ -2142,6 +2143,40 @@ class Bot:
             self.foe_bust = data["name"]
             return True
         return False
+
+    def _cast_ocr(self, st):
+        """播报条亮起时读一次技能名，记进"对面带什么"的观测库。
+
+        播报是**它真的用了**的证据，比面板更硬（面板只显示 1 个）。
+        """
+        if not st.get("battle"):
+            return
+        if time.time() - getattr(self, "_cast_at", 0) < 2.0:
+            return
+        foe = getattr(self, "foe_name", None)
+        if not foe:
+            return
+        self._cast_at = time.time()
+        try:
+            import hud
+            name = hud.read_cast(self.screen, self._skill_vocab())
+            if not name:
+                return
+            import foe_moves
+            if foe_moves.skill(name):
+                foe_moves.note_observation(foe, name)
+                log("CAST -> %s 用过 %s" % (foe, name))
+        except Exception:
+            pass
+
+    def _skill_vocab(self):
+        if getattr(self, "_skv", None) is None:
+            try:
+                import hud
+                self._skv = hud.skill_vocab()
+            except Exception:
+                self._skv = []
+        return self._skv
 
     def _cast_banner(self, st):
         """存一张"技能播报"区域（对面出招时会显示'XX 使出了 YY!'）。

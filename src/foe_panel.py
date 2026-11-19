@@ -274,7 +274,9 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
                 pass
     finally:
         close_panel(screen=screen, click=click, esc=esc, session=session)
-    if not data or not data.get("name"):
+    # 对面可以全员改名（昵称），名字读不到是常态 ——
+    # 只要读到特性就继续：特性才是身份键。
+    if not data or not (data.get("name") or data.get("ability")):
         return data
 
     db = P.connect()
@@ -307,9 +309,14 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
             data["candidates"] = P.species_by_feature(data["ability"])
         else:
             data["unknown_ability"] = data["ability"]
-    if data.get("skill"):
-        _, created = P.learn_skill(sid, data["skill"])
-        data["new_skill"] = created
+    if data.get("skill") and data.get("species_name"):
+        # 面板上那只显示 1 个技能，但它是最真实的证据（玩家真的带了）
+        try:
+            import foe_moves
+            foe_moves.note_observation(data["species_name"], data["skill"])
+            data["skill_noted"] = True
+        except Exception:
+            pass
     return data
 
 
