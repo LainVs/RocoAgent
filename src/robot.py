@@ -2264,6 +2264,11 @@ class Bot:
             self._as_acted = False
             self._as_logged = False
             self._as_shadow = self._shadow_choice(st)
+            try:
+                import operator_log
+                operator_log.open_window(st, self._as_shadow)
+            except Exception:
+                pass
             log("ASSIST open me=%s%% foe=%s%% cards=%s shadow=%s"
                 % (st.get("my_pct"), st.get("foe_pct"),
                    [s["value"] if s else None for s in st["skills"]],
@@ -2278,6 +2283,11 @@ class Bot:
                 self._as_win = False
                 self._as_gone_at = None
                 log("ASSIST window closed")
+                try:
+                    import operator_log
+                    operator_log.close_window(st)
+                except Exception:
+                    pass
             return False
         if bar:
             self._as_gone_at = None
