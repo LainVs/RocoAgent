@@ -76,14 +76,15 @@ def open_panel(screen, click=None, session=None):
         return True
     cx, cy = screen.client_rect_on_screen()[:2]
     for tx, ty in FOE_BUST_CLICKS:
+        px, py = screen.phys(tx, ty)
         if click is not None:
-            click(cx + tx, cy + ty)
+            click(px, py)
         elif session is not None:
             if asyncio.iscoroutinefunction(session.click_at):
                 asyncio.get_event_loop().run_until_complete(
-                    session.click_at(cx + tx, cy + ty))
+                    session.click_at(px, py))
             else:
-                session.click_at(cx + tx, cy + ty)
+                session.click_at(px, py)
         # 面板有入场动画，0.5 秒就判"没开"会误判：
         # 于是点下一个候选点，把刚开的面板又关掉（实测就是这样 4 连点都不成功）
         for _ in range(8):
@@ -124,9 +125,8 @@ def close_panel(screen=None, click=None, esc=None, session=None):
     if screen is not None:
         if not is_open(screen):
             return
-        cx, cy = screen.client_rect_on_screen()[:2]
-        tx, ty = PANEL_CLOSE_CLICK
-        _click(cx + tx, cy + ty)
+        px, py = screen.phys(*PANEL_CLOSE_CLICK)
+        _click(px, py)
         time.sleep(0.35)
         if not is_open(screen):
             return

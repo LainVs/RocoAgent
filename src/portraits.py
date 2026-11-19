@@ -39,17 +39,18 @@ BASE_W, BASE_H = 2560, 1600
 
 
 def box_for(client_w, client_h, margin=0):
-    sx, sy = client_w / float(BASE_W), client_h / float(BASE_H)
+    """头像框（**基准分辨率坐标**）。
+
+    以前这里按客户区尺寸缩放；现在统一交给 Screen.grab_base 缩回基准尺寸，
+    所以这里只要把 margin 加上即可，不再自己乘比例。
+    """
     x, y, w, h = PORTRAIT_BOX
-    return (int(round(x * sx)) - margin, int(round(y * sy)) - margin,
-            int(round(w * sx)) + 2 * margin, int(round(h * sy)) + 2 * margin)
+    return (x - margin, y - margin, w + 2 * margin, h + 2 * margin)
 
 
 def foe_box_for(client_w, client_h, margin=0):
-    sx, sy = client_w / float(BASE_W), client_h / float(BASE_H)
     x, y, w, h = FOE_PORTRAIT_BOX
-    return (int(round(x * sx)) - margin, int(round(y * sy)) - margin,
-            int(round(w * sx)) + 2 * margin, int(round(h * sy)) + 2 * margin)
+    return (x - margin, y - margin, w + 2 * margin, h + 2 * margin)
 
 
 # The bust is drawn a few pixels off the screenshot position on a live window

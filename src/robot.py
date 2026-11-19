@@ -323,12 +323,20 @@ class Screen:
         self.client_size = new_size
         self.last_refresh = time.time()
     def grab(self, box):
-        """box = (x, y, w, h) window-relative -> RGB ndarray."""
+        """box = (x, y, w, h) CLIENT-relative -> RGB ndarray.
+
+        所有固定框都是在**客户区截图**上量的（截图不含标题栏和边框）。
+        以前游戏是无边框全屏，窗口矩形和客户区重合，两者混用没问题；
+        现在窗口是 1920x1200 塞在 1946x1271 的窗口里，标题栏 35px、
+        边框 13px —— 继续用窗口原点抓图，整块 HUD 会整体下移 35px，
+        HP 条（20px 高）刚好被整个错过。
+        """
         if self.rect is None or time.time() - self.last_refresh > 2.0:
             self.refresh()
             if self.rect is None:
                 return None
-        gx, gy = self.rect[0], self.rect[1]
+        ox, oy = getattr(self, "client_off", (0, 0))
+        gx, gy = self.rect[0] + ox, self.rect[1] + oy
         x, y, w, h = box
         shot = self.sct.grab({"left": gx + x, "top": gy + y, "width": w, "height": h})
         return cv2.cvtColor(np.asarray(shot), cv2.COLOR_BGRA2RGB)
@@ -338,44 +346,93 @@ class Screen:
             self.refresh()
             if self.rect is None:
                 return None
-        return self.grab((0, 0, self.rect[2], self.rect[3]))
+        cw, ch = getattr(self, "client_size", None) or (self.rect[2], self.rect[3])
+        return self.grab((0, 0, cw, ch))
 
     def grab_client(self, box):
-        """box = (x, y, w, h) CLIENT-relative -> RGB ndarray.
+        """box = (x, y, w, h) 基准分辨率坐标（客户区）-> RGB ndarray。
 
-        Used for the HUD portrait, whose coordinates were measured on a
-        screenshot (screenshots are client-area only, no frame).
+        名字里的 client 是历史叫法：所有坐标常量都是在客户区截图上量的。
+        统一走 grab_base，分辨率一变也能自动还原到基准尺寸。
         """
-        if self.rect is None or time.time() - self.last_refresh > 2.0:
-            self.refresh()
-            if self.rect is None:
-                return None
-        ox, oy = getattr(self, "client_off", (0, 0))
-        x, y, w, h = box
-        return self.grab((ox + x, oy + y, w, h))
+        return self.grab_base(box)
+
+    def phys(self, x, y):
+        """基准分辨率窗口坐标 -> 屏幕物理坐标（截图/点击共用同一套换算）。"""
+        cr = self.client_rect_on_screen()
+        if cr is None:
+            return None
+        sx, sy = self.scale()
+        return (cr[0] + int(round((x - self.BASE_OFF_X) * sx)),
+                cr[1] + int(round((y - self.BASE_OFF_Y) * sy)))
 
     # ---- 分辨率自适应 -------------------------------------------------
-    # 所有固定的窗口相对坐标都是在 2586x1671 的窗口下量出来的。
-    # 窗口换分辨率/被拖动改变大小时，这些框必须等比缩放，否则识别会错位。
-    BASE_RECT_W, BASE_RECT_H = 2586, 1671
+    # 所有固定的窗口相对坐标都是在**客户区 2560x1600、窗口 2586x1671** 的
+    # 窗口下量出来的。注意两点：
+    #   1. 常量里带着窗口边框：客户区原点在窗口内的 (13, 58)。
+    #   2. 游戏 UI 随客户区等比缩放，所以先减掉边框，再按客户区比例缩放。
+    # 只按窗口大小整体缩放会把 58px 的标题栏也一起缩放掉，
+    # 结果整块 HUD 偏移几十像素——HP 条只有 20px 高，一偏就完全读不到。
+    BASE_CLIENT_W, BASE_CLIENT_H = 2560, 1600
+    BASE_OFF_X, BASE_OFF_Y = 13, 58
 
     def sbox(self, box):
-        """把基准分辨率下的窗口相对框，等比缩放到当前窗口尺寸。"""
+        """把基准分辨率下的窗口相对框，等比缩放到当前客户区。"""
         if self.rect is None:
             self.refresh()
             if self.rect is None:
                 return box
-        sx = self.rect[2] / float(self.BASE_RECT_W)
-        sy = self.rect[3] / float(self.BASE_RECT_H)
-        if abs(sx - 1.0) < 0.004 and abs(sy - 1.0) < 0.004:
-            return box
+        sx, sy = self.scale()
         x, y, w, h = box
-        return (int(round(x * sx)), int(round(y * sy)),
+        return (int(round((x - self.BASE_OFF_X) * sx)),
+                int(round((y - self.BASE_OFF_Y) * sy)),
                 max(1, int(round(w * sx))), max(1, int(round(h * sy))))
 
+    def scale(self):
+        """当前**客户区**相对基准客户区(2560x1600)的缩放比。"""
+        if self.rect is None:
+            self.refresh()
+        if self.rect is None:
+            return 1.0, 1.0
+        cw, ch = getattr(self, "client_size", None) or (self.rect[2], self.rect[3])
+        return (cw / float(self.BASE_CLIENT_W), ch / float(self.BASE_CLIENT_H))
+
+    def grab_base(self, box):
+        """取一块**基准分辨率尺寸**的图。
+
+        阈值、宽高范围、数字模板全都是在基准分辨率下标定的。
+        窗口变小以后如果直接抓缩放后的图，这些常量全部失效
+        （按钮面积小 13 倍，`> 8000` 的判据永远不成立 —— 这就是
+        "换了分辨率连开始对战都点不到" 的原因）。
+        所以先按当前分辨率抓，再缩回基准尺寸，下游代码一行都不用改。
+        """
+        raw = self.grab(self.sbox(box))
+        if raw is None:
+            return None
+        sx, sy = self.scale()
+        if abs(sx - 1.0) < 0.004 and abs(sy - 1.0) < 0.004:
+            return raw
+        x, y, w, h = box
+        return cv2.resize(raw, (max(1, int(w)), max(1, int(h))),
+                          interpolation=cv2.INTER_AREA)
+
+    def abs_point(self, box, cx, cy):
+        """基准坐标(框内偏移) -> 屏幕物理坐标。"""
+        sx, sy = self.scale()
+        cr = self.client_rect_on_screen()
+        if cr is None:
+            return None
+        bx = box[0] + cx - self.BASE_OFF_X
+        by = box[1] + cy - self.BASE_OFF_Y
+        return (cr[0] + int(round(bx * sx)), cr[1] + int(round(by * sy)))
+
     def grab_s(self, box):
-        """grab() 的分辨率自适应版：box 用基准分辨率坐标。"""
-        return self.grab(self.sbox(box))
+        """grab() 的分辨率自适应版：box 用基准分辨率坐标。
+
+        返回的图仍然是**基准尺寸**，这样数字模板、OCR 词表这些
+        按基准像素标定的东西不会随窗口大小失效。
+        """
+        return self.grab_base(box)
 
     def client_rect_on_screen(self):
         if self.rect is None:
@@ -383,7 +440,6 @@ class Screen:
         ox, oy = getattr(self, "client_off", (0, 0))
         cw, ch = getattr(self, "client_size", (self.rect[2], self.rect[3]))
         return (self.rect[0] + ox, self.rect[1] + oy, cw, ch)
-
 
 # ------------------------------------------------------------------ perception
 _SPECIES_VOCAB = None
@@ -525,7 +581,10 @@ class Perc:
     def observe(self):
         my = self._bar(MY_BAR)
         foe = self._bar(FOE_BAR)
-        battle = my["ui"] and foe["ui"]
+        # 只要两边血条都能读出数字就算在战斗里。
+        # 以前还要求边框像素"是灰色"，缩放/换分辨率后这个判据会失效，
+        # 结果明明在打，battle 却是 False，机器人站在大厅里空转。
+        battle = my["pct"] is not None and foe["pct"] is not None
 
         x0, y0, x1, y1 = SKILL_BOX
         cw, ch = x1 - x0, y1 - y0
@@ -935,7 +994,7 @@ def _slots(crop, region, pills=None):
 def has_start_button(screen):
     """Gold '开始挑战' blob in the bottom-right banner."""
     x, y, w, h = LOBBY_BTN
-    crop = screen.grab((x, y, w, h))
+    crop = screen.grab_base((x, y, w, h))
     if crop is None:
         return False
     r = crop[:, :, 0].astype(np.int16)
@@ -948,7 +1007,7 @@ def has_start_button(screen):
 def has_exit_button(screen):
     """White '退出' blob on the result screen."""
     x, y, w, h = RESULT_BTN
-    crop = screen.grab((x, y, w, h))
+    crop = screen.grab_base((x, y, w, h))
     if crop is None:
         return False
     mx = crop.max(axis=2).astype(np.int16)
@@ -963,8 +1022,8 @@ def has_vs_screen(screen):
     Nothing else in the game is close to these two colours, so it is a safe
     'hands off' signal - we must never click while the match is loading.
     """
-    left = screen.grab((150, 250, 300, 300))
-    right = screen.grab((1900, 250, 300, 300))
+    left = screen.grab_base((150, 250, 300, 300))
+    right = screen.grab_base((1900, 250, 300, 300))
     if left is None or right is None:
         return False
     ml = left.reshape(-1, 3).mean(axis=0)
@@ -985,7 +1044,7 @@ def find_action_button(screen):
     Returns physical (x, y) or None.
     """
     x, y, w, h = ACTION_BTN_BAND
-    crop = screen.grab((x, y, w, h))
+    crop = screen.grab_base((x, y, w, h))
     if crop is None:
         return None
     r = crop[:, :, 0].astype(np.int16)
@@ -1013,11 +1072,7 @@ def find_action_button(screen):
     if best is None:
         return None
     _, bx, by, bw, bh = best
-    cx = x + bx + bw // 2
-    cy = y + by + bh // 2
-    if screen.rect is None:
-        return None
-    return (screen.rect[0] + cx, screen.rect[1] + cy)
+    return screen.abs_point((x, y, w, h), bx + bw // 2, by + bh // 2)
 
 
 def find_confirm_button(screen):
@@ -1032,7 +1087,7 @@ def find_confirm_button(screen):
     Returns physical (x, y) or None.
     """
     x, y, w, h = CONFIRM_BAND
-    crop = screen.grab((x, y, w, h))
+    crop = screen.grab_base((x, y, w, h))
     if crop is None or crop.size == 0:
         return None
     mx = crop.max(axis=2).astype(np.int16)
@@ -1051,10 +1106,7 @@ def find_confirm_button(screen):
     if best is None:
         return None
     _, bx, by, bw, bh = best
-    cx, cy = x + bx + bw // 2, y + by + bh // 2
-    if screen.rect is None:
-        return None
-    return (screen.rect[0] + cx, screen.rect[1] + cy)
+    return screen.abs_point((x, y, w, h), bx + bw // 2, by + bh // 2)
 
 
 def is_result_screen(screen):
@@ -1114,7 +1166,7 @@ def find_switch_rows(screen, bar_visible=None):
     Returns a list of window-relative (x, y) click targets, top row first.
     """
     X0, Y0, W, H = 300, 400, 620, 950
-    crop = screen.grab((X0, Y0, W, H))
+    crop = screen.grab_base((X0, Y0, W, H))
     if crop is None:
         return []
     # The skill cards' white name plates live in the same area and match the
@@ -1122,7 +1174,7 @@ def find_switch_rows(screen, bar_visible=None):
     # normal battle, not the switch panel.
     if bar_visible is None:
         x0, y0, x1, y1 = SKILL_BOX
-        bar = screen.grab((x0, y0, x1 - x0, y1 - y0))
+        bar = screen.grab_base((x0, y0, x1 - x0, y1 - y0))
         if bar is not None:
             bar_visible, _ = _is_skillbar(bar, (0, 0, x1 - x0, y1 - y0))
         else:
@@ -3275,16 +3327,24 @@ class Bot:
         self.clicked_at = now
 
     def click_rel(self, x, y):
-        """Click a window-relative point.
+        """Click a window-relative point (基准分辨率坐标).
 
         All UI anchors are stored relative to the window so that dragging the
         window does not invalidate them. Using absolute pixels is what made the
         bot click "a bit above 开始挑战" after the user moved the window.
+
+        坐标是**基准分辨率**下的，这里必须按当前客户区缩放，
+        并且要加上客户区相对窗口的偏移（标题栏/边框），
+        否则窗口一小，2010,1567 这种点就落到窗口外面去了。
         """
-        r = self.screen.rect
-        if r is None:
+        cr = self.screen.client_rect_on_screen()
+        if cr is None:
             return False
-        return self.click_abs(r[0] + int(x), r[1] + int(y))
+        sx, sy = self.screen.scale()
+        bx = x - self.screen.BASE_OFF_X
+        by = y - self.screen.BASE_OFF_Y
+        return self.click_abs(cr[0] + int(round(bx * sx)),
+                              cr[1] + int(round(by * sy)))
 
     def _click_target_ok(self, x, y):
         """点击前的双重保险：目标必须在游戏客户区内，且该点确实属于游戏窗口。
@@ -3484,7 +3544,7 @@ class Bot:
             # The row target is the card's left edge and the HP bar starts a few
             # pixels right of it, so this band lands on the bar for every row
             # including the ones whose position was extrapolated.
-            box = self.screen.grab((tx + 6, ty - 16, 175, 30))
+            box = self.screen.grab_base((tx + 6, ty - 16, 175, 30))
             if box is None or box.size == 0:
                 continue
             mx = box.max(axis=2).astype(np.int16)
