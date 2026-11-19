@@ -38,6 +38,11 @@ def main():
                 cv2.imwrite(os.path.join(OUT, name),
                             cv2.cvtColor(small, cv2.COLOR_RGB2BGR),
                             [cv2.IMWRITE_JPEG_QUALITY, 70])
+                try:
+                    with open(os.path.join(ROOT, "logs", "monitor.beat"), "w") as f:
+                        f.write(str(time.time()))
+                except OSError:
+                    pass
                 files = sorted(os.listdir(OUT))
                 for f in files[:-KEEP]:
                     try:

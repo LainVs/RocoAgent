@@ -80,7 +80,7 @@ def open_panel(screen, click=None, session=None):
                     session.click_at(cx + tx, cy + ty))
             else:
                 session.click_at(cx + tx, cy + ty)
-        for _ in range(6):
+        for _ in range(5):
             time.sleep(0.2)
             if is_open(screen):
                 return True

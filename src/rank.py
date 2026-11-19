@@ -167,14 +167,24 @@ def read_badge(screen=None):
 
 
 def _div_sig(crop):
-    """段位名的像素指纹：名字变了指纹就变，不用 OCR 也能判断升段。"""
+    """段位名的小灰度图（不是哈希）：同名两次渲染会有 1-2 像素抖动，
+    用精确相等比对会把它当成换段位。"""
     import cv2
     import numpy as np
     if crop is None or crop.size == 0:
         return None
     g = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
-    small = cv2.resize(g, (16, 6), interpolation=cv2.INTER_AREA)
-    return bytes((small // 32).astype(np.uint8).tobytes())
+    return cv2.resize(g, (32, 10), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def _div_same(a, b, tol=7.0):
+    import numpy as np
+    if a is None or b is None:
+        return False
+    try:
+        return float(np.abs(np.asarray(a, np.float32) - np.asarray(b, np.float32)).mean()) < tol
+    except Exception:
+        return False
 
 
 def read_card(screen=None):
@@ -200,7 +210,7 @@ def result_between(before, after):
     """比较两次结算卡 -> 1 胜 / -1 负 / 0 没变 / None 判不出。"""
     if not before or not after:
         return None
-    if before.get("sig") and after.get("sig") and before["sig"] == after["sig"]:
+    if _div_same(before.get("sig"), after.get("sig")):
         d = after["stars"] - before["stars"]
         return 1 if d > 0 else (-1 if d < 0 else 0)
     # 段位变了：满星后清零是升段（赢），零星后变多是掉段（输）

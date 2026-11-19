@@ -375,6 +375,20 @@ class Screen:
 
 
 # ------------------------------------------------------------------ perception
+def _bust_sig(img):
+    """头像的 12x12 灰度粗指纹（用于判断对面有没有换人）。"""
+    if img is None or img.size == 0:
+        return None
+    g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    return cv2.resize(g, (12, 12), interpolation=cv2.INTER_AREA).astype(np.float32)
+
+
+def _sig_dist(a, b):
+    if a is None or b is None:
+        return 1e9
+    return float(np.abs(a - b).mean())
+
+
 def _plate_p75(crop, pill):
     """Brightness of the name plate under a skill card, or None.
 
@@ -1337,6 +1351,10 @@ class Bot:
         self._foe_poll_at = 0.0
         self._foe_unknown_at = 0.0
         self.foe_bust = None
+        self.foe_sig = None
+        self._foe_scan_sig = None
+        self._foe_tries = 0
+        self._foe_try_at = 0.0
         # 每个队伍槽位最后一次看到的血量（%）。换人按这个挑后备，
         # 而不是按固定轮转 —— 否则会换回一只残血的再立刻换走。
         self.slot_hp = {}
@@ -1349,7 +1367,7 @@ class Bot:
             with open(os.path.join(LOG_DIR, "rank_card.json"), encoding="utf-8") as f:
                 d = json.load(f)
             if d.get("sig") is not None:
-                d["sig"] = bytes(d["sig"])
+                d["sig"] = np.asarray(d["sig"], np.float32)
             self.card_prev = d
         except Exception:
             pass
@@ -1600,6 +1618,10 @@ class Bot:
                         self.cur_slot = 1
                         self.slot_species = {}
                         self._foe_scanned = False
+                        self._foe_tries = 0
+                        self._foe_try_at = 0.0
+                        self.foe_sig = None
+                        self._foe_scan_sig = None
                         # Per-match tally: a lifetime counter made the panel
                         # log read "dead=9" for a six-pet team.
                         self.dead_count = 0
@@ -1869,6 +1891,22 @@ class Bot:
         items = portraits.load_library(portraits.FOE_LIB_DIR)
         name, sc = portraits.identify(img, items,
                                       target=(box[2] - 2 * m, box[3] - 2 * m))
+        # 对面换人：HUD 头像会变。用 12x12 灰度粗指纹判断，光照/抖动不会
+        # 越过阈值，但换一只精灵一定越得过去。
+        sig = _bust_sig(img)
+        if self.foe_sig is None:
+            self.foe_sig = sig
+        elif _sig_dist(sig, self.foe_sig) > 14.0:
+            # 连续两帧都对不上才算换人：受击闪光/镜头推拉只影响一帧。
+            self._foe_sig_streak = getattr(self, "_foe_sig_streak", 0) + 1
+            if self._foe_sig_streak >= 2:
+                log("FOE -> new bust (switch?)")
+                self.foe_sig = sig
+                self.foe_name = None
+                self.foe_bust = None
+                self._foe_sig_streak = 0
+        else:
+            self._foe_sig_streak = 0
         if name is not None and sc >= 0.62:
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
@@ -1920,17 +1958,19 @@ class Bot:
                 esc=lambda: self.send_key("esc", allow_focus_click=False))
         except Exception as e:
             log("FOE SCAN failed: %s: %s" % (type(e).__name__, e))
-            return
+            return False
         dt = time.time() - t0
         if not data:
             log("FOE SCAN -> no panel (%.1fs)" % dt)
-            return
+            return False
         log("FOE SCAN -> %s lv%s 特性=%s 技能=%s (%.1fs)"
             % (data.get("name"), data.get("level"), data.get("ability"),
                data.get("skill"), dt))
         if data.get("name"):
             self.foe_name = data["name"]
             self.foe_bust = data["name"]
+            return True
+        return False
 
     def _dump_bar(self, tag):
         """存一张技能栏截图（认不全数字时用），每 8 秒最多一张。"""
@@ -2133,13 +2173,27 @@ class Bot:
             # acted_at stays: a state change during an attack animation is not
             # a new turn. The 8 s gate below owns retry pacing.
 
-        # ---- 未知对手：点开特性面板补录（一场一次，只在我的回合窗口）
+        # ---- 未知对手：点开特性面板补录
+        # 注意：不要用 st["countdown"] 当条件。那个白色大数字实测经常读成 0
+        # （回合日志里 cnt=0 是常态），用它把关等于永远不扫。
+        #
+        # 也不能"一场只扫一次"：对面会中途换人，换上来那只同样需要识别。
+        # 所以按"HUD 头像指纹"记：指纹变了（换人了）就重新允许扫描，
+        # 同一只最多试 3 次，间隔 12 秒。
         if (not getattr(self.args, "no_foe_scan", False)
                 and self.foe_name is None
-                and not getattr(self, "_foe_scanned", False)
-                and self.turn <= 2 and st.get("bar") and st.get("countdown")):
-            self._foe_scanned = True
-            self._scan_foe_panel()
+                and self.foe_sig is not None
+                and st.get("bar")):
+            if (self._foe_scan_sig is None
+                    or _sig_dist(self.foe_sig, self._foe_scan_sig) > 2.0):
+                self._foe_scan_sig = self.foe_sig.copy()
+                self._foe_tries = 0
+            if (self._foe_tries < 3
+                    and now - self._foe_try_at > 12.0):
+                self._foe_try_at = now
+                self._foe_tries += 1
+                if self._scan_foe_panel():
+                    self._foe_tries = 0
 
         # ---- turn pacing -----------------------------------------------
         # acted_at is deliberately NOT reset by bar flicker or key changes any
@@ -2409,42 +2463,50 @@ class Bot:
             # 胜负判定：读结算页那张段位卡（★N/M + 段位名），和上一场留下的
             # 卡比较。星级一场可能 +1 也可能 +2，升段还会清零，所以必须
             # 连"段位名字有没有变"一起比，光看星数差会把它判成 flat。
-            if not getattr(self, "_card_read", False):
-                self._card_read = True
+            #
+            # 段位卡读不出来 => 这不是结算页。技能栏的形状和"左边 6 行亮字"
+            # 很像，只看那个条件一晚上能误判几百次（实测 316 次空点）。
+            card = None
+            if not getattr(self, "_card_tried", False):
+                self._card_tried = True
                 try:
                     import rank as _rank
                     card = _rank.read_card(self.screen)
-                    prev = getattr(self, "card_prev", None)
-                    if card:
-                        res = _rank.result_between(prev, card)
-                        log("result card %d/%d prev=%s -> %s" % (
-                            card["stars"], card["of"],
-                            ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
-                            res))
-                        if res is not None and prev is not None:
-                            self._log_result(prev, card, res)
-                        self.card_prev = card
-                        try:
-                            with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
-                                json.dump({k: (v if k != "sig" else list(v or b""))
-                                           for k, v in card.items()}, f)
-                        except Exception:
-                            pass
                 except Exception as e:
                     log("card read failed: %s" % e)
-            if now - self.advance_at >= ADVANCE_COOLDOWN_S:
-                if not getattr(self, "_skip_logged", False):
-                    self._skip_logged = True
-                    log("result screen -> click 略略略")
-                self.ensure_focus()
-                self.click_rel(*RESULT_SKIP_REL)
-                self.advance_at = now
-                self.advance_count = 0
-                self.advance_gave_up = False
-                self.last_progress_at = now
-            return
+            if card is not None:
+                try:
+                    import rank as _rank
+                    prev = getattr(self, "card_prev", None)
+                    res = _rank.result_between(prev, card)
+                    log("result card %d/%d prev=%s -> %s" % (
+                        card["stars"], card["of"],
+                        ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
+                        res))
+                    if res is not None and prev is not None:
+                        self._log_result(prev, card, res)
+                    self.card_prev = card
+                    try:
+                        with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
+                            json.dump({k: (v if k != "sig" else list(v or b""))
+                                       for k, v in card.items()}, f)
+                    except Exception:
+                        pass
+                except Exception as e:
+                    log("result compare failed: %s" % e)
+                if now - self.advance_at >= ADVANCE_COOLDOWN_S:
+                    if not getattr(self, "_skip_logged", False):
+                        self._skip_logged = True
+                        log("result screen -> click 略略略")
+                    self.ensure_focus()
+                    self.click_rel(*RESULT_SKIP_REL)
+                    self.advance_at = now
+                    self.advance_count = 0
+                    self.advance_gave_up = False
+                    self.last_progress_at = now
+                return
         self._skip_logged = False
-        self._card_read = False
+        self._card_tried = False
 
         # (the bottom-centre action button was already handled above)
         want = "start" if has_start_button(self.screen) else None

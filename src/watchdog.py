@@ -112,6 +112,28 @@ def ensure_espfast():
     return False
 
 
+def monitor_alive():
+    """靠心跳文件判断：wmic 在 Win11 上不一定有，命令行匹配也不可靠。"""
+    try:
+        p = os.path.join(LOG_DIR, "monitor.beat")
+        return time.time() - os.path.getmtime(p) < 120.0
+    except OSError:
+        return False
+
+
+def ensure_monitor():
+    if monitor_alive():
+        return
+    try:
+        subprocess.Popen([PY, "-W", "ignore", "monitor.py"], cwd=SRC,
+                         stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         creationflags=DETACHED)
+        log("monitor restarted")
+    except Exception as e:
+        log("monitor start failed: %s" % e)
+
+
 def start_bot():
     fh = open(BOT_LOG, "a", encoding="utf-8")
     p = subprocess.Popen([PY, "-W", "ignore", "-u", "robot.py", "--seconds", "7200"],
@@ -147,6 +169,7 @@ def main():
                     os.remove(FLAG)
                 except OSError:
                     pass
+            ensure_monitor()
             if not alive:
                 now = time.time()
                 crashes = [t for t in crashes if now - t < 60.0]
