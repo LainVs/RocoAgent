@@ -209,6 +209,33 @@ def _feature_id(name):
     return PANEL_FEATURE_BASE + (h % 10000000)
 
 
+def find_feature_id(name, path=DB_PATH):
+    """特性名 -> 特性 id（只查，不建）。"""
+    if not name:
+        return None
+    db = connect(path)
+    try:
+        r = db.execute("SELECT id FROM features WHERE name=?", (name,)).fetchone()
+        return r["id"] if r else None
+    finally:
+        db.close()
+
+
+def species_by_feature(name, path=DB_PATH):
+    """特性名 -> 候选精灵（按总族值降序）。这就是反查 id 的核心。"""
+    if not name:
+        return []
+    db = connect(path)
+    try:
+        return [dict(r) for r in db.execute(
+            """SELECT s.id, s.name, s.type_names, s.total
+               FROM features f JOIN feature_pets fp ON fp.feature_id=f.id
+               JOIN species s ON s.id=fp.species_id
+               WHERE f.name=? ORDER BY s.total DESC""", (name,))]
+    finally:
+        db.close()
+
+
 def learn_feature(species_id, name, desc=None, path=DB_PATH):
     """把面板上读到的特性写进库（已有同名特性就复用）。
 

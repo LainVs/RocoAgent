@@ -84,8 +84,10 @@ def open_panel(screen, click=None, session=None):
                     session.click_at(cx + tx, cy + ty))
             else:
                 session.click_at(cx + tx, cy + ty)
-        for _ in range(3):
-            time.sleep(0.18)
+        # 面板有入场动画，0.5 秒就判"没开"会误判：
+        # 于是点下一个候选点，把刚开的面板又关掉（实测就是这样 4 连点都不成功）
+        for _ in range(8):
+            time.sleep(0.25)
             if is_open(screen):
                 return True
     return False
@@ -251,6 +253,20 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
     try:
         bust = screen.grab_client(FOE_PORTRAIT_BOX)
         data = read_name(screen, ocr=ocr) if fast else read(screen, ocr=ocr)
+        # 整块 OCR 经常读不到特性（小字 + 布局变化）——
+        # 用"黄标签定位"再读一次，布局无关。
+        if data is not None and not data.get("ability"):
+            try:
+                import ability_read
+                got = ability_read.read_ability(
+                    screen, ability_read.feature_vocab(),
+                    dump=os.path.join(LOG_DIR, "panel_%s.png"
+                                      % time.strftime("%H%M%S")))
+                if got and got.get("ability"):
+                    data["ability"] = got["ability"]
+                    data["ability_badge"] = got.get("badge")
+            except Exception:
+                pass
     finally:
         close_panel(screen=screen, click=click, esc=esc, session=session)
     if not data or not data.get("name"):
@@ -275,9 +291,17 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
         buf.tofile(path)
         P.add_portrait(fname, sid, "普通", "foe", "panel")
 
+    # 特性是用来"反查 id"的，不是用来"补数据"的。
+    # 库里已经有 269 条特性；读到的名字应该去匹配，匹配不上说明 OCR 错了
+    # 或者真的是新特性 —— 记下来人工确认，绝不自动写库
+    # （之前就是这样把"60级水桶模板"写进 features 的）。
     if data.get("ability"):
-        _, created = P.learn_feature(sid, data["ability"])
-        data["new_feature"] = created
+        fid = P.find_feature_id(data["ability"])
+        if fid:
+            data["feature_id"] = fid
+            data["candidates"] = P.species_by_feature(data["ability"])
+        else:
+            data["unknown_ability"] = data["ability"]
     if data.get("skill"):
         _, created = P.learn_skill(sid, data["skill"])
         data["new_skill"] = created

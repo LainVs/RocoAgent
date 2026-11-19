@@ -26,6 +26,7 @@ import ctypes
 import ctypes.wintypes as wt
 import json
 import os
+import random
 import sys
 import time
 
@@ -60,8 +61,13 @@ SKILL_BOX = dr.BAR                # (250, 480, 780, 1520)
 POLL_S = 0.12
 # 辅助模式兜底时限（秒）。回合窗口约 15 秒，9 秒留足余量。
 ASSIST_DEADLINE = 6.0
+# 首领化开关：名字识别验证通过之前保持 False，
+# 否则会给银月狼王按 Q 卡在背包里，白扔两个回合。
+LEADER_ENABLED = True
 # 技能播报区域（对面出招/换宠时滚动的文字条）
 CAST_BANNER_BOX = (1500, 150, 1000, 130)
+# 右下角按钮排（逃跑/背包/更换/技能），入场动画结束后才出现
+UI_BUTTON_BOX = (2150, 1440, 360, 140)
 ACT_COOLDOWN_S = 1.0
 SWITCH_COOLDOWN_S = 2.5
 SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
@@ -379,6 +385,25 @@ class Screen:
 
 
 # ------------------------------------------------------------------ perception
+_SPECIES_VOCAB = None
+
+
+def species_vocab():
+    """精灵名词表（缓存），用于 HUD 名字的最近邻纠错。"""
+    global _SPECIES_VOCAB
+    if _SPECIES_VOCAB is None:
+        try:
+            import sqlite3
+            from portrait_db import DB_PATH
+            db = sqlite3.connect(DB_PATH)
+            _SPECIES_VOCAB = [r[0] for r in db.execute(
+                "SELECT DISTINCT name FROM species WHERE name IS NOT NULL")]
+            db.close()
+        except Exception:
+            _SPECIES_VOCAB = []
+    return _SPECIES_VOCAB
+
+
 def _bust_sig(img):
     """头像的 12x12 灰度粗指纹（用于判断对面有没有换人）。"""
     if img is None or img.size == 0:
@@ -1291,7 +1316,11 @@ def decide(st, ctx):
     pool = sorted(damaged,
                   key=lambda p: (p[0].get("value") is not None, p[1],
                                  p[0]["color"] != "red"), reverse=True)
-    best, best_v = pool[0]
+    # 差 3% 以内视为等价，随机选一个：同一套阵容每次都走同一线路的话，
+    # 对面摸透一次就能场场赢我们（实测确实如此）。
+    top_v = pool[0][1]
+    near = [p for p in pool if p[1] >= top_v * 0.97][:3]
+    best, best_v = random.choice(near) if len(near) > 1 else pool[0]
 
     # Everything on hand is weak: hand the turn to a fresh pet instead of
     # chipping away. The caller supplies the slot of a living bench pet.
@@ -1636,6 +1665,7 @@ class Bot:
                         self.advance_gave_up = False
                         self.active_pet = None
                         self.leader_done = False
+                        self._leader_tries = 0
                         self.pet_at = 0.0
                         self._pet_poll_at = 0.0
                         self.foe_name = None
@@ -1668,17 +1698,7 @@ class Bot:
                 self._cast_banner(st)
                 if self.cur_slot and st.get("my_pct") is not None:
                     self.slot_hp[self.cur_slot] = st["my_pct"]
-                # 首领化确认：变成狼的"银白发光"头像说明已经首领化过，
-                # 这样 leader_done 不再依赖"按键发出去了"这个假设。
-                if self.active_pet == "wolf_leader" and not self.leader_done:
-                    self.leader_done = True
-                    log("LEADER -> confirmed (bust switched to leader form)")
-                leader_ready = (
-                    (now - self.pet_at > 2.0 and st.get("bar"))
-                    or now - self.pet_at > 4.0)
-                if (self.active_pet == "wolf" and not self.leader_done
-                        and self.faint_at is None and leader_ready):
-                    self._leader_transform()
+                self._check_leader_confirmed()
 
             # ---- not in battle: lobby / vs screen / result
             else:
@@ -1692,8 +1712,7 @@ class Bot:
                 # produced 332 matches in 5 h (median 66 s, 3 actions) and the
                 # ladder badge never moved.
                 if (self.match_started is not None
-                        and now - self.battle_false_since > 20.0
-                        and self.faint_at is None):
+                        and now - self.battle_false_since > 25.0):
                     self._end_match()
                 self._idle_tick(now)
 
@@ -1867,6 +1886,7 @@ class Bot:
                 self.active_pet = name
                 self.pet_at = now
             # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）。
+            self.my_score = sc
             sp = self._portrait_species(name, "self")
             if sp and sp != self.my_name:
                 self.my_name = sp
@@ -2054,7 +2074,10 @@ class Bot:
             data = foe_panel.learn_from_panel(
                 self.screen,
                 click=_click,
-                esc=lambda: self.send_key("esc", allow_focus_click=False))
+                esc=lambda: self.send_key("esc", allow_focus_click=False),
+                # 必须读整块面板：快路径只读名字，特性永远拿不到。
+                # 我们的目的正是"特性 -> 反查 id"，所以这里多花 4-6 秒值得。
+                fast=False)
         except Exception as e:
             log("FOE SCAN failed: %s: %s" % (type(e).__name__, e))
             return False
@@ -2184,9 +2207,9 @@ class Bot:
 
     def _leader_transform(self):
         """首领化: W -> 1 -> Space. Free action, once per match."""
-        log("LEADER -> 恶魔狼 on field, transforming (W/1/space)")
-        if not self.send_key("w"):
-            log("LEADER -> w dropped, retry next tick")
+        log("LEADER -> 恶魔狼 on field, transforming (Q/1/space)")
+        if not self.send_key("q"):
+            log("LEADER -> q dropped, retry next tick")
             return False
         time.sleep(0.9)
         self.send_key(1)
@@ -2194,8 +2217,11 @@ class Bot:
         for _ in range(3):
             self.send_key("space")
             time.sleep(0.5)
-        self.leader_done = True
-        log("LEADER -> sequence sent")
+        # 注意：这里不能置 leader_done。是否成功由头像说了算
+        # （_check_leader_confirmed 看到银白头像才置 True）。
+        # 置了 True 就等于"发完即成功"，失败了整场不再重试。
+        self._leader_tries = getattr(self, "_leader_tries", 0) + 1
+        log("LEADER -> sequence sent (attempt %d)" % self._leader_tries)
         # Keep a snapshot of the bust right after the sequence. If the leader
         # form changes the portrait (it should), this frame is the template we
         # need to verify the next transformation automatically instead of
@@ -2290,10 +2316,106 @@ class Bot:
         except Exception as e:
             return "err(%s)" % e
 
+    def _check_leader_confirmed(self):
+        """头像变成银白色（wolf_leader / 首领-恶魔狼）就确认已变身。"""
+        if self.leader_done:
+            return
+        if (self.active_pet == "wolf_leader"
+                or getattr(self, "my_name", None) == "首领-恶魔狼"):
+            self.leader_done = True
+            log("LEADER -> confirmed (bust switched to leader form)")
+
+    def _ui_ready(self):
+        """右下角那排按钮（逃跑/背包/更换/技能）是否已经画出来。
+
+        入场动画期间它们是隐藏的，这时候按 W/1/Space 会被吞掉，
+        所以首领化必须等这块区域亮起来。
+        """
+        try:
+            img = self.screen.grab_client(UI_BUTTON_BOX)
+            if img is None or img.size == 0:
+                return False
+            return float(img.max(axis=2).mean()) > 40.0
+        except Exception:
+            return False
+
+
+    def _hud_name(self, force=False):
+        """读我方左上角 HUD 名字（封闭词表纠错），缓存 3 秒。
+
+        自家精灵的名字就是种族名（没有昵称），比头像可靠得多 ——
+        银月狼王和恶魔狼都是狼，头像会混，名字不会。
+        """
+        import time as _t
+        if not force and _t.time() - getattr(self, "_hud_name_at", 0) < 3.0:
+            return getattr(self, "_hud_name_val", None)
+        self._hud_name_at = _t.time()
+        try:
+            import ocr_cn
+            img = self.screen.grab_client((0, 0, 460, 170))
+            name = None
+            if img is not None and getattr(img, "size", 0):
+                ocr = ocr_cn.Ocr()
+                # 和离线标注用同一套：整条 OCR + 精灵名词表最近邻。
+                # pet_name() 实测会把名字读成"60级水桶模板"这种垃圾，弃用。
+                lines = ocr.read_region(img)
+                vocab = species_vocab()
+                best, best_s = None, 0.0
+                for t, _c in lines:
+                    cand, s2 = ocr_cn.Ocr.match(t, vocab)
+                    if cand and s2 > best_s:
+                        best, best_s = cand, s2
+                name = best if best_s >= 0.80 else None
+            self._hud_name_val = name
+            return name
+        except Exception:
+            return getattr(self, "_hud_name_val", None)
+
+    def _leader_first(self, st, now):
+        if not LEADER_ENABLED:
+            return False
+        """该首领化就先变身，本回合不出招。返回 True 表示这回合交给它。"""
+        if self.leader_done or self.faint_at is not None:
+            return False
+        if getattr(self, "my_name", None) != "恶魔狼":
+            return False
+        # 银月狼王和恶魔狼同族相似，0.72 那一档会把狼王认成恶魔狼 →
+        # 一上场就狂变身。首领化只认高置信度。
+        if getattr(self, "my_score", 0.0) < 0.85:
+            return False
+        # 用户确认：自家精灵看"名字 + 头像"。头像会混（银月狼王也是银白狼），
+        # 名字不会 —— 名字不是"恶魔狼"就绝不按 Q，否则会卡在背包里。
+        nm = self._hud_name()
+        # fail-closed：读不到名字就不变（宁可这回合不变，也不能给狼王按 Q
+        # 卡在背包里）。读到了但不是恶魔狼，更不变。
+        if not nm:
+            return False
+        if "恶魔狼" not in str(nm):
+            if not getattr(self, "_leader_name_skip", False):
+                self._leader_name_skip = True
+                log("LEADER -> skip (HUD name is %s, not 恶魔狼)" % nm)
+            return False
+        if not getattr(self, "_leader_name_ok", False):
+            self._leader_name_ok = True
+            log("LEADER -> HUD name confirmed 恶魔狼, transforming")
+        if now - getattr(self, "pet_at", 0.0) < 1.2:
+            return False
+        if getattr(self, "_leader_tries", 0) >= 4:
+            return False
+        if not (self._ui_ready() or st.get("bar")):
+            return False
+        log("LEADER -> transforming before acting")
+        self._leader_transform()
+        return True
+
     def _battle_tick(self, st, now):
         # ---- 辅助模式：我只在"回合快超时"时兜底放一手 ---------------------
         # 用来让我（或你）用 computeruse 亲自打，机器人只防止超时。
         # 同时把"如果交给它，它想按哪个"打进日志，形成对照数据。
+        # 首领化优先于一切出招：变身不消耗回合，但它必须在上场动画结束后立刻做
+        if self._leader_first(st, now):
+            return
+
         if getattr(self.args, "assist", False):
             # 倒下/强制换人必须永远放行：那时候技能栏是关的，辅助窗口
             # 根本不会打开。之前被这道闸挡住，结果"精灵死了完全没反应"。
