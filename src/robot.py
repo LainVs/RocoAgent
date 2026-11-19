@@ -76,6 +76,8 @@ ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash scr
 # 结算/升段页右上角的"略略略"才是跳过按钮。中间那块徽章点了没用（实测连点
 # 8 次都不动），所以这个页面必须单独处理，否则机器人会一直卡在结算页。
 RESULT_SKIP_REL = (2303, 238)
+# 对面 HUD 的名字条（头像右边），认不出对面时和头像一起存，供离线标注
+FOE_NAME_BOX = (2225, 50, 210, 55)
 ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
@@ -1341,6 +1343,16 @@ class Bot:
         self.cur_slot = 1
         # 槽位 -> 种族名，靠上场时认头像学出来（我方 6 只没有手填也能用）
         self.slot_species = {}
+        # 结算页段位卡上一次读到的值，跨重启保留（否则重启后第一场判不出胜负）
+        self.card_prev = None
+        try:
+            with open(os.path.join(LOG_DIR, "rank_card.json"), encoding="utf-8") as f:
+                d = json.load(f)
+            if d.get("sig") is not None:
+                d["sig"] = bytes(d["sig"])
+            self.card_prev = d
+        except Exception:
+            pass
         self.foe_name = None
         self.my_name = None
         self.active_slot = None
@@ -1493,6 +1505,11 @@ class Bot:
             try:
                 r = self.screen.rect
                 if r:
+                    # 先把窗口抬到最上层再点标题栏：否则这一点会落到挡住它的
+                    # 那个窗口上，结果是把编辑器拉到前台，越点越糟（昨晚
+                    # 08:20-08:23 就是这么空转了 3 分钟）。
+                    _raise_topmost(hwnd)
+                    time.sleep(0.15)
                     self._ble(lambda: self.ble.click_at(r[0] + 700, r[1] + 18),
                               "titlebar")
                     time.sleep(0.25)
@@ -1616,8 +1633,15 @@ class Bot:
                 if self.battle_false_since is None:
                     self.battle_false_since = now
                 # a match only counts as over after a clear pause, so a single
-                # flicker in the HP-bar border check cannot split one match in two
-                if self.match_started is not None and now - self.battle_false_since > 6.0:
+                # flicker in the HP-bar border check cannot split one match in two.
+                # 6 s was far too short: a faint -> forced switch -> send-out hides
+                # both HP bars for 10-20 s, so the bot ended the match mid-battle
+                # and started a "new" one when the bars came back. Last night that
+                # produced 332 matches in 5 h (median 66 s, 3 actions) and the
+                # ladder badge never moved.
+                if (self.match_started is not None
+                        and now - self.battle_false_since > 20.0
+                        and self.faint_at is None):
                     self._end_match()
                 self._idle_tick(now)
 
@@ -1859,6 +1883,13 @@ class Bot:
             try:
                 bh, bw = img.shape[:2]
                 portraits.save_template(img[m:bh - m, m:bw - m], path)
+                # 名字条一起存：对面 HUD 名字在头像右边。只存头像的话，
+                # 离线没法标注（之前就是这样，库里全是认不出的一堆图）。
+                strip = self.screen.grab_client(FOE_NAME_BOX)
+                if strip is not None and strip.size:
+                    cv2.imwrite(os.path.join(
+                        portraits.FOE_LIB_DIR, "_unknown_%s_name.png" % ts),
+                        cv2.cvtColor(strip, cv2.COLOR_RGB2BGR))
                 log("FOE -> unknown bust (%.2f) saved %s"
                     % (sc, os.path.basename(path)))
             except Exception:
@@ -2103,10 +2134,10 @@ class Bot:
             # a new turn. The 8 s gate below owns retry pacing.
 
         # ---- 未知对手：点开特性面板补录（一场一次，只在我的回合窗口）
-        if (getattr(self.args, "foe_scan", False)
+        if (not getattr(self.args, "no_foe_scan", False)
                 and self.foe_name is None
                 and not getattr(self, "_foe_scanned", False)
-                and self.turn <= 2 and st.get("bar")):
+                and self.turn <= 2 and st.get("bar") and st.get("countdown")):
             self._foe_scanned = True
             self._scan_foe_panel()
 
@@ -2375,6 +2406,32 @@ class Bot:
         # "只在一场结束后 120 秒内才允许点"的限制 —— 这个页面本身就是
         # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）。
         if is_result_screen(self.screen):
+            # 胜负判定：读结算页那张段位卡（★N/M + 段位名），和上一场留下的
+            # 卡比较。星级一场可能 +1 也可能 +2，升段还会清零，所以必须
+            # 连"段位名字有没有变"一起比，光看星数差会把它判成 flat。
+            if not getattr(self, "_card_read", False):
+                self._card_read = True
+                try:
+                    import rank as _rank
+                    card = _rank.read_card(self.screen)
+                    prev = getattr(self, "card_prev", None)
+                    if card:
+                        res = _rank.result_between(prev, card)
+                        log("result card %d/%d prev=%s -> %s" % (
+                            card["stars"], card["of"],
+                            ("%d/%d" % (prev["stars"], prev["of"])) if prev else "-",
+                            res))
+                        if res is not None and prev is not None:
+                            self._log_result(prev, card, res)
+                        self.card_prev = card
+                        try:
+                            with open(os.path.join(LOG_DIR, "rank_card.json"), "w") as f:
+                                json.dump({k: (v if k != "sig" else list(v or b""))
+                                           for k, v in card.items()}, f)
+                        except Exception:
+                            pass
+                except Exception as e:
+                    log("card read failed: %s" % e)
             if now - self.advance_at >= ADVANCE_COOLDOWN_S:
                 if not getattr(self, "_skip_logged", False):
                     self._skip_logged = True
@@ -2387,6 +2444,7 @@ class Bot:
                 self.last_progress_at = now
             return
         self._skip_logged = False
+        self._card_read = False
 
         # (the bottom-centre action button was already handled above)
         want = "start" if has_start_button(self.screen) else None
@@ -2427,22 +2485,8 @@ class Bot:
             self.idle_seen = want
             return                      # confirm on the next poll
         self.idle_seen = None
-        # Snapshot the ladder badge right before queueing: winning adds a star,
-        # losing removes one, so comparing this with the value read on the next
-        # lobby visit gives the match result without parsing any result screen.
-        try:
-            import rank as _rank
-            badge = _rank.read_badge(self.screen)
-            if badge:
-                prev = getattr(self, "rank_before", None)
-                if prev and prev.get("of") == badge.get("of"):
-                    res = _rank.result_from_delta(prev, badge)
-                    if res is not None:
-                        self._log_result(prev, badge, res)
-                self.rank_before = badge
-                log("ladder badge %d/%d" % (badge["stars"], badge["of"]))
-        except Exception as e:
-            log("badge read failed: %s" % e)
+        # 胜负判定全部改到结算页的段位卡上（见 _idle_tick）。大厅徽章和
+        # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值。
         log("lobby -> \u5f00\u59cb\u6311\u6218")
         self.ensure_focus()
         self.click_rel(*LOBBY_BTN_REL)
@@ -2551,7 +2595,7 @@ class Bot:
         # read in the lobby, so at this point we only know the value captured
         # when the match began; the delta is resolved on the next lobby visit by
         # rank_after(). Record what we have so nothing is lost.
-        badge_before = getattr(self, "rank_before", None)
+        badge_before = getattr(self, "card_prev", None)
         log("=== MATCH %d END (%.0fs, %d actions) rank_before=%s ===" % (
             self.match_count, dur, self.turn,
             badge_before.get("stars") if badge_before else "?"))
@@ -2915,10 +2959,8 @@ def main():
     ap.add_argument("--no-guard", action="store_true")
     ap.add_argument("--no-policy-v2", action="store_true",                    help="disable the expected-value policy, use the legacy picker")
     ap.add_argument("--switch-slot", type=int, default=1)
-    ap.add_argument("--foe-scan", action="store_true",
-                    help="click the foe portrait to identify unknown pets "
-                         "(opt-in: costs 5-20s and a wasted turn if the panel "
-                         "does not open)")
+    ap.add_argument("--no-foe-scan", action="store_true",
+                    help="do not click the foe portrait to identify unknown pets")
     ap.add_argument("--seconds", type=int, default=0,
                     help="stop after N seconds (0 = run forever)")
     args = ap.parse_args()

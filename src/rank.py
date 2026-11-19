@@ -26,6 +26,12 @@ sys.path.insert(0, r"D:\Tools")
 RANK_ROI = (2010, 625, 120, 32)      # the "N/3" digits only
 DIV_ROI = (1890, 636, 430, 62)       # "中级决斗家 III"
 
+# 结算页的段位卡：★N/M 在上一行，段位名在下一行。大厅和结算页的徽章位置
+# 不一样，所以胜负判定统一从"结算页的卡"读 —— 每次都在同一个位置读同一个
+# 元素，才不会把大厅的徽章读成结算页的。
+RESULT_STAR_ROI = (1995, 610, 150, 52)
+RESULT_DIV_ROI = (1885, 655, 460, 62)
+
 _STAR_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 
 
@@ -158,6 +164,52 @@ def read_badge(screen=None):
         return None
     stars, blobs = got
     return {"stars": stars, "of": 3, "raw": "%d/3 (%d blobs)" % (stars, blobs)}
+
+
+def _div_sig(crop):
+    """段位名的像素指纹：名字变了指纹就变，不用 OCR 也能判断升段。"""
+    import cv2
+    import numpy as np
+    if crop is None or crop.size == 0:
+        return None
+    g = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    small = cv2.resize(g, (16, 6), interpolation=cv2.INTER_AREA)
+    return bytes((small // 32).astype(np.uint8).tobytes())
+
+
+def read_card(screen=None):
+    """读结算页段位卡：{'stars': n, 'of': m, 'sig': 段位指纹}。
+
+    星级每场加 1 或 2 颗，升段时清零，所以只看星数差是不够的 —— 必须把
+    "段位名有没有变"也带上，才能区分"赢了一场但升段清零"和"输了一场"。
+    """
+    import robot
+
+    scr = screen or robot.Screen()
+    if scr.rect is None:
+        return None
+    got = read_star_count(scr.grab(RESULT_STAR_ROI))
+    if not got:
+        return None
+    stars, of = got
+    return {"stars": stars, "of": of,
+            "sig": _div_sig(scr.grab(RESULT_DIV_ROI))}
+
+
+def result_between(before, after):
+    """比较两次结算卡 -> 1 胜 / -1 负 / 0 没变 / None 判不出。"""
+    if not before or not after:
+        return None
+    if before.get("sig") and after.get("sig") and before["sig"] == after["sig"]:
+        d = after["stars"] - before["stars"]
+        return 1 if d > 0 else (-1 if d < 0 else 0)
+    # 段位变了：满星后清零是升段（赢），零星后变多是掉段（输）
+    if before["stars"] >= before["of"] - 1 and after["stars"] <= 1:
+        return 1
+    if before["stars"] <= 0 and after["stars"] >= max(0, after["of"] - 2):
+        return -1
+    # 判不出来就明说，不要猜
+    return None
 
 
 def result_from_delta(before, after):

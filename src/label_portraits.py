@@ -28,6 +28,7 @@ import ocr_cn       # noqa: E402
 import portrait_db as P   # noqa: E402
 
 MIN_SCORE = 0.85
+_LIB = [P.SELF_DIR]
 
 
 def load(path):
@@ -73,7 +74,7 @@ def _vocab():
 def _duplicate_of(bust, threshold=0.90):
     """这张头像是不是库里已经有了（返回已有文件名或 None）。"""
     import portraits
-    items = portraits.load_library(P.SELF_DIR)
+    items = portraits.load_library(_LIB[0])
     if not items:
         return None
     img = load(bust)
@@ -85,19 +86,23 @@ def _duplicate_of(bust, threshold=0.90):
 
 def main():
     dry = "--dry" in sys.argv
+    side = "foe" if "--side" in sys.argv and sys.argv[sys.argv.index("--side") + 1] == "foe" else "self"
+    lib_dir = P.FOE_DIR if side == "foe" else P.SELF_DIR
+    _LIB[0] = lib_dir
+    print("=== 标注 %s 库：%s ===" % (side, lib_dir))
     limit = None
     if "--limit" in sys.argv:
         limit = int(sys.argv[sys.argv.index("--limit") + 1])
 
-    os.makedirs(P.SELF_DIR, exist_ok=True)
-    names = sorted(glob.glob(os.path.join(P.SELF_DIR, "_unknown_*_name.png")))
+    os.makedirs(lib_dir, exist_ok=True)
+    names = sorted(glob.glob(os.path.join(lib_dir, "_unknown_*_name.png")))
     if limit:
         names = names[:limit]
     ocr = ocr_cn.Ocr()
     ok = bad = 0
     for strip in names:
         stem = os.path.basename(strip)[:-len("_name.png")]
-        bust = os.path.join(P.SELF_DIR, stem + ".png")
+        bust = os.path.join(lib_dir, stem + ".png")
         if not os.path.exists(bust):
             continue
         # 先拿头像去比库：已经认识的直接丢掉，不用再 OCR（省 4/5 的时间）
@@ -120,15 +125,15 @@ def main():
         if dry:
             continue
         # 同名已有模板就加编号，一张精灵可以有多张头像
-        dst = os.path.join(P.SELF_DIR, name + ".png")
+        dst = os.path.join(lib_dir, name + ".png")
         n = 2
         while os.path.exists(dst):
-            dst = os.path.join(P.SELF_DIR, "%s#%d.png" % (name, n))
+            dst = os.path.join(lib_dir, "%s#%d.png" % (name, n))
             n += 1
         try:
             os.rename(bust, dst)
-            sid = P.species_of(os.path.basename(dst), "self")
-            P.add_portrait(os.path.basename(dst), sid, "普通", "self", "hud", score)
+            sid = P.species_of(os.path.basename(dst), side)
+            P.add_portrait(os.path.basename(dst), sid, "普通", side, "hud", score)
             os.remove(strip)
         except OSError as e:
             print("  rename failed: %s" % e)

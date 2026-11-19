@@ -23,13 +23,20 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 
-# 点这里打开面板（对面头像中心）
-FOE_BUST_CLICK = (2185, 85)
+# 点这里打开面板（对面头像中心）。实测位置随 HUD 状态浮动，给三个候选点。
+FOE_BUST_CLICK = (2192, 95)
+FOE_BUST_CLICKS = ((2192, 95), (2194, 114), (2185, 80), (2190, 145))
+# 关闭面板：点面板下方的空白处（ESC 关不干净，下次点头像会点不动）
+PANEL_CLOSE_CLICK = (1250, 1440)
 # 对面 HUD 头像框，用来建模板库
 FOE_PORTRAIT_BOX = (2148, 47, 84, 76)
 
 # 面板打开时这一块是白底（名字行），关掉就变回场景
 PANEL_PROBE = (960, 350, 300, 40)
+# 整个面板（两个布局变体都覆盖）
+PANEL_BOX = (930, 300, 730, 1060)
+# 只要名字时用这个（快路径）
+NAME_BOX = (935, 330, 340, 100)
 # 一次 OCR 的竖带：名字 / 等级 / 特性 / 技能都在左半边
 STRIP_BOX = (945, 345, 400, 815)
 
@@ -46,86 +53,162 @@ def is_open(screen):
     img = screen.grab_client(PANEL_PROBE)
     if img is None or img.size == 0:
         return False
-    # 面板白底 + 深色文字：亮像素占比很高；战斗场景几乎不会有
-    return int((img.min(axis=2) > 200).sum()) > 0.35 * img.shape[0] * img.shape[1]
+    mx = img.max(axis=2)
+    mn = img.min(axis=2)
+    bright = float((mn > 200).mean())
+    # 白底 + 深色文字：只有纯白（过曝的场景）不算，必须有字
+    dark = int((mx < 120).sum())
+    return bright > 0.45 and dark > 40
 
 
 def open_panel(screen, click=None, session=None):
     """点对面头像，等面板出来。返回是否成功。
 
-    click 是 (x, y) -> bool 的硬件点击回调；不给就用 session.click_at。
+    头像的位置随 HUD 状态浮动（"等待对方思考"和轮到自己时差 30 多像素，
+    实测 影子纸翦在 y≈78、龙息帕尔在 y≈114），所以按候选点逐个试，
+    面板一出来就停。
     """
     import time
     import asyncio
     cx, cy = screen.client_rect_on_screen()[:2]
-    tx, ty = FOE_BUST_CLICK
-    if click is not None:
-        click(cx + tx, cy + ty)
-    elif session is not None:
-        if asyncio.iscoroutinefunction(session.click_at):
-            asyncio.get_event_loop().run_until_complete(
-                session.click_at(cx + tx, cy + ty))
-        else:
-            session.click_at(cx + tx, cy + ty)
-    for _ in range(12):
-        time.sleep(0.25)
-        if is_open(screen):
-            return True
+    for tx, ty in FOE_BUST_CLICKS:
+        if click is not None:
+            click(cx + tx, cy + ty)
+        elif session is not None:
+            if asyncio.iscoroutinefunction(session.click_at):
+                asyncio.get_event_loop().run_until_complete(
+                    session.click_at(cx + tx, cy + ty))
+            else:
+                session.click_at(cx + tx, cy + ty)
+        for _ in range(6):
+            time.sleep(0.2)
+            if is_open(screen):
+                return True
     return False
 
 
-def close_panel(esc=None, session=None):
+def close_panel(screen=None, click=None, esc=None, session=None):
+    """关掉面板：点面板下方的空白处。
+
+    实测 ESC 有时关不干净，面板还挂着的时候再点下一只精灵的头像会"点不动"，
+    所以优先用一次空白处点击；点完还开着才退回 ESC。
+    """
     import asyncio
-    if esc is not None:
-        esc()
-    elif session is not None:
-        if asyncio.iscoroutinefunction(session.key):
-            asyncio.get_event_loop().run_until_complete(session.key("esc"))
-        else:
-            session.key("esc")
+    import time
+
+    def _click(x, y):
+        if click is not None:
+            click(x, y)
+        elif session is not None:
+            if asyncio.iscoroutinefunction(session.click_at):
+                asyncio.get_event_loop().run_until_complete(
+                    session.click_at(x, y))
+            else:
+                session.click_at(x, y)
+
+    def _esc():
+        if esc is not None:
+            esc()
+        elif session is not None:
+            if asyncio.iscoroutinefunction(session.key):
+                asyncio.get_event_loop().run_until_complete(session.key("esc"))
+            else:
+                session.key("esc")
+
+    if screen is not None:
+        cx, cy = screen.client_rect_on_screen()[:2]
+        tx, ty = PANEL_CLOSE_CLICK
+        _click(cx + tx, cy + ty)
+        time.sleep(0.35)
+        if not is_open(screen):
+            return
+    _esc()
+
+
+def read_name(screen, ocr=None, vocab=None):
+    """只读名字+等级（约 1.5-2 秒），足够认出是哪只精灵。
+
+    整块面板 OCR 要 4-6 秒，占了回合窗口的三分之一；而识别一只精灵只需要
+    顶部那行名字。特性/技能属于"有空再补"，不放在这条快路径上。
+    """
+    import re
+    import ocr_cn
+
+    img = screen.grab_client(NAME_BOX)
+    if img is None or img.size == 0:
+        return None
+    if ocr is None:
+        ocr = ocr_cn.Ocr()
+    res = _raw_ocr(img, upscale=2.0)
+    if not res:
+        return None
+    vocab = vocab or default_vocab()
+    best, best_s, level = None, 0.0, None
+    for item in res:
+        text = item["text"].strip()
+        if not text:
+            continue
+        m = re.search(r"(\d{1,3})\s*级", text)
+        if m:
+            level = int(m.group(1))
+        n, s = ocr_cn.Ocr.match(text, vocab["species"])
+        if n and s > best_s:
+            best, best_s = n, s
+    if best is None or best_s < 0.90:
+        return None
+    return {"name": best, "level": level, "raw": res}
 
 
 def read(screen, ocr=None, vocab=None):
     """读面板。返回 {'name','level','ability','skill','raw'}。
 
-    一次 OCR 一条竖带，再按 y 分段归位；每一段都在封闭词表里做最近邻，
-    这样"力量吞噬"被识别成"量吞噬"也能纠正回来。
+    面板布局会变（有的版本多一栏"速度对比"，特性/技能的位置整体下移 100+ 像素），
+    所以不按固定坐标切，而是把整块面板 OCR 一遍，再把每一行拿去和三个封闭
+    词表做最近邻 —— 精灵名 / 特性名 / 技能名各有上千个候选，比"第几行是什么"
+    稳得多。
     """
-    import cv2
-    import numpy as np
     import ocr_cn
 
-    img = screen.grab_client(STRIP_BOX)
+    img = screen.grab_client(PANEL_BOX)
     if img is None or img.size == 0:
         return None
     if ocr is None:
         ocr = ocr_cn.Ocr()
-    res = _raw_ocr(img)
+    res = _raw_ocr(img, upscale=1.5)
+    if not res:
+        return None
+    vocab = vocab or default_vocab()
     out = {"name": None, "level": None, "ability": None, "skill": None,
            "raw": res}
-    labels = {"特性", "技能", "名字", "等级"}
-    buckets = {k: [] for k in SEGMENTS}
+    import re
+
+    best_name = (None, 0.0)
+    best_feat = (None, 0.0)
+    best_skill = (None, 0.0)
     for item in res:
-        y = item["y"]
         text = item["text"].strip()
-        if not text or text in labels:
+        if not text:
             continue
-        for key, (a, b) in SEGMENTS.items():
-            if a <= y < b:
-                buckets[key].append(text)
-    vocab = vocab or default_vocab()
-    if buckets["name"]:
-        out["name"] = ocr_cn.Ocr.match(" ".join(buckets["name"]),
-                                       vocab["species"])[0]
-    if buckets["level"]:
-        digits = "".join(ch for ch in " ".join(buckets["level"]) if ch.isdigit())
-        out["level"] = int(digits) if digits else None
-    if buckets["ability"]:
-        out["ability"] = ocr_cn.Ocr.match(" ".join(buckets["ability"]),
-                                           vocab["features"])[0]
-    if buckets["skill"]:
-        out["skill"] = ocr_cn.Ocr.match(" ".join(buckets["skill"]),
-                                        vocab["skills"])[0]
+        if out["level"] is None:
+            m = re.search(r"(\d{1,3})\s*级", text)
+            if m:
+                out["level"] = int(m.group(1))
+        n, s = ocr_cn.Ocr.match(text, vocab["species"])
+        # 名字只可能在面板顶部，描述里出现的词不算
+        if n and s > best_name[1] and item["y"] < 170:
+            best_name = (n, s)
+        f, fs = ocr_cn.Ocr.match(text, vocab["features"])
+        if f and fs > best_feat[1]:
+            best_feat = (f, fs)
+        k, ks = ocr_cn.Ocr.match(text, vocab["skills"])
+        if k and ks > best_skill[1]:
+            best_skill = (k, ks)
+    if best_name[1] >= 0.90:
+        out["name"] = best_name[0]
+    if best_feat[1] >= 0.90:
+        out["ability"] = best_feat[0]
+    if best_skill[1] >= 0.90:
+        out["skill"] = best_skill[0]
     return out
 
 
@@ -145,11 +228,13 @@ def _raw_ocr(rgb, upscale=2):
     return out
 
 
-def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None):
-    """完整流程：点头像 -> 读面板 -> 关面板 -> 存头像/特性/技能。
+def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
+                     fast=True):
+    """完整流程：点头像 -> 读名字 -> 关面板 -> 存头像/特性/技能。
 
-    返回 {'name','level','ability','skill','species_id','new_*'}，失败返回 None。
-    战斗会在这期间暂停（实测面板打开时回合不推进），所以可以慢慢读。
+    fast=True 只读名字（1.5-2 秒）；fast=False 读整块面板（4-6 秒），
+    能顺带拿到特性和技能，适合人工复盘时用。
+    返回 {'name','level','ability','skill','species_id','new_*'}。
     """
     import cv2
     import numpy as np
@@ -159,9 +244,9 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None):
         return None
     try:
         bust = screen.grab_client(FOE_PORTRAIT_BOX)
-        data = read(screen, ocr=ocr)
+        data = read_name(screen, ocr=ocr) if fast else read(screen, ocr=ocr)
     finally:
-        close_panel(esc=esc, session=session)
+        close_panel(screen=screen, click=click, esc=esc, session=session)
     if not data or not data.get("name"):
         return data
 
