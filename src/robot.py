@@ -1248,12 +1248,13 @@ def decide(st, ctx):
     # than feeding the current one to the opponent. This is separate from the
     # "all my numbers are weak" rule below - that one looks at offence, this one
     # looks at the scoreboard.
+    # 残血自动撤退已关闭（用户要求）：它会切进一只更残的精灵占掉回合，
+    # 下一回合又触发撤退，实际上等于送死。需要换人时交给对位评分和
+    # 强制换人处理，不再由血量单独触发。
     bench = ctx.get("switch_slot")
     foe_pct = st["foe_pct"]
-    if (bench and ctx.get("switch_streak", 99) >= 3
-            and my is not None and foe_pct is not None
-            and my < RETREAT_HP and foe_pct > my + 25):
-        return ("switch", bench), "retreat at %.0f%% vs foe %.0f%%" % (my, foe_pct)
+    if False:
+        return ("switch", bench), "retreat disabled"
 
     damaged = []
     for s in usable:
@@ -1663,6 +1664,7 @@ class Bot:
                 # stacks - the trait scales with fainted allies by itself.
                 self._check_active_pet(st, now)
                 self._check_foe(st, now)
+                self._maybe_scan_foe(st, now)
                 self._cast_banner(st)
                 if self.cur_slot and st.get("my_pct") is not None:
                     self.slot_hp[self.cur_slot] = st["my_pct"]
@@ -2008,6 +2010,29 @@ class Bot:
             return portrait_db.species_name(sid) if sid else None
         except Exception:
             return None
+
+    def _maybe_scan_foe(self, st, now):
+        """未知对手就点开头像补录。独立于出手逻辑，和放技能并行。
+
+        之前它长在 _battle_tick 里，而 _battle_tick 被辅助模式的闸门挡着，
+        所以"辅助模式下一整局都不点头像"。现在由主循环直接调用。
+        """
+        if getattr(self.args, "no_foe_scan", False):
+            return
+        if self.foe_name is not None or self.foe_sig is None:
+            return
+        if not st.get("battle"):
+            return
+        if getattr(self, "_foe_match_tries", 0) >= 3:
+            return
+        if now - getattr(self, "_foe_try_at", 0.0) < 15.0:
+            return
+        # 头像稳定 1.5 秒再点（换人/登场动画期间点下去落在空处）
+        if now - getattr(self, "foe_sig_at", 0.0) < 1.5:
+            return
+        self._foe_try_at = now
+        self._foe_match_tries = getattr(self, "_foe_match_tries", 0) + 1
+        self._scan_foe_panel()
 
     def _scan_foe_panel(self):
         """未知对手：点开特性面板读一次，把头像/特性/技能录进库。
@@ -2390,34 +2415,6 @@ class Bot:
             # acted_at stays: a state change during an attack animation is not
             # a new turn. The 8 s gate below owns retry pacing.
 
-        # ---- 未知对手：点开特性面板补录
-        # 注意：不要用 st["countdown"] 当条件。那个白色大数字实测经常读成 0
-        # （回合日志里 cnt=0 是常态），用它把关等于永远不扫。
-        #
-        # 也不能"一场只扫一次"：对面会中途换人，换上来那只同样需要识别。
-        # 所以按"HUD 头像指纹"记：指纹变了（换人了）就重新允许扫描，
-        # 同一只最多试 3 次，间隔 12 秒。
-        if (not getattr(self.args, "no_foe_scan", False)
-                and self.foe_name is None
-                and self.foe_sig is not None
-                # 头像必须稳定 1.5 秒再点：换人/登场动画期间 HUD 在滑动，
-                # 这时候点下去落在空处，实测连点三次都开不出来。
-                and now - getattr(self, "foe_sig_at", 0.0) > 1.5
-                and st.get("bar")):
-            if (self._foe_scan_sig is None
-                    or _sig_dist(self.foe_sig, self._foe_scan_sig) > 2.0):
-                self._foe_scan_sig = self.foe_sig.copy()
-                self._foe_tries = 0
-            if (self._foe_tries < 3
-                    and getattr(self, "_foe_match_tries", 0) < 4
-                    and now - self._foe_try_at > 20.0
-                    and st.get("countdown")):
-                self._foe_try_at = now
-                self._foe_tries += 1
-                self._foe_match_tries = getattr(self, "_foe_match_tries", 0) + 1
-                if self._scan_foe_panel():
-                    self._foe_tries = 0
-
         # ---- turn pacing -----------------------------------------------
         # acted_at is deliberately NOT reset by bar flicker or key changes any
         # more; those resets used to sit above this block and let the bot fire
@@ -2654,6 +2651,40 @@ class Bot:
             return
         if now < self.suppress_until:
             return
+        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。
+        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。
+        if (self.match_ended_at
+                and self.match_count != getattr(self, "_rec_done_for", -1)
+                and now - self.match_ended_at < 90.0):
+            self._rec_done_for = self.match_count
+            try:
+                import record
+                cur = record.read(self.screen, lambda x, y: self.click_abs(x, y),
+                                  log=log)
+                prev = getattr(self, "_rec_prev", None) or record.load_state()
+                if cur:
+                    verdict = record.diff(prev, cur)
+                    log("record %dW/%dL prev=%s -> %s"
+                        % (cur[0], cur[1], prev, verdict))
+                    if verdict and prev:
+                        rec = {"ts": time.strftime("%H:%M:%S"),
+                               "before": prev[0], "after": cur[0],
+                               "of": prev[1] + cur[0],
+                               "delta": 1 if verdict == "win" else -1,
+                               "result": verdict}
+                        try:
+                            with open(os.path.join(LOG_DIR, "results.jsonl"), "a",
+                                      encoding="utf-8") as f:
+                                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
+                        log("RESULT %s (%dW/%dL)" % (verdict, cur[0], cur[1]))
+                    self._rec_prev = cur
+                    record.save_state(*cur)
+                self.suppress_until = now + 2.0
+            except Exception as e:
+                log("record read failed: %s" % e)
+
 
         # The bottom-centre action button (确认首发 / 退出) is the single most
         # common reason to be stuck, so check it BEFORE the VS guard: the
@@ -2753,40 +2784,6 @@ class Bot:
         self.idle_seen = None
         # 胜负判定全部改到结算页的段位卡上（见 _idle_tick）。大厅徽章和
         # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值。
-        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。
-        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。
-        if (self.match_ended_at
-                and self.match_count != getattr(self, "_rec_done_for", -1)
-                and now - self.match_ended_at < 90.0):
-            self._rec_done_for = self.match_count
-            try:
-                import record
-                cur = record.read(self.screen, lambda x, y: self.click_abs(x, y),
-                                  log=log)
-                prev = getattr(self, "_rec_prev", None) or record.load_state()
-                if cur:
-                    verdict = record.diff(prev, cur)
-                    log("record %dW/%dL prev=%s -> %s"
-                        % (cur[0], cur[1], prev, verdict))
-                    if verdict and prev:
-                        rec = {"ts": time.strftime("%H:%M:%S"),
-                               "before": prev[0], "after": cur[0],
-                               "of": prev[1] + cur[0],
-                               "delta": 1 if verdict == "win" else -1,
-                               "result": verdict}
-                        try:
-                            with open(os.path.join(LOG_DIR, "results.jsonl"), "a",
-                                      encoding="utf-8") as f:
-                                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                        except Exception:
-                            pass
-                        log("RESULT %s (%dW/%dL)" % (verdict, cur[0], cur[1]))
-                    self._rec_prev = cur
-                    record.save_state(*cur)
-                self.suppress_until = now + 2.0
-            except Exception as e:
-                log("record read failed: %s" % e)
-
         # 胜负判定：排队前读一次段位卡（大厅里卡片位置固定），
         # 和上一场留下的比较。星级一场 +1 或 +2，升段会清零，
         # 所以还要看段位名有没有变。
