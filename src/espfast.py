@@ -133,22 +133,29 @@ class Board:
         t = threading.Thread(target=runner, daemon=True)
         t.start()
 
-    async def _open(self, addr, how):
+    async def _open(self, target, how):
+        """target 可以是地址字符串，也可以是扫到的 BLEDevice 对象。
+
+        按地址连需要系统再解析一次，设备刚好停止广播就报 not found ——
+        实测板子重启后只广播十几秒，扫描刚结束地址就解析不到了。
+        用扫描返回的对象直连可以跳过这一步。
+        """
         try:
-            c = BleakClient(addr, timeout=8)
+            c = BleakClient(target, timeout=10)
             await c.connect()
             if c.is_connected:
                 self.client = c
-                self.address = addr
-                save_hint(addr, NAME, how)
-                log("connected %s (%s)" % (addr, how))
+                self.address = getattr(target, "address", target)
+                save_hint(self.address, NAME, how)
+                log("connected %s (%s)" % (self.address, how))
                 return True
         except Exception as e:
-            log("%s->%s failed: %s" % (how, addr, str(e)[:70]))
+            log("%s->%s failed: %s" % (how, getattr(target, "address", target),
+                                       str(e)[:70]))
         return False
 
     async def _scan(self, mode, timeout=6.0):
-        """按名字或 Service UUID 扫，返回候选地址。"""
+        """按名字或 Service UUID 扫，返回候选 BLEDevice。"""
         try:
             devs = await BleakScanner.discover(timeout=timeout, return_adv=True)
         except Exception as e:
@@ -159,11 +166,11 @@ class Board:
             n = d.name or ""
             if mode == "name":
                 if NAME.lower() in n.lower() or "esp32" in n.lower():
-                    out.append(addr)
+                    out.append(d)
             else:
                 uu = [u.lower() for u in (adv.service_uuids or [])]
                 if SERVICE_UUID.lower() in uu:
-                    out.append(addr)
+                    out.append(d)
         log("scan/%s: %d devices, %d match" % (mode, len(devs), len(out)))
         return out
 

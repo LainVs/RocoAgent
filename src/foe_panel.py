@@ -76,7 +76,7 @@ def open_panel(screen, click=None, session=None):
         return True
     cx, cy = screen.client_rect_on_screen()[:2]
     for tx, ty in FOE_BUST_CLICKS:
-        px, py = screen.phys(tx, ty)
+        px, py = screen.phys_client(tx, ty)
         if click is not None:
             click(px, py)
         elif session is not None:
@@ -125,7 +125,7 @@ def close_panel(screen=None, click=None, esc=None, session=None):
     if screen is not None:
         if not is_open(screen):
             return
-        px, py = screen.phys(*PANEL_CLOSE_CLICK)
+        px, py = screen.phys_client(*PANEL_CLOSE_CLICK)
         _click(px, py)
         time.sleep(0.35)
         if not is_open(screen):

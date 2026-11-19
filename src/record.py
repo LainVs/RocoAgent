@@ -32,6 +32,14 @@ CLOSE_CLICK = (2012, 422)        # 客户区：面板右上角 X
 RECORD_BOX = (900, 470, 800, 90)  # 客户区："胜利 N 失败 M" 那一行
 
 
+def _panel_open(img):
+    """面板打开时那一行是白底黑字；没打开就是场景画面。"""
+    if img is None or img.size == 0:
+        return False
+    mn = img.min(axis=2)
+    return float((mn > 200).mean()) > 0.35
+
+
 def read(screen, click, log=None):
     """点开面板读 (wins, losses)，读完关掉。失败返回 None。
 
@@ -42,13 +50,20 @@ def read(screen, click, log=None):
     import cv2
     import ocr_cn
 
-    cx, cy = screen.client_rect_on_screen()[:2]
     got = None
+    # 坐标是客户区基准分辨率，必须按当前缩放换算，否则换分辨率就点空
+    px, py = screen.phys_client(*OPEN_CLICK)
+    cpx, cpy = screen.phys_client(*CLOSE_CLICK)
     try:
-        for attempt in range(2):
-            click(cx + OPEN_CLICK[0], cy + OPEN_CLICK[1])
-            time.sleep(0.9)
-            img = screen.grab_client(RECORD_BOX)
+        for attempt in range(3):
+            click(px, py)
+            # 面板有入场动画，0.9 秒读一次常常还是空的；分两段等
+            img = None
+            for _ in range(4):
+                time.sleep(0.35)
+                img = screen.grab_client(RECORD_BOX)
+                if _panel_open(img):
+                    break
             if img is None or img.size == 0:
                 continue
             big = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
@@ -60,8 +75,16 @@ def read(screen, click, log=None):
             if m:
                 got = (int(m.group(1)), int(m.group(2)))
                 break
+            # 读不到就把画面存下来，第二天能看出是没打开还是读错区域
+            try:
+                cv2.imwrite(os.path.join(ROOT, "logs",
+                                         "record_fail_%s.png"
+                                         % time.strftime("%H%M%S")),
+                            img[:, :, ::-1])
+            except Exception:
+                pass
     finally:
-        click(cx + CLOSE_CLICK[0], cy + CLOSE_CLICK[1])
+        click(cpx, cpy)
     return got
 
 
