@@ -1833,6 +1833,11 @@ class Bot:
             "charge_streak": self.charge_streak,
         }
         action, why, detail = policy_v2.decide(state)
+        # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快，
+        # 它却建议换）。换人不可逆，先禁用 v2 的换人，只保留它的出招建议。
+        if action and action[0] == "switch":
+            log("v2 wanted SWITCH (%s) -> ignored" % why)
+            return None, why
         if detail:
             why = "%s [v2 %s]" % (why, detail.get("score"))
         return action, why
@@ -2390,7 +2395,7 @@ class Bot:
             r = F.incoming(foe, sk, me)
             if not r:
                 return
-            hp_max = 400
+            hp_max = 0
             try:
                 import team_db
                 team = {t["name"]: t for t in team_db.dump_team() if t.get("name")}
@@ -2398,6 +2403,12 @@ class Bot:
                     hp_max = team[me]["max_hp"]
             except Exception:
                 pass
+            if not hp_max:
+                # 没录面板值时用种族值算（满个体、中性），比写死 400 准得多
+                sp_me = F.species(me)
+                if sp_me:
+                    hp_max = F.panel(sp_me["hp"], 60, 1.0, hp=True)
+            hp_max = hp_max or 400
             v = F.lethal(r[0], r[1], hp_max, st.get("my_pct"))
             log("SHADOW dmg %s+%s vs %s: %d-%d | 我血%d(%.0f%%) -> %s"
                 % (foe, sk, me, r[0], r[1], v["cur_hp"], st.get("my_pct") or 0,
