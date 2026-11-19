@@ -1181,6 +1181,40 @@ RETREAT_HP = 25       # below this, and behind on HP, consider switching out
 SWITCH_DMG = 40        # below this, a fresh pet is usually better
 
 
+_MY_COSTS = {"at": 0.0, "name": None, "costs": {}}
+
+
+def my_card_costs(my_name, force=False):
+    """我方这只精灵四个技能槽的耗能 {slot: cost}，缓存 60 秒。
+
+    卡片顺序 = 装备的 4 个技能顺序，所以耗能不需要读 HUD 上的 ★N 徽标，
+    直接从 team_db.moves + skills.cost 查 —— 零额外识别成本。
+    """
+    import time as _t
+    if (not force and _MY_COSTS["name"] == my_name
+            and _t.time() - _MY_COSTS["at"] < 60.0):
+        return _MY_COSTS["costs"]
+    out = {}
+    try:
+        import sqlite3
+        from portrait_db import DB_PATH
+        import team_db
+        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
+        ent = team.get(my_name) or {}
+        moves = ent.get("moves") or []
+        if moves:
+            db = sqlite3.connect(DB_PATH)
+            for i, sid in enumerate(moves[:4]):
+                r = db.execute("SELECT cost FROM skills WHERE id=?", (int(sid),)).fetchone()
+                if r and r[0] is not None:
+                    out[i + 1] = int(r[0])
+            db.close()
+    except Exception:
+        pass
+    _MY_COSTS.update({"at": _t.time(), "name": my_name, "costs": out})
+    return out
+
+
 def _est_value(s):
     """Best guess at the number on a card, even when one glyph failed to match.
 
@@ -1313,8 +1347,17 @@ def decide(st, ctx):
     # 完整读出的数字永远优先于"推算值"。实测 09:44:25 出现过：
     # 卡面 [152, 300, --, ???]，它按了第 4 张（读不全、推算值虚高），
     # 把确定的 300 丢在一边。只要有一张读得清，就不该赌读不清的那张。
+    # 净收益 = 伤害 − λ×耗能：5 费打 168 不该赢 2 费打 160。
+    # 耗能从"我方装备的 4 个技能"查（顺序=卡槽顺序），不需要读 ★N 徽标。
+    costs = ctx.get("card_costs") or {}
+    lam = 3.0
+
+    def _net(p):
+        c = costs.get(p[0]["index"], 0) or 0
+        return p[1] - lam * c
+
     pool = sorted(damaged,
-                  key=lambda p: (p[0].get("value") is not None, p[1],
+                  key=lambda p: (p[0].get("value") is not None, _net(p),
                                  p[0]["color"] != "red"), reverse=True)
     # 差 3% 以内视为等价，随机选一个：同一套阵容每次都走同一线路的话，
     # 对面摸透一次就能场场赢我们（实测确实如此）。
@@ -1831,6 +1874,7 @@ class Bot:
             "foe": {"name": foe_name, "hp": foe_hp, "hp_max": foe_max},
             "bench": self.bench_state(),
             "charge_streak": self.charge_streak,
+            "card_costs": my_card_costs(self.my_name),
         }
         action, why, detail = policy_v2.decide(state)
         # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快，
