@@ -228,9 +228,14 @@ async function refreshLive() {
     return;
   }
 
-  age.textContent = st._stale
-    ? `数据已过期 ${st._age}s`
+  // 过期数据必须明确标注 —— 否则用户会以为这是当前局面
+  const stale = !!st._stale;
+  age.innerHTML = stale
+    ? `<span style="color:var(--warn)">数据已过期 ${Math.round(st._age)}s（对局可能已结束）</span>`
     : '实时';
+
+  // 过期时整块降低不透明度，视觉上一眼看出"这不是现在"
+  body.style.opacity = stale ? '0.55' : '1';
 
   const me = st.me || {};
   const foe = st.foe || {};
@@ -491,7 +496,15 @@ async function refreshTeam() {
     return;
   }
 
-  grid.innerHTML = slots.map((s) => `
+  // 队伍应该 6 只。不足时提示，而不是让用户以为只有一只
+  const missing = Math.max(0, 6 - slots.length);
+  const hint = missing
+    ? `<div class="team-hint">还有 ${missing} 个槽位没录
+         <code>python src\\team_db.py --set ${slots.length + 1} --species 名称</code>
+       </div>`
+    : '';
+
+  grid.innerHTML = hint + slots.map((s) => `
     <div class="slot">
       <div class="slot-av" data-name="${esc(s.name || '')}">
         ${esc((s.name || '?').slice(0, 1))}

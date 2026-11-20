@@ -1898,7 +1898,19 @@ class Bot:
                 # 没录面板值时用种族值算（满个体、中性），比写死 400 准得。?
                 sp_me = F.species(me)
                 if sp_me:
-                    hp_max = F.panel(sp_me["hp"], 60, 1.0, hp=True)
+                    try:
+                        import statmodel as S
+                        sv = F._num(sp_me.get("hp"))
+                        if sv > 0:
+                            # 性格未知时取区间上界（生命性格 +20%）。
+                            # 保守方向：宁可用大血量算"会不会被秒"，
+                            # 也不要因为低估自己的血量而误判成安全。
+                            # 实测：寂灭骨龙 sv=120 中性 425 / +生命 490，
+                            # 真实值是 490（生命性格），取上界才对。
+                            hp_max = S.calc_real_stat(
+                                sv, S.IV_PVP, 1.2, is_hp=True)
+                    except Exception:
+                        pass
             hp_max = hp_max or 400
             v = F.lethal(r[0], r[1], hp_max, st.get("my_pct"))
             log("SHADOW dmg %s+%s vs %s: %d-%d | 我血%d(%.0f%%) -> %s"
