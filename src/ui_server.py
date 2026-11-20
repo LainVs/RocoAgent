@@ -53,11 +53,18 @@ from urllib.parse import urlparse, parse_qs
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "src")
-LOGS = os.path.join(ROOT, "logs")
-UI = os.path.join(ROOT, "ui")
-DATA = os.path.join(ROOT, "data")
 
-DB_PATH = os.path.join(DATA, "roco.sqlite3")
+# 路径统一走 paths.py —— 它是全项目唯一的路径来源。
+# 之前这里硬编码 ROOT/logs，导致 ROCO_LOGS 环境变量不生效，
+# 想跑一个独立实例（不干扰正在运行的机器人）都做不到。
+sys.path.insert(0, SRC)
+import paths as _paths          # noqa: E402
+
+LOGS = str(_paths.LOGS)
+UI = os.path.join(ROOT, "ui")
+DATA = str(_paths.DATA)
+
+DB_PATH = str(_paths.DB)
 LIVE_STATE = os.path.join(LOGS, "live_state.json")
 BOT_PID = os.path.join(LOGS, "bot.pid")
 BOT_LOG = os.path.join(LOGS, "bot_stdout.log")
