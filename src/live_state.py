@@ -51,7 +51,7 @@ def _pct(v):
 
 def build(*, turn=None, clock=None, mode=None,
           me=None, foe=None, skills=None,
-          matchup=None, verdict=None, system=None):
+          matchup=None, verdict=None, system=None, bench=None):
     """组装一份符合前端契约的状态字典。
 
     每个参数都是可选的；缺的字段前端会显示"—"。
@@ -70,7 +70,31 @@ def build(*, turn=None, clock=None, mode=None,
         "matchup": matchup,
         "verdict": verdict,
         "system": system or {},
+        # 替补：我只知道"见过名字"的那几只，未知的槽位直接省略。
+        # 打架时"还剩几只"和当前血量同等重要。
+        "bench": bench or [],
     }
+
+
+def bench_block(entries):
+    """替补列表。
+
+    entries: [{"name": str, "hp_pct": float|None, "alive": bool}, ...]
+    未知槽位不要塞进来 —— 前端会按 len(bench) 判断还剩几只。
+    """
+    out = []
+    for e in entries or []:
+        if not e:
+            continue
+        name = e.get("name")
+        if not name:
+            continue
+        out.append({
+            "name": name,
+            "hp_pct": _pct(e.get("hp_pct")),
+            "alive": bool(e.get("alive", True)),
+        })
+    return out
 
 
 def me_block(name=None, types=None, hp_pct=None, hp_abs=None, hp_max=None,

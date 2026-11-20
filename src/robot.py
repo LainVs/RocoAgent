@@ -512,8 +512,14 @@ class Bot:
                     # 且 None 不当作"换了精灵"（见 SkillStabilizer.update）。
                     pet = getattr(self, "active_pet", None) \
                         or getattr(self, "my_name", None)
+                    before = [None if not s else s.get("value")
+                              for s in st["skills"]]
                     st["skills"] = self._skill_stab.update(
                         st["skills"], pet=pet)
+                    after = [None if not s else s.get("value")
+                             for s in st["skills"]]
+                    if before != after:
+                        log("STAB %s -> %s" % (before, after))
             except Exception as e:
                 log("STABILIZER ERROR: %s: %s" % (type(e).__name__, e))
             now = time.time()

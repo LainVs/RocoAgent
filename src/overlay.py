@@ -33,6 +33,7 @@ import ctypes
 import ctypes.wintypes
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
@@ -77,60 +78,26 @@ DEFAULT_H = 620
 
 
 def dpi_scale():
-    """真实 DPI 缩放倍数。
+    """屏幕缩放倍数（仅用于日志/兜底，不参与窗口尺寸计算）。
 
-    坑：非 DPI-aware 进程里 GetDeviceCaps / GetDpiForSystem 都返回 96（假的），
-    而实际屏幕是 192 DPI（200%）。这时 GetCursorPos 返回逻辑坐标（1536x960），
-    但 SetWindowPos 用物理坐标（3072x1920）—— 差 2 倍，
-    直接混用会让窗口飞出去或纹丝不动（实测都遇到过）。
-
-    最可靠的判据：物理屏幕尺寸 / 逻辑屏幕尺寸。
-    这两个都用不依赖 DPI awareness 的 API 拿。
+    **不要在这里调 SetProcessDpiAwarenessContext** ——
+    实测那会让随后 create_window 的 width/height 被当成物理像素，
+    窗口只有预期的一半大小（340x620 变成 170x310），
+    而且从外面完全看不出原因。让进程保持系统默认的 DPI 虚拟化即可。
     """
     try:
-        # 物理尺寸（不受 DPI 虚拟化影响）
-        phys_w = UD.GetSystemMetrics(0)      # SM_CXSCREEN
-        # 用 EnumDisplaySettings 拿真实分辨率
-        import ctypes.wintypes as wt
-
-        class DEVMODE(ctypes.Structure):
-            _fields_ = [
-                ("dmDeviceName", wt.WCHAR * 32),
-                ("dmSpecVersion", wt.WORD), ("dmDriverVersion", wt.WORD),
-                ("dmSize", wt.WORD), ("dmDriverExtra", wt.WORD),
-                ("dmFields", wt.DWORD),
-                ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
-                ("dmDisplayOrientation", wt.DWORD),
-                ("dmDisplayFixedOutput", wt.DWORD),
-                ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
-                ("dmYResolution", ctypes.c_short),
-                ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short),
-                ("dmFormName", wt.WCHAR * 32),
-                ("dmLogPixels", wt.WORD), ("dmBitsPerPel", wt.DWORD),
-                ("dmPelsWidth", wt.DWORD), ("dmPelsHeight", wt.DWORD),
-                ("dmDisplayFlags", wt.DWORD), ("dmDisplayFrequency", wt.DWORD),
-                ("dmICMMethod", wt.DWORD), ("dmICMIntent", wt.DWORD),
-                ("dmMediaType", wt.DWORD), ("dmDitherType", wt.DWORD),
-                ("dmReserved1", wt.DWORD), ("dmReserved2", wt.DWORD),
-                ("dmPanningWidth", wt.DWORD), ("dmPanningHeight", wt.DWORD),
-            ]
-
-        ENUM_CURRENT_SETTINGS = -1
-        dm = DEVMODE()
-        dm.dmSize = ctypes.sizeof(DEVMODE)
-        if UD.EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS,
-                                   ctypes.byref(dm)):
-            real_w = dm.dmPelsWidth
-            if phys_w and real_w:
-                ratio = real_w / float(phys_w)
-                if ratio >= 1.0:
-                    return round(ratio, 2)
+        dpi = UD.GetDpiForSystem()
+        if dpi and dpi != 96:
+            return max(1.0, dpi / 96.0)
     except Exception:
         pass
-
-    # 退回 GetDpiForSystem（DPI-aware 后是真值）
     try:
-        dpi = UD.GetDpiForSystem()
+        gdi = ctypes.windll.gdi32
+        dc = UD.GetDC(0)
+        try:
+            dpi = gdi.GetDeviceCaps(dc, 88)     # LOGPIXELSX
+        finally:
+            UD.ReleaseDC(0, dc)
         if dpi and dpi != 96:
             return max(1.0, dpi / 96.0)
     except Exception:
@@ -138,25 +105,27 @@ def dpi_scale():
     return 1.0
 
 
-# 窗口开销（物理像素）：无边框窗口仍有 26x70 的非客户区。
-# 实测标定（200% DPI）：
-#   create(340,620) -> window 680x1240 phys, inner 327x585 CSS
-#   create(400,700) -> window 800x1400 phys, inner 387x665 CSS
-#   create(500,900) -> window 1000x1800 phys, inner 487x865 CSS
-# 规律：inner_css = create_param - 13（宽）/ - 17.5（高）
-#       => create_param = inner_css + 13 / + 17.5
+# 窗口开销（**逻辑像素**，不是物理像素）。
+# 实测标定（200% DPI，create 和 resize 结果一致）：
+#   create(353,637) -> inner 340x602   diff = (13, 35)
+#   create(353,486) -> inner 340x451   diff = (13, 35)
+#   create(353,972) -> inner 340x937   diff = (13, 35)
+#   resize(353,486) -> inner 340x451   diff = (13, 35)
+#   resize(340,469) -> inner 327x434   diff = (13, 35)
+# 所以 create_param = css + (13, 35)。
+# 之前写 FRAME_H=17 是错的（那会把窗口算矮 18px，
+# 结果面板底部被裁掉，技能区和替补都看不见）。
 FRAME_W = 13
-FRAME_H = 17
+FRAME_H = 35
 
 # 屏幕高度上限（物理像素）。实测 create 高度超过屏幕会被截到 1950。
 MAX_PHYS_H = 1950
 
 
 def css_size(css_w, css_h):
-    """把想要的 CSS 视口尺寸换算成 create_window 的 width/height 参数。
+    """把想要的 CSS 视口尺寸换算成 create_window / resize 的参数。
 
-    实测规律：create 参数本身会被 pywebview 乘 dpr，
-    再减掉固定的边框开销。所以反推要加回去。
+    两者实测换算一致，所以共用一个函数。
     """
     return (int(css_w + FRAME_W), int(css_h + FRAME_H))
 
@@ -256,9 +225,33 @@ _WINDOW = {}
 # 存在 config/overlay.json，跟着仓库走，换机器也能带走。
 _STATE_FILE = os.path.join(ROOT, "config", "overlay.json")
 
+# 调试日志：写到 logs/overlay.log。
+# 为什么需要：overlay 是脱离父进程跑的（creationflags=DETACHED），
+# stdout 拿不到，出问题时完全看不到内部状态。
+# 实测踩过：resize 明明该生效却没生效，加了日志才发现是别的原因。
+_LOG_FILE = os.path.join(ROOT, "logs", "overlay.log")
+
+
+def _log(msg):
+    try:
+        os.makedirs(os.path.dirname(_LOG_FILE), exist_ok=True)
+        with open(_LOG_FILE, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
+def _rect_str(hwnd):
+    """窗口当前 rect，日志用。"""
+    try:
+        r = ctypes.wintypes.RECT()
+        UD.GetWindowRect(hwnd, ctypes.byref(r))
+        return "%dx%d" % (r.right - r.left, r.bottom - r.top)
+    except Exception:
+        return "?"
+
 
 def load_window_state():
-    """读上次的窗口位置 / 尺寸 / 折叠状态。读不到就用默认。"""
     try:
         with open(_STATE_FILE, "r", encoding="utf-8") as f:
             d = json.load(f)
@@ -372,28 +365,78 @@ def fix_transparent(hwnd, ready_check=None, timeout=12.0):
 
 # ============================================================ 服务
 def port_alive(port, timeout=1.5):
+    """服务活着，并且静态资源真的能拿到。
+
+    只看 /api/health 不够：实测服务进程在但 index.html 404/超时的情况
+    （端口被别的进程占了），此时 overlay 会白屏。
+    """
     try:
         with urllib.request.urlopen(
                 "http://127.0.0.1:%d/api/health" % port, timeout=timeout) as r:
+            if r.status != 200:
+                return False
+    except Exception:
+        return False
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/index.html" % port,
+                timeout=timeout) as r:
             return r.status == 200
     except Exception:
         return False
 
 
-def ensure_server(port):
-    """没有服务就自己起一个（脱离父进程，壳关了它也活着）。"""
-    if port_alive(port):
+def _port_free(port):
+    s = socket.socket()
+    try:
+        s.bind(("127.0.0.1", port))
         return True
-    subprocess.Popen(
-        [sys.executable, os.path.join(SRC, "ui_server.py"), "--port", str(port)],
-        cwd=ROOT, stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        creationflags=DETACHED | NO_WINDOW)
-    for _ in range(20):
+    except OSError:
+        return False
+    finally:
+        s.close()
+
+
+def ensure_server(port):
+    """没有服务就自己起一个（脱离父进程，壳关了它也活着）。
+
+    端口被别的进程占着（而且不是我们的服务）时换一个 ——
+    实测这种情况会让 overlay 白屏，而且从外面完全看不出原因。
+    返回实际使用的端口，失败返回 None。
+    """
+    if port_alive(port):
+        _log("ensure_server: already up on %d" % port)
+        return port
+
+    if not _port_free(port):
+        for p in range(port + 1, port + 20):
+            if _port_free(p):
+                _log("ensure_server: %d busy, using %d" % (port, p))
+                port = p
+                break
+        else:
+            _log("ensure_server: no free port near %d" % port)
+            return None
+
+    _log("ensure_server: starting on %d" % port)
+    try:
+        subprocess.Popen(
+            [sys.executable, os.path.join(SRC, "ui_server.py"),
+             "--port", str(port)],
+            cwd=ROOT, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=DETACHED | NO_WINDOW)
+    except Exception as e:
+        _log("ensure_server: spawn FAIL %s" % e)
+        return None
+    for i in range(40):
         time.sleep(0.4)
         if port_alive(port):
-            return True
-    return False
+            _log("ensure_server: up after %.1fs on %d"
+                 % ((i + 1) * 0.4, port))
+            return port
+    _log("ensure_server: TIMEOUT after 16s")
+    return None
 
 
 # ============================================================ 主流程
@@ -409,10 +452,11 @@ def main():
     if args.url:
         url = args.url
     else:
-        if not ensure_server(args.port):
+        port = ensure_server(args.port)
+        if not port:
             print("无法启动 ui_server（端口 %d）" % args.port)
             return 2
-        url = "http://127.0.0.1:%d/%s" % (args.port, args.page)
+        url = "http://127.0.0.1:%d/%s" % (port, args.page)
 
     try:
         import webview
@@ -430,7 +474,12 @@ def main():
 
     # 窗口尺寸标定（见 css_size 注释）：
     #   想要 340x620 CSS 视口，要传 353x638。
+    #
+    # 高度给足：运行时 resize 在这台机器上口径混乱（实测越调越乱），
+    # 所以 create 时就按"4 张技能卡 + 替补"的最大可能高度算好，
+    # 之后只允许缩小（fit_window 里 min(需要, create_h)）。
     pw, ph = css_size(args.width, args.height)
+    state_h_max = ph
 
     # 恢复上次的窗口位置和尺寸（pywebview 自己不记无边框窗口的位置）
     saved = load_window_state()
@@ -445,9 +494,12 @@ def main():
         pw, ph, args.width, args.height))
     if saved:
         print("  恢复  位置 (%d,%d)  尺寸 %dx%d" % (pos_x, pos_y, pw, ph))
+    _log("start: pos=(%d,%d) size=(%d,%d) saved=%s"
+         % (pos_x, pos_y, pw, ph, bool(saved)))
 
     state = {"hwnd": None, "visible": True, "pass_through": False,
-             "css_w": args.width, "folded": bool(saved.get("folded"))}
+             "css_w": args.width, "dpr": 1.0, "create_h": state_h_max,
+             "folded": bool(saved.get("folded"))}
 
     # ---- 暴露给前端的 API（window.pywebview.api.*）
     class Api:
@@ -553,6 +605,8 @@ def main():
             hwnd = state.get("hwnd")
             if not hwnd:
                 return False
+            _log("fit_window(force=%s) in, rect=%s"
+                 % (force, _rect_str(hwnd)))
             try:
                 h = win.evaluate_js("""
                   (() => {
@@ -568,6 +622,23 @@ def main():
                   })()
                 """)
                 if not h or int(h) < 40:
+                    # embedded 刚加时布局可能还没完成，等一帧再试一次。
+                    time.sleep(0.25)
+                    h = win.evaluate_js("""
+                      (() => {
+                        const p = document.getElementById('panel');
+                        if (!p) return 0;
+                        let sum = 0;
+                        for (const el of p.children) {
+                          const st = getComputedStyle(el);
+                          if (st.display === 'none') continue;
+                          sum += el.getBoundingClientRect().height;
+                        }
+                        return Math.round(sum);
+                      })()
+                    """)
+                if not h or int(h) < 40:
+                    _log("fit: measured=%s (too small, skip)" % h)
                     return False
 
                 # 宽度固定用启动时的值，**绝不能读 window.innerWidth**：
@@ -575,7 +646,21 @@ def main():
                 # 窗口越来越宽（实测 509 -> 639 -> … 无限增长）。
                 css_w = state.get("css_w") or args.width
                 css_h = int(h) + 2
-                screen_css = int(MAX_PHYS_H / max(1.0, dpi_scale()))
+                # 缩放倍数用页面读到的 dpr（dpi_scale 在 overlay 进程里
+                # 实测返回 1.0，不可靠）。
+                # 如果还没拿到（第一次 fit 可能早于 pin size），现读一次。
+                s = state.get("dpr") or 0
+                if s < 1.5:
+                    try:
+                        s = float(win.evaluate_js(
+                            "window.devicePixelRatio || 1") or 1.0)
+                        state["dpr"] = s
+                        _log("fit: lazy dpr=%.1f" % s)
+                    except Exception:
+                        s = 1.0
+                if s < 1.0:
+                    s = 1.0
+                screen_css = int(MAX_PHYS_H / max(1.0, s))
                 css_h = min(css_h, screen_css - 60)
 
                 prev = state.get("css_h")
@@ -583,20 +668,34 @@ def main():
                     return True
                 state["css_h"] = css_h
 
-                pw, ph = css_size(css_w, css_h)
+                # 用 SetWindowPos 而不是 win.resize()：
+                # 实测 win.resize() 在透明+无焦点的窗口上会**阻塞**。
+                #
+                # SetWindowPos 的尺寸是**物理像素**：
+                #   传 340  -> 窗口 340 物理 = 170 CSS（只有一半，面板被裁）
+                #   传 680  -> 窗口 680 物理 = 340 CSS（正确）
+                # 之前误以为它和 create_window 一样是 CSS 口径，
+                # 结果每次 fit 都把窗口砍一半（实测 680x1239 -> 400x503）。
+                pw = int(css_w * s)
+                ph = int(css_h * s)
                 try:
-                    win.resize(pw, ph)
-                    # 存下来，下次启动直接用这个高度
-                    save_window_state(w=pw, h=ph)
+                    cur = ctypes.wintypes.RECT()
+                    UD.GetWindowRect(hwnd, ctypes.byref(cur))
+                    # 关键：hWndInsertAfter 必须传 0（HWND_TOP）而不是
+                    # HWND_TOPMOST —— 传 -1 且窗口已是 TOPMOST 时，
+                    # 实测尺寸参数被系统忽略（窗口纹丝不动）。
+                    # 置顶已经在 set_topmost() 里做过了，这里只管尺寸。
+                    UD.SetWindowPos(hwnd, 0, cur.left, cur.top, pw, ph,
+                                    SWP_NOZORDER | SWP_NOACTIVATE
+                                    | SWP_SHOWWINDOW)
+                    save_window_state(w=int(css_w) + FRAME_W,
+                                      h=css_h + FRAME_H)
+                    _log("fit: css_w=%s css_h=%s dpr=%s -> SetWindowPos(%d,%d) -> rect=%s"
+                         % (css_w, css_h, s, pw, ph, _rect_str(hwnd)))
                     return True
-                except Exception:
-                    pass
-
-                s = dpi_scale()
-                UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0,
-                                int(css_w * s) + 26, int(css_h * s) + 70,
-                                SWP_NOMOVE | SWP_SHOWWINDOW)
-                return True
+                except Exception as e:
+                    _log("SetWindowPos FAIL: %s: %s" % (type(e).__name__, e))
+                    return False
             except Exception:
                 return False
 
@@ -619,16 +718,26 @@ def main():
     _WINDOW["win"] = win
 
     def page_ready():
-        """页面真的画出来了才算就绪。
+        """页面加载完成（panel 元素存在且渲染函数跑过）。
 
-        判据是面板元素的宽度 —— CSS 加载完成、布局跑过，它才 > 0。
-        比 readyState 靠谱：readyState=complete 时可能还没第一次绘制。
+        判据：panel 存在 + 有 app.js 的痕迹（renderEmpty 或 render 已定义）。
+        不能等"名字有内容" —— 机器人没在写状态时名字一直是"等待连接"，
+        那样 page_ready 永远 False，窗口尺寸也就永远不钉（实测踩过）。
         """
         try:
-            w = win.evaluate_js(
-                "(document.getElementById('panel')||{}).offsetWidth||0")
-            return bool(w and int(w) > 100)
-        except Exception:
+            r = win.evaluate_js("""
+              (() => {
+                const p = document.getElementById('panel');
+                if (!p) return 'no-panel';
+                if (typeof render !== 'function') return 'no-script';
+                return 'ready';
+              })()
+            """)
+            okv = str(r) == "ready"
+            _log("page_ready: %s" % r)
+            return okv
+        except Exception as e:
+            _log("page_ready ERR: %s" % e)
             return False
 
     def enter_embedded():
@@ -671,9 +780,42 @@ def main():
         hide_from_taskbar(hwnd)
         strip_dwm_frame(hwnd)
         set_topmost(hwnd)
+
+        # 关键：用 url 加载时，create_window 的 width/height 会被
+        # WebView2 按页面内容"自适应"。而且 win.resize() 在透明+无焦点
+        # 窗口上会阻塞。所以用 SetWindowPos 显式钉尺寸。
+        #
+        # 缩放倍数不能靠 dpi_scale()：它在 overlay 进程里实测返回 1.0，
+        # 而页面里的 devicePixelRatio 是 2。用页面读出来的才可靠。
+        try:
+            # SetWindowPos 尺寸 = 物理像素。create_window 已经给了正确值，
+            # 这里只是把它钉死（防止 WebView2 按内容自适应）。
+            s = dpi_scale()
+            time.sleep(0.8)
+            cur = ctypes.wintypes.RECT()
+            UD.GetWindowRect(hwnd, ctypes.byref(cur))
+            UD.SetWindowPos(hwnd, 0, cur.left, cur.top,
+                            int(args.width * s), int(args.height * s),
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+            time.sleep(0.4)
+            _log("pin size (%dx%d css x%.1f) -> rect=%s"
+                 % (args.width, args.height, s, _rect_str(hwnd)))
+        except Exception as e:
+            _log("initial SetWindowPos FAIL: %s" % e)
+
         enter_embedded()
         state["ready"] = True
         print("窗口就绪 hwnd=%d" % hwnd)
+
+        # 监视：每 3 秒记一次窗口尺寸，抓"被谁改回去了"。
+        # 实测踩过：fit 明明设成 680x942，几秒后变成 340x471，
+        # 但从日志看不出是谁改的。
+        def watch():
+            for _ in range(10):
+                time.sleep(3.0)
+                _log("watch: rect=%s" % _rect_str(hwnd))
+
+        threading.Thread(target=watch, daemon=True).start()
 
     threading.Thread(target=setup, daemon=True).start()
 

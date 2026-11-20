@@ -276,6 +276,31 @@ function render(st) {
     wrap.innerHTML = `<div class="empty-skills">技能栏未识别</div>`;
   }
 
+  // ── 替补队伍
+  // 只显示认得的（机器人只认得见过的名字），未知槽位不占位。
+  // 打架时"还剩几只"和当前血量同等重要。
+  const bench = st.bench || [];
+  const benchEl = $('bench');
+  if (!bench.length) {
+    benchEl.innerHTML = '';
+  } else {
+    const alive = bench.filter((b) => b.alive !== false).length;
+    benchEl.innerHTML = bench.map((b) => {
+      const dead = b.alive === false;
+      return `<span class="bench-item${dead ? ' dead' : ''}"
+                    title="${b.name}${dead ? '（已阵亡）' : ''}">
+        <span class="bi-av" data-name="${b.name}">${(b.name || '?').slice(0, 1)}</span>
+        ${b.name}
+      </span>`;
+    }).join('') +
+      `<span class="bench-count">剩 ${alive}/${bench.length}</span>`;
+
+    // 头像懒加载（复用悬浮窗的限并发加载器）
+    benchEl.querySelectorAll('.bi-av').forEach((el) => {
+      loadAvatar(el, el.dataset.name, 'me');
+    });
+  }
+
   // ── 结论
   // 三项（击杀回合/被击杀回合/先后手）缺任何一项都不该给半吊子结论 ——
   // "2 回合击杀 · — 回合被击杀" 比不显示更让人困惑。
@@ -324,6 +349,7 @@ async function poll() {
     st.me && st.me.hp_pct, st.me && st.me.energy,
     st.foe && st.foe.hp_pct, st.foe && st.foe.name,
     (st.skills || []).map((s) => `${s.dmg}|${s.pct}|${s.name}`).join(','),
+    (st.bench || []).map((b) => `${b.name}|${b.alive}`).join(','),
     st._stale,
   ].join('|');
   if (sig === lastSig) return;
@@ -331,11 +357,22 @@ async function poll() {
 
   render(st);
 
+  // 首次渲染完成后贴合一次窗口。
+  // 为什么单独做：enter_embedded 测量时数据可能还没到（面板只有骨架），
+  // 而之后如果 seq 不变（机器人卡住 / 结算页静止），
+  // 下面的签名去重会直接 return，fit_window 永远不被调用。
+  if (!firstFitDone) {
+    firstFitDone = true;
+    setTimeout(() => callNative('fit_window', true), 120);
+  }
+
   // 数据变了，窗口高度可能也要变（技能卡数量会变）。
   // force=true 跳过去抖 —— 否则内容从"无技能"变"4 张卡"时，
   // 窗口可能停在偏小的尺寸上不调整。
   callNative('fit_window', true);
 }
+
+let firstFitDone = false;
 
 function renderEmpty() {
   const sig = 'empty';
@@ -376,6 +413,7 @@ function renderEmpty() {
 
   $('skills').innerHTML =
     `<div class="empty-skills">启动机器人后这里显示四张技能卡</div>`;
+  $('bench').innerHTML = '';
   $('vKill').textContent = '—';
   $('vDie').textContent = '—';
   $('vOrder').textContent = '—';
