@@ -193,14 +193,30 @@ python src\ui.py --serve-only
 python src\ui_server.py --port 8770 --open
 ```
 
-热键（悬浮窗）：`Ctrl+Alt+O` 显示/隐藏，`Ctrl+Alt+P` 点击穿透。
+热键（悬浮窗，全局）：`Ctrl+Alt+O` 显示/隐藏，`Ctrl+Alt+P` 点击穿透。
+
+面板内快捷键（不用全局钩子，鼠标在面板上时有效）：
+
+| 键 | 作用 |
+|---|---|
+| `Alt+T` | 折叠 / 展开 |
+| `Alt+A` | 透明度循环（100 / 78 / 55 / 35 / 20） |
+| `Alt+P` | 点击穿透开关 |
+| `Alt+H` | 隐藏（`Ctrl+Alt+O` 叫回来） |
+| `Esc` | 关设置抽屉 |
 
 验证脚本：
 
 ```powershell
 python src\test_live_state.py    # 状态契约（6 组，不需要游戏）
+python src\test_ui.py            # 前端自检（29 项，含真实 DOM 渲染）
+python src\test_ui.py --no-dom   # 同上但跳过渲染（3 秒）
 python ui\compose_test.py        # 对比度（面板压在真实游戏画面上）
 ```
+
+`test_ui.py` 覆盖四组：API 契约 / 静态资源 / live_state 契约 / 面板 DOM。
+DOM 测试放**子进程**跑 —— pywebview 的 `start()` 会阻塞 GUI 循环，
+在主进程里跑会把整个测试卡死。
 
 ---
 
