@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 PANEL_BOX = (930, 300, 730, 1080)   # 整块面板（客户区，宁可给大一点）
 
 _eng = None
+_POOL = None
 
 
 def _engine():
@@ -30,13 +31,43 @@ def _engine():
     return _eng
 
 
-def _ocr(rgb, up=2.0):
+def _ocr(rgb, up=2.0, timeout=None):
+    """跑一次 OCR。返回 [(text, conf), ...]。
+
+    性能实测（2026-11-21，420x71 的特性横带）：
+        up=2.0 -> 5.8~16.5s   up=1.5 -> 13.2s   up=1.0 -> 16.5s
+    放大率不是瓶颈，RapidOCR 本身在这台机器上就要 5~25 秒且抖动大。
+
+    timeout：超时后**放弃这次结果**（后台线程继续跑完但结果丢弃）。
+    回合窗口只有 15 秒，等不起。
+    """
     import cv2
     if rgb is None or rgb.size == 0:
         return []
-    big = cv2.resize(rgb, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC)
-    res, _ = _engine()(cv2.cvtColor(big, cv2.COLOR_RGB2BGR))
-    return [(str(r[1]), float(r[2])) for r in (res or [])]
+    if up and abs(up - 1.0) > 0.01:
+        big = cv2.resize(rgb, None, fx=up, fy=up,
+                         interpolation=cv2.INTER_CUBIC)
+    else:
+        big = rgb
+    bgr = cv2.cvtColor(big, cv2.COLOR_RGB2BGR)
+
+    def _run():
+        res, _ = _engine()(bgr)
+        return [(str(r[1]), float(r[2])) for r in (res or [])]
+
+    if not timeout:
+        return _run()
+    # 线程池 + 超时丢弃。注意：不能 kill 线程，但结果会被丢弃，
+    # 主流程不再被拖住。
+    import concurrent.futures as _cf
+    global _POOL
+    if _POOL is None:
+        _POOL = _cf.ThreadPoolExecutor(max_workers=1)
+    fut = _POOL.submit(_run)
+    try:
+        return fut.result(timeout=timeout)
+    except Exception:
+        return []
 
 
 def find_badge(img):
@@ -75,20 +106,29 @@ def find_badge(img):
     return best[1:5] if best else None
 
 
-def read_ability(screen, vocab=None, dump=None):
+def read_ability(screen, vocab=None, dump=None, budget=8.0):
     """返回 {'ability': 名字或 None, 'raw': [...], 'badge': (x,y,w,h)}。
 
-    只做**一次** OCR。裁剪框是"黄标签那一行 + 标签左margin"的横带
-    (x 0..~420, y 标签-30..标签+50)，实测这条带子对两种面板布局都能一次读出：
+    只读"标签右边那一小段"（名字本体），不读描述行。
 
-        panel_210501  badge=(35,754) -> ['上锁', '特性', '敌方本回合使用的技能…']
-        panel_211304  badge=(30,702) -> ['恶魔的晚宴', '特性', '主动击败敌方精灵时…']
+    性能实测（2026-11-21，panel_013401）
+    -----------------------------------
+        整条横带 420x71  up=2.0 -> 5.8~16.5s（含描述，检测器反复迭代）
+        名字条   200x55  up=4.0 -> 5.1s  结果正确（'瞳中倒影'）
+        名字条   200x55  up=2.0 -> 17.2s 结果截断（'瞳中侄'）
 
-    之前是"标签右边 110/260px 的窄条"，窄条会随布局切掉字头（'恶魔的明'）
-    或者整条返回空（514px 宽 → []），于是退回整块面板 OCR，一次要 6~10 秒，
-    两次 OCR 就把下一手技能吃掉了（实测 21:13 卡了 25 秒）。
+    所以：**只裁名字条 + 放大 4 倍**是最优路径。
+
+    超时保护（budget）
+    -----------------
+    实测同一台机器上 OCR 耗时在 5~25 秒之间抖动（RapidOCR 的检测器
+    对不同图像的迭代次数差异极大）。回合窗口只有 15 秒，一次 OCR 就
+    可能吃掉整回合。所以：
+      · budget 秒内没读完 -> 直接放弃，返回 None
+      · 上层看到 None 会走"特性未知"分支，不影响出招
     """
     import cv2
+    import time
     img = screen.grab_client(PANEL_BOX)
     if img is None or img.size == 0:
         return None
@@ -99,21 +139,38 @@ def read_ability(screen, vocab=None, dump=None):
             pass
     hh, ww = img.shape[:2]
     badge = find_badge(img)
+    t_start = time.time()
+
+    def _left():
+        return budget - (time.time() - t_start)
+
     if badge is not None:
         x, y, w, h = badge
-        # 横带只取"标签那一行"：标签顶部 -10 到 底部 +18。
-        # 实测（01:22 的嗜波螺面板）原来用 y-30..y+h+50 会把下面的
-        # 技能行（'热砂 对敌方精灵造成魔法伤害'）也带进来，
-        # 结果把技能名当成了特性。
-        y0 = max(0, y - 10)
-        y1 = min(hh, y + h + 18)
-        # 名字在标签右边长一点：长特性名（'恶魔的晚宴'）要 200px 以上，
-        # 面板整体右移时再从 x 推算，别写死。
-        x1 = min(ww, max(420, x + w + 260))
-        band = img[y0:y1, 0:x1]
-    else:
-        # 找不到黄标签：特性行永远在面板最后，整条下半部兜底。
-        band = img[int(hh * 0.66):int(hh * 0.92), :]
+        y0 = max(0, y - 6)
+        y1 = min(hh, y + h + 6)
+        x0 = min(ww - 1, x + w + 4)
+        x1 = min(ww, x0 + 200)
+        strip = img[y0:y1, x0:x1]
+        if _left() > 2.0:
+            lines = _ocr(strip, 4.0, timeout=max(1.0, _left() - 1.0))
+            got = _best(lines, vocab)
+            if got:
+                return {"ability": got, "raw": lines, "badge": badge}
+        else:
+            lines = []
+        # 名字条读不出（长名字被截断）：退回整条横带，但要留够时间
+        if _left() > 3.0:
+            x1b = min(ww, max(420, x + w + 260))
+            band = img[max(0, y - 10):min(hh, y + h + 18), 0:x1b]
+            lines2 = _ocr(band, 2.0, timeout=max(1.0, _left() - 1.0))
+            got2 = _best(lines2, vocab)
+            return {"ability": got2, "raw": lines2 or lines, "badge": badge}
+        return {"ability": None, "raw": lines, "badge": badge,
+                "timeout": True}
+    # 找不到黄标签：特性行永远在面板最后，整条下半部兜底。
+    if _left() < 3.0:
+        return {"ability": None, "raw": [], "badge": None, "timeout": True}
+    band = img[int(hh * 0.66):int(hh * 0.92), :]
     lines = _ocr(band, 2.0)
     return {"ability": _best(lines, vocab), "raw": lines, "badge": badge}
 

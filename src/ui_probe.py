@@ -214,22 +214,30 @@ def find_switch_rows(screen, bar_visible=None):
         return []
     mx = crop.max(axis=2).astype(np.int16)
     mn = crop.min(axis=2).astype(np.int16)
-    light = (((mx - mn) < 30) & (mx > 200)).astype(np.uint8)
+    # 实测换人面板的卡片是"半透明深底 + 白字 + 白色描边"，
+    # 不是纯白块。原来的 (mx-mn)<30 & mx>200 会把整张卡判掉，
+    # 结果面板明明开着 find_switch_rows 却返回 0（机器人卡在面板上）。
+    # 改成"有足够多偏亮像素"就算一张卡。
+    light = ((mn > 150) & ((mx - mn) < 90)).astype(np.uint8)
+    if int(light.sum()) < 800:
+        # 再退一步：只要这块区域里有明显的白色文字就认
+        light = (mx > 205).astype(np.uint8)
     n, lab, stats, _ = cv2.connectedComponentsWithStats(light, 8)
     plates = []
     for i in range(1, n):
         x, y, w, h, area = stats[i]
-        if area < 2200 or not (130 <= w <= 200) or not (40 <= h <= 110):
+        # 宽度上限从 200 放宽到 340（实测卡片更宽），高度也放宽
+        if area < 1500 or not (110 <= w <= 340) or not (30 <= h <= 140):
             continue
         plates.append((y + h // 2, x + w // 2))
     if len(plates) < 3:
         return []
     plates.sort()
-    gaps = sorted(b - a for (a, _), (b, _) in zip(plates, plates[1:]) if b - a > 80)
+    gaps = sorted(b - a for (a, _), (b, _) in zip(plates, plates[1:]) if b - a > 60)
     if not gaps:
         return []
     pitch = gaps[len(gaps) // 2]
-    if not (110 <= pitch <= 200):
+    if not (80 <= pitch <= 240):
         return []
     # keep 5 rows; the top card is the one usually clipped, so extend upward
     rows = list(plates)
