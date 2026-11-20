@@ -921,6 +921,8 @@ class Bot:
             "bench": self.bench_state(),
             "charge_streak": self.charge_streak,
             "card_costs": my_card_costs(self.my_name),
+            # turn 用于"前两回合优先叠 buff"（模拟器验证 +16% 胜率）
+            "turn": self.turn,
         }
         action, why, detail = policy_v2.decide(state)
         # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快。?

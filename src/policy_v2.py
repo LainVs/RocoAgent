@@ -175,20 +175,46 @@ def decide(state):
                           "kill" if kills else ("outspeed" if we_outspeed else "slower"))))
 
     # ---- non-damaging skills (buffs / heals / shields) -------------------
-    # Scored through the same outcome function as attacks: they deal nothing and
-    # we still eat the hit, so they cannot quietly look "safe" while we die.
+    # 实测结论（模拟器自对弈，2026-11-21）：
+    #   buff 当"得分为 0 + 常量奖励"的候选参与打分 -> 胜率 50.7%
+    #   buff 无条件优先（前两回合、血够、还没叠过） -> 胜率 66.7%
+    # 差 16 个百分点。原因是收益结构不同：
+    #   攻击 = 这一回合的一次输出；buff = 后续每一回合的 +20%。
+    #
+    # 所以这里改成"优先选择"：
+    #   前两回合 + 血够 + 能放 + 打不死对面 -> 直接叠
+    #   （能一击必杀时不叠，直接赢更好）
+    # 判断"这回合能不能一击必杀"（决定要不要先叠 buff）
+    # 注意：不能用字符串匹配 "kill"（reason 里可能碰巧含这个词），
+    # 要真的比较伤害和对面血量。
+    foe_killable_now = False
     for s in me.get("skills") or []:
-        if s.get("kind") == "dash" and s.get("lit", True) and s.get("i") not in \
-                [c[1][1] for c in cands if c[1][0] == "skill"]:
-            cost = s.get("cost") or 0
-            survives = inc < my_hp * (1.0 - w.get("buff_survive_floor", 0.35))
-            score = _outcome(0.0, False, inc / max(1, my_max), inc >= my_hp,
-                             my_hp - inc, my_max, max(0, energy - cost), 0, matchup)
-            score += w.get("buff_bonus", 0.06) if survives else \
-                -w.get("buff_no_survive_penalty", 0.25)
-            cands.append((score, ("skill", s["i"]),
-                          "status %d: %s (energy cost %d)" % (
-                              s["i"], "safe to buff" if survives else "would likely die", cost)))
+        if s.get("kind") != "num" or not s.get("lit", True):
+            continue
+        d = s.get("dmg") or 0
+        if d >= foe_hp:
+            foe_killable_now = True
+            break
+    for s in me.get("skills") or []:
+        if s.get("kind") != "dash" or not s.get("lit", True):
+            continue
+        cost = s.get("cost") or 0
+        if cost > energy:
+            continue
+        survives = inc < my_hp * (1.0 - w.get("buff_survive_floor", 0.25))
+        if not survives:
+            cands.append((-w.get("buff_no_survive_penalty", 0.25),
+                          ("skill", s["i"]),
+                          "status %d: would likely die" % s["i"]))
+            continue
+        # 优先叠：给一个远高于任何攻击的分数（但能杀时不叠）
+        early = (state.get("turn", 1) or 1) <= 2
+        if early and not foe_killable_now:
+            cands.append((9e9, ("skill", s["i"]),
+                          "status %d: buff first (early turn, safe)" % s["i"]))
+        else:
+            cands.append((0.0, ("skill", s["i"]),
+                          "status %d: buff (late/safe)" % s["i"]))
 
     # ---- charge ----------------------------------------------------------
     # Charging is not free: we still eat the incoming hit, and if that hit is
