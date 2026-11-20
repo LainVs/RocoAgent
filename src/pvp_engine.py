@@ -33,40 +33,147 @@ import damage as D
 
 
 def pet(name):
+    """精灵数据。**DB 优先**，json 兜底。
+
+    为什么改
+    --------
+    原来只查 `damage.pokemon()`（roco-claude 的 pokemon.json，499 只）。
+    实测 2026-11-21 04:05：银月狼王、冥古龙 在这份 json 里没有，
+    于是 best_damage_from 返回 0、worst_incoming 返回 None，
+    换人评分变成 "dmg 0 taken 0"（等于没数据）。
+
+    现在优先查我们自己的库（1242 只，已用 roco-cal 清洗过），
+    json 只在 DB 查不到时兜底（它带 defense_profile 这类附加字段）。
+
+    形态变体回退
+    ------------
+    对面常是形态变体（如 "黑化加尔（黑化的样子）"），DB 里没有这条，
+    但基础形态"加尔"有。属性通常一致，所以回退到基础形态的属性
+    （标注 from="db-base" 便于上层区分）。
+    """
+    import re as _re
+    import sqlite3
+    from portrait_db import DB_PATH
+
+    def _lookup(nm):
+        try:
+            db = sqlite3.connect(DB_PATH)
+            db.row_factory = sqlite3.Row
+            r = db.execute(
+                "SELECT * FROM species WHERE name=? "
+                "ORDER BY implemented DESC, total DESC LIMIT 1",
+                (nm,)).fetchone()
+            db.close()
+            return r
+        except Exception:
+            return None
+
+    r = _lookup(name)
+    src = "db"
+    if r is None:
+        # 形态变体：去掉括号部分再查一次
+        base = _re.sub(r"[（(].*?[)）]", "", name or "").strip()
+        if base and base != name:
+            r = _lookup(base)
+            src = "db-base"
+    if r is not None:
+        types = []
+        try:
+            types = json.loads(r["type_names"] or "[]")
+        except ValueError:
+            pass
+        return {
+            "display_name": r["name"],
+            "attributes_list": types,
+            "stats": {
+                "hp": r["hp"], "attack": r["atk"],
+                "special_attack": r["spa"], "defense": r["def"],
+                "special_defense": r["spd"], "speed": r["spe"],
+            },
+            "from": src,
+        }
     return D.pokemon(name)
 
 
 def taken_multiplier(def_name, atk_type):
-    """Damage multiplier `def_name` takes from `atk_type` (18-type rules)."""
+    """Damage multiplier `def_name` takes from `atk_type` (18-type rules).
+
+    优先用 json 的 defense_profile（现成字段）；DB 里没有这个字段，
+    所以查不到时用 statmodel.type_effect 现算（结果等价，已验证 324/324）。
+    """
     p = pet(def_name)
-    if not p:
-        return None
-    prof = p.get("defense_profile") or {}
-    if atk_type in (prof.get("takes_3x_from") or []):
-        return 3.0
-    if atk_type in (prof.get("takes_2x_from") or []):
-        return 2.0
-    if atk_type in (prof.get("takes_one_third_from") or []):
-        return 1.0 / 3.0
-    if atk_type in (prof.get("takes_half_from") or []):
-        return 0.5
-    return 1.0
+    if p:
+        prof = p.get("defense_profile") or {}
+        if prof:
+            if atk_type in (prof.get("takes_3x_from") or []):
+                return 3.0
+            if atk_type in (prof.get("takes_2x_from") or []):
+                return 2.0
+            if atk_type in (prof.get("takes_one_third_from") or []):
+                return 1.0 / 3.0
+            if atk_type in (prof.get("takes_half_from") or []):
+                return 0.5
+            return 1.0
+    # DB 兜底：现算
+    try:
+        import statmodel as S
+        types = (p or {}).get("attributes_list") or []
+        if types:
+            return S.type_effect(atk_type, types)
+    except Exception:
+        pass
+    return None
 
 
 _CACHE = {}
 
 
 def move_pool(name):
-    """Every skill the pet could legally have (moves + stones + bloodline)."""
-    p = pet(name)
-    if not p:
-        return []
-    raw = p.get("skills") or {}
+    """Every skill the pet could legally have.
+
+    优先用我们库的 species_skills（1242 只、已清洗），
+    再退回 json 的 moves/jinengshi/xuemai（带血统技能，DB 里没有）。
+    形态变体会回退到基础形态（属性/技能通常一致）。
+    """
+    import re as _re
     out = []
-    for key in ("moves", "jinengshi", "xuemai"):
-        for s in raw.get(key) or []:
-            if s not in out:
-                out.append(s)
+    import sqlite3
+    from portrait_db import DB_PATH
+
+    def _skills_of(nm):
+        try:
+            db = sqlite3.connect(DB_PATH)
+            db.row_factory = sqlite3.Row
+            r = db.execute(
+                "SELECT id FROM species WHERE name=? "
+                "ORDER BY implemented DESC, total DESC LIMIT 1",
+                (nm,)).fetchone()
+            got = []
+            if r:
+                for row in db.execute(
+                        "SELECT DISTINCT s.name FROM species_skills ss "
+                        "JOIN skills s ON s.id=ss.skill_id "
+                        "WHERE ss.species_id=? AND s.power>0", (r["id"],)):
+                    if row[0]:
+                        got.append(row[0])
+            db.close()
+            return got
+        except Exception:
+            return []
+
+    out = _skills_of(name)
+    if not out:
+        base = _re.sub(r"[（(].*?[)）]", "", name or "").strip()
+        if base and base != name:
+            out = _skills_of(base)
+    # json 兜底：补 DB 没有的血统/基因技能
+    p = D.pokemon(name)
+    if p:
+        raw = p.get("skills") or {}
+        for key in ("moves", "jinengshi", "xuemai"):
+            for s in raw.get(key) or []:
+                if s not in out:
+                    out.append(s)
     return out
 
 
@@ -77,25 +184,53 @@ def worst_incoming(foe_name, my_name, top=5):
     worst case over the whole legal pool. Conservative on purpose: it is used to
     decide whether standing still is survivable, and over-estimating that is the
     safe direction.
+
+    为什么不用 D.estimate
+    -------------------
+    `damage.estimate` 只查 roco-claude 的 pokemon.json（499 只），
+    实测银月狼王/冥古龙/形态变体都查不到 -> 返回 None ->
+    worst_incoming 变成空列表 -> 换人评分显示 "taken 0"。
+    这里直接用 statmodel + DB 数据算，覆盖面 1242 只。
     """
     key = (foe_name, my_name, top)
     if key in _CACHE:
         return _CACHE[key]
     me = pet(my_name)
-    if not me:
+    foe = pet(foe_name)
+    if not me or not foe:
         return []
-    hp = D.calc_hp(int(me["stats"]["hp"]))
+    import statmodel as S
+    hp = S.calc_real_stat(int(me["stats"]["hp"]), S.IV_PVP, 1.0, is_hp=True)
+    my_def = int(me["stats"]["defense"])
+    foe_atk = int(foe["stats"]["attack"])
+    foe_types = foe.get("attributes_list") or []
+    my_types = me.get("attributes_list") or []
     rows = []
     for skill in move_pool(foe_name):
+        sk = D.skill(skill)
+        if not sk:
+            continue
+        power = 0
         try:
-            r = D.estimate(skill, foe_name, my_name)
+            power = int(sk.get("power") or 0)
+        except (TypeError, ValueError):
+            continue
+        if power <= 0:
+            continue
+        atk_type = sk.get("attribute")
+        stab = 1.25 if atk_type in foe_types else 1.0
+        try:
+            dmg = S.damage(
+                S.calc_real_stat(foe_atk, S.IV_PVP, 1.0),
+                S.calc_real_stat(my_def, S.IV_PVP, 1.0),
+                power,
+                type_eff=S.type_effect(atk_type, my_types),
+                stab=stab)
         except Exception:
             continue
-        if not r or not r.get("dmg"):
-            continue
-        rows.append({"skill": skill, "dmg": int(r["dmg"]),
-                     "pct": round(100.0 * r["dmg"] / hp, 1) if hp else 0.0,
-                     "attribute": (D.skill(skill) or {}).get("attribute")})
+        rows.append({"skill": skill, "dmg": int(dmg),
+                     "pct": round(100.0 * dmg / hp, 1) if hp else 0.0,
+                     "attribute": atk_type})
     rows.sort(key=lambda r: r["dmg"], reverse=True)
     out = rows[:top]
     _CACHE[key] = out
