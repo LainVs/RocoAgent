@@ -479,6 +479,8 @@ class Bot:
                 continue
             self.last_state = st
             now = time.time()
+            # 把这一帧导出给前端（悬浮窗/控制台）。失败不影响主循环。
+            self._publish_state(st, now)
 
             # ---- battle
             # A "match" only begins once we actually see a decision window (cards
@@ -528,6 +530,14 @@ class Bot:
                         # Per-match tally: a lifetime counter made the panel
                         # log read "dead=9" for a six-pet team.
                         self.dead_count = 0
+                        # 对手行为记录器：每局重置（数据用于 opponent_model）
+                        try:
+                            import opponent_log
+                            if getattr(self, "_opp_rec", None) is None:
+                                self._opp_rec = opponent_log.Recorder()
+                            self._opp_rec.new_match()
+                        except Exception:
+                            self._opp_rec = None
                         # 每局重置"已存过哪些未知头像"的去重集合，
                         # 否则整晚只会存到第一局的几只。
                         self._pet_unknown_sigs = []
@@ -659,6 +669,149 @@ class Bot:
                 self.clicked_at = now
 
             time.sleep(POLL_S)
+
+    def _publish_state(self, st, now):
+        """把这一帧打包成前端契约写盘。
+
+        为什么在感知之后立刻写：前端要的是"我看到什么"，不是"我决定什么"。
+        决策失败（GATE）时前端仍然应该显示当前血量 —— 那正是用户需要看到的。
+
+        所有数值都来自已经算好的结果，这里不做任何计算。
+        """
+        try:
+            import live_state as LS
+        except Exception:
+            return
+
+        try:
+            my_name = self.my_name or self.active_pet
+            foe_name = self.foe_name
+
+            # 血量：百分比来自视觉，绝对值需要 max_hp
+            my_max = None
+            my_abs = None
+            if my_name:
+                try:
+                    import foe_hp as FH
+                    my_max = FH.max_hp(my_name)
+                except Exception:
+                    my_max = None
+            if my_max and st.get("my_pct") is not None:
+                my_abs = int(round(my_max * st["my_pct"] / 100.0))
+
+            # 我方属性
+            my_types = []
+            if my_name:
+                try:
+                    import foe_hp as FH
+                    my_types = FH.types_of(my_name)
+                except Exception:
+                    pass
+
+            # 敌方属性 + 推测区间
+            foe_types, hp_range, def_range = [], None, None
+            if foe_name:
+                try:
+                    import foe_hp as FH
+                    foe_types = FH.types_of(foe_name)
+                    hp_range = FH.hp_band(foe_name)
+                    row = FH.species(foe_name)
+                    if row:
+                        sv = FH._num(row.get("def"))
+                        if sv > 0:
+                            def_range = (
+                                FH.S.calc_real_stat(sv, 0, 1.0, is_hp=False),
+                                FH.S.calc_real_stat(sv, FH.S.IV_PVP, 1.2,
+                                                    is_hp=False))
+                except Exception:
+                    pass
+
+            # 四张卡：卡面数字就是伤害，直接给前端
+            skills = []
+            for s in (st.get("skills") or []):
+                if not s:
+                    continue
+                dmg = s.get("value")
+                pct = None
+                if dmg and my_max is None:
+                    pass
+                # 占比 = 伤害 / 对面最大血。对面血量未知时留 None
+                if dmg and foe_name and hp_range:
+                    base = sum(hp_range) / 2.0
+                    if base > 0:
+                        pct = 100.0 * dmg / base
+                skills.append(LS.skill_block(
+                    s.get("index") or 0,
+                    name=s.get("text") or s.get("name"),
+                    element=s.get("element"),
+                    cost=s.get("cost"),
+                    dmg=dmg,
+                    pct=pct,
+                    usable=bool(s.get("lit", True)),
+                    note=None if dmg else ("强化" if s.get("kind") == "status"
+                                           else "不可用"),
+                ))
+
+            # 克制关系
+            matchup = None
+            if my_types and foe_types:
+                try:
+                    import statmodel as S
+                    outs = [S.type_effect(t, foe_types) for t in my_types]
+                    ins = [S.type_effect(t, my_types) for t in foe_types]
+                    out_m = max(outs) if outs else 1.0
+                    in_m = max(ins) if ins else 1.0
+                    if out_m >= 3:
+                        tag = "双重克制"
+                    elif out_m >= 2:
+                        tag = "克制"
+                    elif in_m >= 3:
+                        tag = "被双重克制"
+                    elif in_m >= 2:
+                        tag = "被克制"
+                    else:
+                        tag = "互不克制"
+                    matchup = {"out": round(out_m, 2),
+                               "in": round(in_m, 2), "tag": tag}
+                except Exception:
+                    pass
+
+            # 系统指标
+            detectors = {
+                "bar": bool(st.get("bar")),
+                "skillbar": bool(st.get("bar")),
+                "countdown": bool(st.get("countdown")),
+            }
+            system = LS.system_block(
+                fps_ms=getattr(self, "last_obs_ms", None),
+                detectors=detectors,
+                conflicts=0,
+                gate=getattr(self, "_last_gate", None),
+            )
+
+            state = LS.build(
+                turn=self.turn,
+                clock=None,
+                mode="battle" if st.get("battle") else "idle",
+                me=LS.me_block(
+                    name=my_name, types=my_types,
+                    hp_pct=st.get("my_pct"), hp_abs=my_abs, hp_max=my_max,
+                    energy=st.get("energy"),
+                    energy_max=10,
+                ),
+                foe=LS.foe_block(
+                    name=foe_name, types=foe_types,
+                    hp_pct=st.get("foe_pct"),
+                    hp_range=hp_range, def_range=def_range,
+                ),
+                skills=skills,
+                matchup=matchup,
+                system=system,
+            )
+            LS.publish(state)
+        except Exception:
+            # 前端数据不能拖垮机器人
+            pass
 
     def _decide_v2(self, st, ctx):
         """Run policy_v2 on the current frame.
@@ -2229,6 +2382,16 @@ class Bot:
             else ("SWITCH %d" % action[1]) if action[0] == "switch" else "ENERGY F",
             why, st["my_pct"], st["foe_pct"], lit, int(st["countdown"]), detail))
         self._dump(st, action, why)
+        # 记录对面这一手做了什么（喂给 opponent_model）
+        try:
+            rec = getattr(self, "_opp_rec", None)
+            if rec is not None:
+                rec.observe(st, self.turn, getattr(self, "foe_name", None),
+                            getattr(self, "foe_types", None),
+                            getattr(self, "foe_types_conf", "none"),
+                            getattr(self, "active_pet", None))
+        except Exception:
+            pass
         self._shot("T%d_%s" % (self.turn, action[0] if len(action) == 1
                                else "%s%d" % (action[0], action[1])))
 
