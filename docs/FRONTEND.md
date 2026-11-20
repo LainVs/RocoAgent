@@ -303,27 +303,104 @@ def css_size(w, h):
 
 ---
 
-## 八、踩过的坑（会持续补充）
+## 八、踩坑清单（按现象查）
 
-| 坑 | 现象 | 解法 |
+> 20 条，按"你看到什么"分组。遇到问题先在这里搜关键词。
+> 每条都标了实测证据，不是猜的。
+
+### 8.1 窗口透明 / 渲染
+
+| 现象 | 原因 | 解法 |
 |---|---|---|
-| pywebview 透明延迟 | 首次显示白底 | 加载完成后 `ShowWindow(0/5)` 一次 |
-| `WS_EX_LAYERED` 未设 | `SetLayeredWindowAttributes` 返回 0 | 自己 `SetWindowLongW` 加上 |
-| 半透明面板压在亮背景 | 白字对比度 1.59:1 | 所有文字加 1px 描边 |
-| `backdrop-filter` 无效 | 模糊空气 | 用实心半透明 + 噪点 |
-| 抽屉默认展开 | `grid-template-rows:0fr` 多子元素失效 | 包一层 `.drawer-inner` |
-| 图形元素无描边 | 20% 透明度时血条消失 | 不透明度下限补偿 |
-| PowerShell 查进程 | `/api/bot` 10000ms 超时，服务卡死 | 读 PEB 拿命令行，1~2ms/进程 |
-| `wmic` 已移除 | Win11 上 FileNotFoundError | 不用它，改 Toolhelp32 + PEB |
-| 技能名虚构 | 把伤害数字当成技能名 | 机器人不读技能名，前端显示"卡 N" |
-| 机器人未跑时报警 | 状态推送显示"751s 前（过期）" | 没跑就显示"—"，那不是故障 |
-| 头像并发打满 | 120 张同时请求只成功 14 张 | 限并发 6，排队加载 |
-| 截图截到别的窗口 | SetForegroundWindow 让窗口自己移动 | 只 SetWindowPos 定位，不激活 |
-| 最小化窗口截图 | rect=(-32000,-32000,314,50) | 先 `ShowWindow(SW_RESTORE)` |
-| WebView2 白屏 | 页面中心是 (240,240,240) | 等 `panel.offsetWidth>100` 再修透明 |
-| pywebview api 异步注入 | `const NATIVE = window.pywebview.api` 永远是 null | 每次调用时现取 |
-| SetWindowPos 传位置 | 窗口被挪到 (0,0)，截图按旧坐标抓像"被切" | 只改尺寸，用 `SWP_NOMOVE` |
-| 血量自相矛盾 | hp_pct=100 但 hp_abs=0（力竭瞬间） | 一致性校验，矛盾时两个都置未知 |
-| 结论半吊子 | "2 回合击杀 · — 回合被击杀" | verdict 加 complete，不全时显示"数据不足" |
-| 能量空白 | 读不到时空白，被误解成 0 能量 | 显式显示"能量未知" |
-| 抽屉默认展开 | `grid-template-rows:0fr` 多子元素失效 | 包一层 `.drawer-inner` |
+| 首次显示是白底 | pywebview 的透明是延迟生效的 | 等 `panel.offsetWidth>100` 后 `ShowWindow(0)` → 0.55s → `ShowWindow(5)` |
+| `SetLayeredWindowAttributes` 返回 0 | pywebview 开的窗口没有 `WS_EX_LAYERED` | 自己 `SetWindowLongW(GWL_EXSTYLE, ex \| 0x80000)` |
+| 页面中心是 (240,240,240) | 白屏，页面没画出来就修透明了 | 同第一条：等 offsetWidth 再修 |
+| 窗口被别的程序盖住后不刷新 | 少见，但发生过 | 无需处理，WebView2 146 已自动重绘 |
+| 圆角外面是白色而不是桌面 | 透明没生效 | 检查 `WS_EX_LAYERED` + 上面的顺序 |
+| `backdrop-filter` 看不出效果 | 悬浮窗是独立合成层，采不到背后像素 | 用实心半透明 + 噪点 + 顶部高光 |
+
+### 8.2 文字可读性
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| 面板压在亮背景上白字看不清 | 对比度只有 1.59:1 | 所有文字加 `text-shadow: 0 1px 2px rgba(0,0,0,.92)`，回到 10.65:1 |
+| 20% 透明度时血条消失 | 图形元素没有描边 | 给 `--well-a` / `--line-a` / `--edge-a` 加不透明度下限补偿 |
+| 拉到低透明度后整块面板看不见边界 | 边框也跟着透明了 | 边框单独算 `--edge-a = 0.10*boost + (1-a)*0.10` |
+
+### 8.3 布局 / CSS
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| 设置抽屉默认就是展开的 | `grid-template-rows:0fr` 只对**唯一子元素**生效，多行并排时第二行按 auto 撑开 | 包一层 `.drawer-inner` |
+| 4 张技能卡只显示 1 张 | `.skills` 写 `flex: 0 1 auto` 在固定高度面板里被压缩 | 面板用 `min-height:100%`，技能区 `flex: 0 0 auto` |
+| 面板右侧被切 | 三种可能：元素溢出 / 窗口太窄 / 截图坐标错位 | 先查 DOM：`scrollWidth > clientWidth` 才是真溢出 |
+| 数字变化时整行抖动 | 字体不是等宽 | `font-variant-numeric: tabular-nums` + 等宽字体 |
+
+### 8.4 窗口尺寸 / 位置
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| 面板溢出窗口 | `create_window(width)` 不是 CSS 像素 | 实测 `inner_css = param - 13`（宽）/ `- 17`（高），要加回去 |
+| 窗口越缩越大 | `panel.scrollHeight` 在 flex 容器里返回容器高度 | 累加所有直接子元素的 `getBoundingClientRect().height` |
+| 窗口越调越宽（无限增长） | `fit_window` 读 `window.innerWidth` 算宽度，resize 后又变大 | 宽度固定用启动值，绝不读 innerWidth |
+| 调尺寸时窗口跑到屏幕左上角 | `SetWindowPos` 传了位置 (0,0) | 只改尺寸，用 `SWP_NOMOVE` |
+| 关掉重开回到默认位置 | pywebview 不记无边框窗口位置 | 自己存 `config/overlay.json` |
+
+### 8.5 拖动 / 交互
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| `WM_NCLBUTTONDOWN` + `HTCAPTION` 完全不动 | 无边框窗口没有 `WS_CAPTION` | 自己实现：记基准点 + 逐帧移动 |
+| `SetWindowPos` 移动窗口不动 | pywebview 的窗口约束挡住 | 必须用 `win.move()` |
+| 拖动有固定偏移 (-40,-28) | 第一帧位移被吃掉 | `begin_drag` 时就用按下点坐标做基准 |
+| 拖动后窗口飞出屏幕 | 坐标口径混用（CSS / 逻辑 / 物理差 2 倍） | 只换算**位移增量**，起点用窗口 rect |
+| `SetCursorPos` 后 `GetCursorPos` 不匹配 | 输入模拟被安全软件拦截 | 完全不用光标坐标，靠前端传 `e.screenX/Y` |
+
+### 8.6 pywebview / JS 桥
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| `const NATIVE = window.pywebview.api` 永远是 null | api 是**异步注入**的 | 每次调用时现取（`nativeApi()`） |
+| `evaluate_js` 对 Promise 返回 `{}` | pywebview 不 await | 用 `window.__r` 中转 + 轮询 |
+| DOM 测试把整个进程卡死 | `webview.start()` 阻塞 GUI 循环 | 放子进程跑，用文件传结果 |
+
+### 8.7 服务端 / 数据
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| `/api/bot` 10 秒超时，整个服务卡死 | `Get-CimInstance Win32_Process` 单次 2~10s 且阻塞 | 读 PEB 拿命令行，1~2ms/进程（快 100 倍） |
+| Win11 上 `wmic` 报 FileNotFoundError | 已从系统移除 | 不用它，改 Toolhelp32 + PEB |
+| `team` 接口 1 秒 | 每次请求都 `sqlite3.connect()` | thread-local 连接复用 + `PRAGMA query_only=1` |
+| `ROCO_LOGS` 环境变量不生效 | 路径硬编码 `ROOT/logs` | 统一走 `paths.py` |
+| 120 张头像只加载成功 14 张 | 并发打满 `ThreadingHTTPServer` | 限并发 6，排队加载 |
+
+### 8.8 数据语义（最容易错的地方）
+
+| 现象 | 原因 | 解法 |
+|---|---|---|
+| 把伤害数字当成技能名 | 机器人只读卡面伤害，不读技能名 | `name=None`，前端显示"卡 N"，不编造 |
+| 显示"满血但已死" | `hp_pct=100` 但 `hp_abs=0`（力竭瞬间） | 一致性校验，矛盾时两个都置未知 |
+| "2 回合击杀 · — 回合被击杀" | verdict 只有部分字段 | 加 `complete` 标记，不全时显示"数据不足" |
+| 能量显示空白被当成 0 | 读不到时返回 None，前端没处理 | 显式显示"能量未知" |
+| 机器人没跑时报警告 | 状态推送显示"751s 前（过期）" | 没跑就显示"—"，那不是故障 |
+
+---
+
+## 九、踩坑的方法论（比具体条目更重要）
+
+这 20 条背后有四个反复出现的模式：
+
+**1. 先怀疑坐标，再怀疑代码**
+有 5 个 bug 的根因都是"三套坐标系混用"（CSS / 逻辑 / 物理，差 2 倍）。
+症状都是"位置不对/不动/飞出去"。遇到这类问题先打印三种坐标对照。
+
+**2. pywebview 的窗口约束会静默忽略 SetWindowPos**
+不报错，不返回 0，就是不动。凡是改窗口位置/尺寸，
+优先用 `win.move()` / `win.resize()`，`SetWindowPos` 只做兜底。
+
+**3. 异步注入的东西不能在模块加载时取**
+`window.pywebview.api`、DOM 就绪、CSS 布局完成 —— 都要轮询等。
+
+**4. 未知必须显示为未知**
+这是产品层面最重要的一条。宁可显示"—"，也不要用 0 或默认值冒充。
+用户看到"—"会知道"没读到"，看到 0 会以为"真的是 0"。
