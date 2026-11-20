@@ -31,19 +31,19 @@ import random
 import sys
 import time
 
-# cv2 �?onnxruntime（OCR）各自带了一�?libiomp5md.dll，同时加载会原生崩溃
-# （OMP: Error #15），Python �?try/except 抓不到，整个进程直接消失�?
-# 必须�?import cv2 之前设置�?
+# cv2 和 onnxruntime（OCR）各自带了一个 libiomp5md.dll，同时加载会原生崩溃
+# （OMP: Error #15），Python 的 try/except 抓不到，整个进程直接消失。
+# 必须在 import cv2 之前设置。
 os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
-# --- 原生运行库护栏（2026-11-20 定位�?-----------------------------------
-# site-packages\winrt\MSVCP140.dll �?**14.29**�?021 年），�?Python/cv2/
-# onnxruntime 都是 2026 年构建、系统里�?MSVCP140 已经�?14.51�?
-# bleak 连蓝牙时才会 import winrt，一旦它先被加载，之�?onnxruntime 就会�?
-# 这个旧运行库里访问违例（WER 签名：MSVCP140.dll 14.29.30157 / 0xC0000005）�?
-# 先按名字绑定系统运行时，后面所�?"msvcp140.dll" 请求都会命中已加载的 14.51�?
-# A/B 实测：不预加�?= 连上 BLE �?import onnxruntime 必崩；预加载 = 正常�?
+# --- 原生运行库护栏（2026-11-20 定位）-----------------------------------
+# site-packages\winrt\MSVCP140.dll 是 **14.29**（2021 年），而 Python/cv2/
+# onnxruntime 都是 2026 年构建、系统里的 MSVCP140 已经是 14.51。
+# bleak 连蓝牙时才会 import winrt，一旦它先被加载，之和 onnxruntime 就会。?
+# 这个旧运行库里访问违例（WER 签名：MSVCP140.dll 14.29.30157 / 0xC0000005）。
+# 先按名字绑定系统运行时，后面所有"msvcp140.dll" 请求都会命中已加载的 14.51。
+# A/B 实测：不预加?= 连上 BLE ?import onnxruntime 必崩；预加载 = 正常。
 try:
     import ctypes as _ct
     _ct.WinDLL(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"),
@@ -73,10 +73,10 @@ LOG_DIR = str(paths.ROOT / "logs")
 TURN_LOG = os.path.join(LOG_DIR, "turns.jsonl")
 ROUND_LOG = os.path.join(LOG_DIR, "rounds.jsonl")
 
-# --- 崩溃留证�?026-11-20�?---------------------------------------------
-# 原生崩溃不会�?Python �?except：以前的表现�?进程直接消失、日志停在半句�?
-# stderr �?。faulthandler 会把出事时的 Python 栈写�?crash.log；普通异常统一
-# 追加�?bot_stderr.log（带时间戳），这样下次不用再�?Windows 事件日志反推�?
+# --- 崩溃留证（2026-11-20）---------------------------------------------
+# 原生崩溃不会走 Python 的 try/except：以前的表现是进程直接消失、日志停在半句就
+# stderr 里。。faulthandler 会把出事时的 Python 栈写进 crash.log；普通异常统一
+# 追加到 bot_stderr.log（带时间戳），这样下次不用再?Windows 事件日志反推。
 try:
     os.makedirs(LOG_DIR, exist_ok=True)
     import faulthandler as _faulthandler
@@ -109,32 +109,32 @@ FOE_BAR = (2251, 170, 245, 20)
 SKILL_BOX = dr.BAR                # (250, 480, 780, 1520)
 
 POLL_S = 0.12
-# 辅助模式兜底时限（秒）。回合窗口约 15 秒，9 秒留足余量�?
+# 辅助模式兜底时限（秒）。回合窗口约 15 秒，9 秒留足余量。
 ASSIST_DEADLINE = 6.0
-# 首领化开关：名字识别验证通过之前保持 False�?
-# 否则会给银月狼王�?Q 卡在背包里，白扔两个回合�?
+# 首领化开关：名字识别验证通过之前保持 False。
+# 否则会给银月狼王?Q 卡在背包里，白扔两个回合。
 LEADER_ENABLED = True
 # 技能播报区域（对面出招/换宠时滚动的文字条）
 CAST_BANNER_BOX = (1500, 150, 1000, 130)
-# 右下角按钮排（逃跑/背包/更换/技能），入场动画结束后才出�?
+# 右下角按钮排（逃跑/背包/更换/技能），入场动画结束后才出现。
 UI_BUTTON_BOX = (2150, 1440, 360, 140)
 ACT_COOLDOWN_S = 1.0
 SWITCH_COOLDOWN_S = 2.5
 SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
 
 # UI anchors (window-relative), measured pixel-exactly from live frames
-LOBBY_BTN = (1980, 1480, 520, 150)     # 开始挑�? (gold blob centre ~2210,1567)
-RESULT_BTN = (1150, 1470, 340, 130)    # 退�?     (white blob centre ~1293,1532)
+LOBBY_BTN = (1980, 1480, 520, 150)     # 开始挑战 (gold blob centre ~2210,1567)
+RESULT_BTN = (1150, 1470, 340, 130)    # 退出     (white blob centre ~1293,1532)
 # UI anchors, WINDOW-RELATIVE. They used to be absolute physical pixels measured
 # while the window happened to sit at (443,39); the moment the user dragged the
 # window the clicks landed on whatever used to be at that spot on the desktop -
-# "it is clicking a bit above the 开始挑�?button". Anything tied to the window
+# "it is clicking a bit above the 开始挑战 button". Anything tied to the window
 # must be stored relative to the window rect and offset at click time.
-LOBBY_BTN_REL = (2210, 1567)             # 开始挑�?centre (window-relative)
-RESULT_BTN_REL = (1293, 1530)            # 退�?centre
+LOBBY_BTN_REL = (2210, 1567)             # 开始挑战 centre (window-relative)
+RESULT_BTN_REL = (1293, 1530)            # 退出centre
 ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash screens
-# 结算/升段页右上角�?略略�?才是跳过按钮。中间那块徽章点了没用（实测连点
-# 8 次都不动），所以这个页面必须单独处理，否则机器人会一直卡在结算页�?
+# 结算/升段页右上角的「略略略」才是跳过按钮。中间那块徽章点了没用（实测连点
+# 8 次都不动），所以这个页面必须单独处理，否则机器人会一直卡在结算页。
 RESULT_SKIP_REL = (2303, 238)
 # 对面 HUD 的名字条（头像右边），认不出对面时和头像一起存，供离线标注
 FOE_NAME_BOX = (2225, 50, 210, 55)
@@ -177,8 +177,8 @@ def acquire_lock():
     except OSError:
         return False
     except Exception:
-        # 拿不到锁就别启动：两个机器人会双倍按键、抢同一�?BLE 链路�?
-        # 以前这里 return True，正好让"面板 + 计划任务同时拉起"变成两个实例�?
+        # 拿不到锁就别启动：两个机器人会双倍按键、抢同一条 BLE 链路。
+        # 以前这里 return True，正好让"面板 + 计划任务同时拉起"变成两个实例。
         return False
     fh.seek(0)
     fh.truncate()
@@ -364,8 +364,8 @@ class Screen:
         new_size = (r.right, r.bottom)
         old_size = getattr(self, "client_size", None)
         if old_size and old_size != new_size:
-            # 分辨�?窗口大小变了：所有固定框会自动等比缩放，这里留一条记录，
-            # 方便回看"某次识别异常是不是因为中途换了分辨率"�?
+            # 分辨率：窗口大小变了：所有固定框会自动等比缩放，这里留一条记录，
+            # 方便回看"某次识别异常是不是因为中途换了分辨率"。
             try:
                 log("WINDOW client %sx%s -> %sx%s (fixed boxes rescale)"
                     % (old_size[0], old_size[1], new_size[0], new_size[1]))
@@ -443,12 +443,12 @@ class Screen:
         return (cr[0] + int(round(x * sx)), cr[1] + int(round(y * sy)))
 
     # ---- 分辨率自适应 -------------------------------------------------
-    # 工程里同时存在两套坐标，历史原因�?
-    #   �?窗口坐标（含 13px 边框 + 58px 标题栏）：技能栏、血条、大厅按钮，
-    #      这些是从整窗截图量的，用 grab()/grab_s()�?
-    #   �?客户区坐标（截图原点）：头像、特性面板、HUD 文字，用 grab_client()�?
-    # 两套都必须按客户区比例缩放，但只�?�?需要先减掉边框�?
-    # 混用就会�?20px 高的血条整块错开�?
+    # 工程里同时存在两套坐标，历史原因。
+    #   ?窗口坐标（含 13px 边框 + 58px 标题栏）：技能栏、血条、大厅按钮，
+    #      这些是从整窗截图量的，用 grab()/grab_s()。?
+    #   ?客户区坐标（截图原点）：头像、特性面板、HUD 文字，用 grab_client()。?
+    # 两套都必须按客户区比例缩放，但只??需要先减掉边框。?
+    # 混用就会?20px 高的血条整块错开。?
     BASE_CLIENT_W, BASE_CLIENT_H = 2560, 1600
     BASE_OFF_X, BASE_OFF_Y = 13, 58
 
@@ -645,18 +645,18 @@ class Perc:
         x, y, w, h = box
         crop = self.screen.grab_s((x, y - 2, w, h + 4))
         if crop is None:
-            # 抓不到画�?�?0 血。以前这里返�?0.0，窗口最小化/抓屏失败�?
-            # 会被力竭分支当成"HP 归零"，立刻去点换人面板（而且点不准）�?
+            # 抓不到画??0 血。以前这里返回0.0，窗口最小化/抓屏失败。?
+            # 会被力竭分支当成"HP 归零"，立刻去点换人面板（而且点不准）。?
             return {"pct": None, "color": "none", "ui": False}
         return _read_bar(crop, (0, 2, w, h))
 
     def observe(self):
         my = self._bar(MY_BAR)
         foe = self._bar(FOE_BAR)
-        # 两边血条都能读出数�? 只说�?�?HUD"。S5 赛季大厅左上那条金色横幅
-        # 正好压在 MY_BAR/FOE_BAR �? 于是大厅被读�?battle=1, 机器人对着
-        # "开始挑�?站一晚上也不点。真血条有灰色底板 (ui), 横幅没有;
-        # 技能栏/倒计时在场时也足以证明在战斗里（缩放让底板判据失效时兜底）�?
+        # 两边血条都能读出数? 只说??HUD"。S5 赛季大厅左上那条金色横幅
+        # 正好压在 MY_BAR/FOE_BAR ? 于是大厅被读?battle=1, 机器人对着
+        # "开始挑战站一晚上也不点。真血条有灰色底板 (ui), 横幅没有;
+        # 技能栏/倒计时在场时也足以证明在战斗里（缩放让底板判据失效时兜底）。?
         bars = my["pct"] is not None and foe["pct"] is not None
         battle = bool(bars and my["ui"] and foe["ui"])
 
@@ -694,7 +694,7 @@ class Perc:
             # the full grab cost ~100 ms to read a 340x150 region.
             cnt_crop = self.screen.grab_s(CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
-        # 底板判据失效但技能栏/倒计时在�?-> 仍然是在战斗�?
+        # 底板判据失效但技能栏/倒计时在?-> 仍然是在战斗。?
         if bars and not battle and (visible or cnt):
             battle = True
 
@@ -1108,9 +1108,9 @@ def has_vs_screen(screen):
         return False
     ml = left.reshape(-1, 3).mean(axis=0)
     mr = right.reshape(-1, 3).mean(axis=0)
-    # 左：�?蓝绿（g、b 明显高于 r�?
+    # 左：?蓝绿（g、b 明显高于 r。?
     teal = (ml[1] > ml[0] + 12) and (ml[2] > ml[0] + 18)
-    # 右：橙（r 明显高于 b�?
+    # 右：橙（r 明显高于 b。?
     orange = (mr[0] > mr[2] + 35) and (mr[0] > 90)
     return bool(teal and orange)
 
@@ -1144,7 +1144,7 @@ def find_action_button(screen):
         bx, by, bw, bh, area = stats[i]
         # A real button is ~285x80 and sits centred in this band. The loading
         # screen's pale grey floor is far wider - it used to win here and steal
-        # the click from the lobby's 开始挑�?button.
+        # the click from the lobby's 开始挑战 button.
         if not (170 <= bw <= 380) or not (45 <= bh <= 130) or area < 9000:
             continue
         cxr = bx + bw // 2
@@ -1300,7 +1300,7 @@ HEAL_HINTS = ("休息回复", "回复", "治疗")
 
 # We cannot OCR the Chinese skill names quickly, but each pet's non-damaging
 # ("dash") slot pattern is distinctive. Team sheet:
-#   奶龙     1 泥浆铠甲(-) 2 过充�?num) 3 电磁偏转(-) 4 休息回复(-)  -> heal slot 4
+#   奶龙     1 泥浆铠甲(-) 2 过充?num) 3 电磁偏转(-) 4 休息回复(-)  -> heal slot 4
 # So a card set whose dash slots are (1,3,4) is 奶龙 and slot 4 is the heal.
 HEAL_BY_DASH = {(1, 3, 4): 4}
 
@@ -1443,9 +1443,9 @@ def decide(st, ctx):
     # than feeding the current one to the opponent. This is separate from the
     # "all my numbers are weak" rule below - that one looks at offence, this one
     # looks at the scoreboard.
-    # 残血自动撤退已关闭（用户要求）：它会切进一只更残的精灵占掉回合�?
-    # 下一回合又触发撤退，实际上等于送死。需要换人时交给对位评分�?
-    # 强制换人处理，不再由血量单独触发�?
+    # 残血自动撤退已关闭（用户要求）：它会切进一只更残的精灵占掉回合。
+    # 下一回合又触发撤退，实际上等于送死。需要换人时交给对位评分。?
+    # 强制换人处理，不再由血量单独触发。?
     bench = ctx.get("switch_slot")
     foe_pct = st["foe_pct"]
     if False:
@@ -1458,14 +1458,14 @@ def decide(st, ctx):
         v = _est_value(s)
         if v is not None:
             damaged.append((s, v))
-    # 只要有一张卡读得清，就只在读得清的里面选；读不清的�???"/None�?
-    # 无论推算值多高都不参与。实测它按过"dmg ??"去打一只残血对手�?
+    # 只要有一张卡读得清，就只在读得清的里面选；读不清的???"/None。?
+    # 无论推算值多高都不参与。实测它按过"dmg ??"去打一只残血对手。?
     exact = [p for p in damaged if p[0].get("value") is not None]
     if exact:
         damaged = exact
 
-    # 对面已经倒下�?%）：这回合别再聚�?等数字，随便打一张就行�?
-    # 实测出现�?foe=0.0% 还在�?F 的情况，纯属浪费回合�?
+    # 对面已经倒下?%）：这回合别再聚，?等数字，随便打一张就行。?
+    # 实测出现?foe=0.0% 还在?F 的情况，纯属浪费回合。
     foe_dead = st.get("foe_pct") is not None and st["foe_pct"] <= 0.5
 
     if not damaged:
@@ -1488,11 +1488,11 @@ def decide(st, ctx):
     # the hand was 120(red) + a stray "1" misread off slot 4, the filter threw
     # away the 120, kept the 1, and concluded "everything is weak" - so the bot
     # switched pets for nothing.
-    # 完整读出的数字永远优先于"推算�?。实�?09:44:25 出现过：
-    # 卡面 [152, 300, --, ???]，它按了�?4 张（读不全、推算值虚高）�?
-    # 把确定的 300 丢在一边。只要有一张读得清，就不该赌读不清的那张�?
-    # 净收益 = 伤害 �?λ×耗能�? 费打 168 不该�?2 费打 160�?
-    # 耗能�?我方装备�?4 个技�?查（顺序=卡槽顺序），不需要读 ★N 徽标�?
+    # 完整读出的数字永远优先于"推算?。实?09:44:25 出现过：
+    # 卡面 [152, 300, --, ???]，它按了?4 张（读不全、推算值虚高）。?
+    # 把确定的 300 丢在一边。只要有一张读得清，就不该赌读不清的那张。?
+    # 净收益 = 伤害 ?λ×耗能? 费打 168 不该2 费打 160。?
+    # 耗能，?我方装备?4 个技，?查（顺序=卡槽顺序），不需要读 ★N 徽标。?
     costs = ctx.get("card_costs") or {}
     lam = 3.0
 
@@ -1503,8 +1503,8 @@ def decide(st, ctx):
     pool = sorted(damaged,
                   key=lambda p: (p[0].get("value") is not None, _net(p),
                                  p[0]["color"] != "red"), reverse=True)
-    # �?3% 以内视为等价，随机选一个：同一套阵容每次都走同一线路的话�?
-    # 对面摸透一次就能场场赢我们（实测确实如此）�?
+    # ?3% 以内视为等价，随机选一个：同一套阵容每次都走同一线路的话。?
+    # 对面摸透一次就能场场赢我们（实测确实如此）。?
     top_v = pool[0][1]
     near = [p for p in pool if p[1] >= top_v * 0.97][:3]
     best, best_v = random.choice(near) if len(near) > 1 else pool[0]
@@ -1588,24 +1588,24 @@ class Bot:
         self._foe_try_at = 0.0
         self._rec_prev = None
         self._rec_done_for = -1
-        # 辅助模式：决策窗口状�?
+        # 辅助模式：决策窗口状。?
         self._as_win = False
         self._as_at = 0.0
         self._as_acted = False
         self._as_shadow = None
-        # 辅助模式：决策窗口状�?
+        # 辅助模式：决策窗口状。?
         self._as_win = False
         self._as_at = 0.0
         self._as_acted = False
         self._as_shadow = None
         self.foe_sig_at = 0.0
         # 每个队伍槽位最后一次看到的血量（%）。换人按这个挑后备，
-        # 而不是按固定轮转 —�?否则会换回一只残血的再立刻换走�?
+        # 而不是按固定轮转 —?否则会换回一只残血的再立刻换走。?
         self.slot_hp = {}
         self.cur_slot = 1
-        # 槽位 -> 种族名，靠上场时认头像学出来（我�?6 只没有手填也能用�?
+        # 槽位 -> 种族名，靠上场时认头像学出来（我?6 只没有手填也能用。?
         self.slot_species = {}
-        # 结算页段位卡上一次读到的值，跨重启保留（否则重启后第一场判不出胜负�?
+        # 结算页段位卡上一次读到的值，跨重启保留（否则重启后第一场判不出胜负。?
         self.ladder_prev = None
         try:
             with open(os.path.join(LOG_DIR, "rank_card.json"), encoding="utf-8") as f:
@@ -1617,19 +1617,19 @@ class Bot:
             pass
         self.foe_name = None
         self.my_name = None
-        # 对面属性（来自"特性→数据�?反查；None 表示读不出，绝不猜）
+        # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
         self.active_slot = None
         self.energy = None
-        # Leader-form tracking (恶魔�?首领血�?.
+        # Leader-form tracking (恶魔狼首领血?.
         # dead_count = own pets that have fainted this match; the "悲悯" trait
         # grants +30% dual attack per fainted ally, which is why the wolf is
         # saved for the late game.
         # Party order from myteam_wolf.md; slot 4 is the wolf.
         self.party_order = [1, 2, 3, 4, 5, 6]
-        self.leader_slot = 4          # 恶魔�?
-        self.leader_done = False      # 首领�?is once per match
+        self.leader_slot = 4          # 恶魔狼
+        self.leader_done = False      # 首领化is once per match
         self.leader_enabled = False   # off until the panel mapping is verified
         self.dead_count = 0
         self.switch_count = 0
@@ -1717,11 +1717,11 @@ class Bot:
         try:
             if self.screen.hwnd:
                 _raise_topmost(self.screen.hwnd)
-            # 必须点客户区正中偏下（战斗场地中央），不能用 r[0]+700�?
-            # 那个写死的偏移在窗口变小时落�?*左上�?*�?
-            # 窗口�?2586 �?700 �?27%，窗口宽 1293 �?700 �?54% 但仍�?
-            # 上半部分，一旦再缩就正正落在"退�?返回"那一排按钮上 —�?
-            # 这就�?结算页老是点左上角"的真正原因�?
+            # 必须点客户区正中偏下（战斗场地中央），不能用 r[0]+700。?
+            # 那个写死的偏移在窗口变小时落?*左上?*。?
+            # 窗口?2586 ?700 ?27%，窗口宽 1293 ?700 ?54% 但仍。?
+            # 上半部分，一旦再缩就正正落在"退出返回"那一排按钮上 —。?
+            # 这就，?结算页老是点左上角"的真正原因。?
             cr = self.screen.client_rect_on_screen()
             if cr is None:
                 return False
@@ -1797,12 +1797,12 @@ class Bot:
                 r = self.screen.rect
                 if r:
                     # 先把窗口抬到最上层再点标题栏：否则这一点会落到挡住它的
-                    # 那个窗口上，结果是把编辑器拉到前台，越点越糟（昨�?
-                    # 08:20-08:23 就是这么空转�?3 分钟）�?
+                    # 那个窗口上，结果是把编辑器拉到前台，越点越糟（昨。?
+                    # 08:20-08:23 就是这么空转?3 分钟）。?
                     _raise_topmost(hwnd)
                     time.sleep(0.15)
                     # 标题栏相对窗口按比例取，别用固定 700：窗口一窄就落到
-                    # 左上角的关闭/返回按钮上�?
+                    # 左上角的关闭/返回按钮上。?
                     self._ble(lambda: self.ble.click_at(
                         r[0] + int(r[2] * 0.5), r[1] + 18), "titlebar")
                     time.sleep(0.25)
@@ -1822,10 +1822,10 @@ class Bot:
             _hud.warmup()
         except Exception:
             pass
-        # 板子可能比机器人晚就位（刚上电、刚重启、蓝牙射频掉线重连）�?
-        # 以前这里直接 abort，现在就等它，最�?30 分钟�?
-        # 空转模式不发任何输入，连板子没有意义 —�?直接跳过，免得板子睡着�?
-        # 空转测试（和自检）一直卡�?"BLE waiting for board"�?
+        # 板子可能比机器人晚就位（刚上电、刚重启、蓝牙射频掉线重连）。?
+        # 以前这里直接 abort，现在就等它，最?30 分钟。?
+        # 空转模式不发任何输入，连板子没有意义 —?直接跳过，免得板子睡着。?
+        # 空转测试（和自检）一直卡?"BLE waiting for board"。?
         if getattr(self.args, "no_input", False):
             log("NO-INPUT: skip BLE connect (no input will be sent)")
         else:
@@ -1842,8 +1842,8 @@ class Bot:
             pass
         self.ensure_focus()
         log("bot up; rect=%s" % (self.screen.rect,))
-        # PID 文件：UI 用它判断"机器人是否在�?，避免每次轮询都 spawn 一�?
-        # PowerShell 查进程（实测一�?2.2 秒，UI 会被拖住）�?
+        # PID 文件：UI 用它判断"机器人是否在?，避免每次轮询都 spawn 一个
+        # PowerShell 查进程（实测一个2.2 秒，UI 会被拖住）。?
         try:
             with open(os.path.join(LOG_DIR, "bot.pid"), "w") as f:
                 f.write(str(os.getpid()))
@@ -1864,9 +1864,9 @@ class Bot:
         while True:
             if self.deadline and time.time() > self.deadline:
                 log("deadline reached, exiting")
-                # 干净地断一�?BLE：直接退进程会让板子只看到链路突然消失，
-                # 固件�?BLE 栈有概率停在"不再广播"�?1-20 遇到过一次，
-                # 需要给板子重新上电）。主�?disconnect 不会�?
+                # 干净地断一个BLE：直接退进程会让板子只看到链路突然消失，
+                # 固件?BLE 栈有概率停在"不再广播"?1-20 遇到过一次，
+                # 需要给板子重新上电）。主?disconnect 不会。?
                 try:
                     self.loop.run_until_complete(self.ble.close())
                     log("BLE closed")
@@ -1942,7 +1942,7 @@ class Bot:
                 self._battle_tick(st, now)
 
                 # Active-pet identity comes from the HUD bust, not from the
-                # party panel, and it drives the 首领�?(leader form) trigger:
+                # party panel, and it drives the 首领化(leader form) trigger:
                 # the transformation costs no turn, so doing it the moment the
                 # wolf lands is strictly better than waiting for more 悲悯
                 # stacks - the trait scales with fainted allies by itself.
@@ -2028,7 +2028,7 @@ class Bot:
                     self.last_progress_at = now
                 elif (now - getattr(self, "_bkey_at", now) > 40.0
                         and now - self.acted_at > 10.0):
-                    # 40 s 画面完全没变、而且这么久没按过键：回合卡住了�?
+                    # 40 s 画面完全没变、而且这么久没按过键：回合卡住了。?
                     frozen = now - self._bkey_at
                     self._bkey_at = now
                     lit = [s for s in st["skills"] if s and s.get("lit")]
@@ -2038,12 +2038,12 @@ class Bot:
                     if lit:
                         self.send_key(lit[0]["index"])
                     else:
-                        # 全灰 = 没能量，只有聚能能推进回�?
+                        # 全灰 = 没能量，只有聚能能推进回。?
                         self.send_key("f")
                     self.acted_at = now
             # 这条是给"认不出的界面"兜底的（确认首发、结算页、弹窗）。战斗里
-            # 不能�?ESC：对面可能只是慢，按 ESC 会开菜单。战斗内的死锁交�?
-            # 上面那条 40 秒的 _bkey 判据（它只按 F / 技能键，按错也无害）�?
+            # 不能?ESC：对面可能只是慢，按 ESC 会开菜单。战斗内的死锁交。?
+            # 上面那条 40 秒的 _bkey 判据（它只按 F / 技能键，按错也无害）。?
             if not st["battle"] and now - self.last_progress_at > STUCK_S:
                 self.stuck_count += 1
                 log("STUCK %.0fs -> forcing action #%d" % (
@@ -2121,8 +2121,8 @@ class Bot:
             "card_costs": my_card_costs(self.my_name),
         }
         action, why, detail = policy_v2.decide(state)
-        # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快�?
-        # 它却建议换）。换人不可逆，先禁�?v2 的换人，只保留它的出招建议�?
+        # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快。?
+        # 它却建议换）。换人不可逆，先禁?v2 的换人，只保留它的出招建议。?
         if action and action[0] == "switch":
             log("v2 wanted SWITCH (%s) -> ignored" % why)
             return None, why
@@ -2171,21 +2171,21 @@ class Bot:
         if img is None or img.size == 0:
             return
         name, sc, margin = self._identify_with_margin(img, box, m)
-        # 阈�?+ 领先优势：只�?0.02 �?最�?很可能是两个相似头像在打架，
-        # 那种情况宁可�?不确�?（实测把我方卡瓦重认成音速犬）�?
+        # 阈?+ 领先优势：只?0.02 ?最，?很可能是两个相似头像在打架，
+        # 那种情况宁可，?不确?（实测把我方卡瓦重认成音速犬）。?
         if name is not None and sc >= 0.72 and margin >= 0.06:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
                 self.active_pet = name
                 self.pet_at = now
-            # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）�?
+            # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）。?
             self.my_score = sc
             sp = self._portrait_species(name, "self")
             if sp and sp != self.my_name:
                 self.my_name = sp
                 log("PET -> species %s" % sp)
             if sp and self.cur_slot:
-                # 我方 6 只不靠手填也能知道：上场时认出来就记下槽位�?
+                # 我方 6 只不靠手填也能知道：上场时认出来就记下槽位。?
                 if self.slot_species.get(self.cur_slot) != sp:
                     self.slot_species[self.cur_slot] = sp
                     self.bench_names[self.cur_slot] = sp
@@ -2237,13 +2237,13 @@ class Bot:
         name, sc = portraits.identify(img, items,
                                       target=(box[2] - 2 * m, box[3] - 2 * m))
         # 对面换人：HUD 头像会变。用 12x12 灰度粗指纹判断，光照/抖动不会
-        # 越过阈值，但换一只精灵一定越得过去�?
+        # 越过阈值，但换一只精灵一定越得过去。?
         sig = _bust_sig(img)
         if self.foe_sig is None:
             self.foe_sig = sig
             self.foe_sig_at = now
         elif _sig_dist(sig, self.foe_sig) > 14.0:
-            # 连续两帧都对不上才算换人：受击闪�?镜头推拉只影响一帧�?
+            # 连续两帧都对不上才算换人：受击闪，?镜头推拉只影响一帧。?
             self._foe_sig_streak = getattr(self, "_foe_sig_streak", 0) + 1
             if self._foe_sig_streak >= 2:
                 log("FOE -> new bust (switch?)")
@@ -2281,8 +2281,8 @@ class Bot:
                 bh, bw = img.shape[:2]
                 bust = img[m:bh - m, m:bw - m]
                 import portrait_db as _pdb
-                # 只存"头像稳定 + 有内�?的样本：换人动画中途和�?UI 挡住�?
-                # 截图质量分只�?7，存进去只会污染模板库�?
+                # 只存"头像稳定 + 有内，?的样本：换人动画中途和?UI 挡住。?
+                # 截图质量分只?7，存进去只会污染模板库。?
                 if (now - getattr(self, "foe_sig_at", 0.0) > 1.5
                         and _pdb.template_ok(cv2.cvtColor(bust, cv2.COLOR_RGB2BGR))):
                     portraits.save_template(bust, path)
@@ -2355,11 +2355,11 @@ class Bot:
         if not st.get("battle"):
             return
         if not self.acted_at:
-            return                      # 还没出过手：先让正常流程跑起�?
+            return                      # 还没出过手：先让正常流程跑起。?
         if st.get("countdown"):
-            return                      # 决策窗口已经开了，别在这时候冻结画�?
+            return                      # 决策窗口已经开了，别在这时候冻结画。?
         if now - self.acted_at > 12.0:
-            return                      # 离上一次出手太久：下一手随时会�?
+            return                      # 离上一次出手太久：下一手随时会。?
         if getattr(self, "_foe_match_tries", 0) >= 2:
             return
         if now - getattr(self, "_foe_try_at", 0.0) < 15.0:
@@ -2393,8 +2393,8 @@ class Bot:
                 self.screen,
                 click=_click,
                 esc=lambda: self.send_key("esc", allow_focus_click=False),
-                # 必须读整块面板：快路径只读名字，特性永远拿不到�?
-                # 我们的目的正�?特�?-> 反查 id"，所以这里多�?4-6 秒值得�?
+                # 必须读整块面板：快路径只读名字，特性永远拿不到。?
+                # 我们的目的正，?特?-> 反查 id"，所以这里多?4-6 秒值得。?
                 fast=False)
         except Exception as e:
             log("FOE SCAN failed: %s: %s" % (type(e).__name__, e))
@@ -2492,7 +2492,7 @@ class Bot:
             img = self.screen.grab_client(CAST_BANNER_BOX)
             if img is None or img.size == 0:
                 return
-            # 播报出现时这块区域会明显变亮；平静场景直接跳过，省磁�?
+            # 播报出现时这块区域会明显变亮；平静场景直接跳过，省磁。?
             if float(img.max(axis=2).mean()) < 110:
                 return
             d = os.path.join(LOG_DIR, "cast")
@@ -2603,14 +2603,14 @@ class Bot:
         for _ in range(3):
             self.send_key("space")
             time.sleep(0.5)
-        # 注意：这里不能置 leader_done。是否成功由头像说了�?
-        # （_check_leader_confirmed 看到银白头像才置 True）�?
-        # 置了 True 就等�?发完即成�?，失败了整场不再重试�?
+        # 注意：这里不能置 leader_done。是否成功由头像说了。?
+        # （_check_leader_confirmed 看到银白头像才置 True）。?
+        # 置了 True 就等，?发完即成?，失败了整场不再重试。?
         self._leader_tries = getattr(self, "_leader_tries", 0) + 1
         log("LEADER -> sequence sent (attempt %d)" % self._leader_tries)
-        # 用户实测：首领化按下之后，需�?*这回合放一次技�?*才算落定�?
-        # 而且成功之后绝不能重复按 Q —�?再按会取消首领形态并卡在背包里�?
-        # 所以：发完就当作完成，把这一回合交回给正常出招�?
+        # 用户实测：首领化按下之后，需?*这回合放一次技?*才算落定。?
+        # 而且成功之后绝不能重复按 Q —?再按会取消首领形态并卡在背包里。?
+        # 所以：发完就当作完成，把这一回合交回给正常出招。?
         self.leader_done = True
         log("LEADER -> done, acting this turn")
         # Keep a snapshot of the bust right after the sequence. If the leader
@@ -2641,7 +2641,7 @@ class Bot:
           - 窗口开满 ASSIST_DEADLINE 秒还没人出手 -> 兜底放一手
         这样我和机器人不会同时按，也不会因为我不动而超时。
         """
-        # 倒计时比技能栏稳：技能栏在一回合里会消失好几秒，倒计时不会�?
+        # 倒计时比技能栏稳：技能栏在一回合里会消失好几秒，倒计时不会。?
         bar = bool(st.get("countdown") or st.get("bar"))
         win = getattr(self, "_as_win", False)
         if bar and not win:
@@ -2661,8 +2661,8 @@ class Bot:
                    self._as_shadow))
             return False
         if not bar and win:
-            # 技能栏检测会抖（动画/遮挡时一帧读不到），不能一抖就重置窗口�?
-            # 否则 _as_at 永远回到 0�? 秒兜底永远等不到 —�?表现就是"一直不按技�?�?
+            # 技能栏检测会抖（动画/遮挡时一帧读不到），不能一抖就重置窗口。?
+            # 否则 _as_at 永远回到 0? 秒兜底永远等不到 —?表现就是"一直不按技?。?
             if getattr(self, "_as_gone_at", None) is None:
                 self._as_gone_at = now
             if now - self._as_gone_at > 2.0:
@@ -2681,10 +2681,10 @@ class Bot:
             return False
         if now - getattr(self, "_as_at", now) < ASSIST_DEADLINE:
             return False
-        # 注意：这里不�?只放行一�?。放行后 _battle_tick 可能�?
+        # 注意：这里不，?只放行一个。放行后 _battle_tick 可能。?
         # "read not stable / 8 秒重按闸" 之类的门挡回来，如果只放行一次，
-        # 这一次没按出去就整个窗口报废 —�?实测就是"一局一个技能都不放"�?
-        # 真正的防重复按下�?_battle_tick 里的 acted_at 负责�?
+        # 这一次没按出去就整个窗口报废 —?实测就是"一局一个技能都不放"。?
+        # 真正的防重复按下?_battle_tick 里的 acted_at 负责。?
         if not getattr(self, "_as_logged", False):
             self._as_logged = True
             log("ASSIST TIMEOUT -> fallback %s" % (self._as_shadow,))
@@ -2734,11 +2734,11 @@ class Bot:
             if foe_cur <= 0:
                 return None
 
-            # �?void：能一击必杀就不�?
+            # ?void：能一击必杀就不。?
             if max_dmg >= foe_cur:
                 return None
 
-            # �?被秒：对面最凶的一击能不能打死�?
+            # ?被秒：对面最凶的一击能不能打死。?
             lethal = False
             try:
                 import foe_moves
@@ -2756,14 +2756,14 @@ class Bot:
 
             ratio = max_dmg / foe_cur
 
-            # �?进攻克制（用户要的那个方向）：我的技能能不能打穿对面
-            #    卡面颜色就是答案：绿=克制(2.0)、白=中�?1.0)、红=被抵�?0.5)
+            # ?进攻克制（用户要的那个方向）：我的技能能不能打穿对面
+            #    卡面颜色就是答案：绿=克制(2.0)、白=中?1.0)、红=被抵?0.5)
             their_types = json.loads(sp_foe["types"] or "[]")
             my_types = json.loads(sp_me["types"] or "[]")
             colors = [c.get("color") for c in cards if c.get("color")]
             n_red = sum(1 for c in colors if c == "red")
             n_green = sum(1 for c in colors if c == "green")
-            # 再叠�?我方属性打对面"的理论倍率（技能属性未知时用它兜底�?
+            # 再叠，?我方属性打对面"的理论倍率（技能属性未知时用它兜底。?
             off_mult = max([F.type_mult([t], their_types) for t in my_types] or [1.0])
             resisted = (n_green == 0 and n_red >= max(2, len(colors) - 1))
 
@@ -2847,7 +2847,7 @@ class Bot:
         self._sh_in_turn = self.turn
         try:
             import foe_damage as F
-            # 优先�?看到它放�?的技能；否则用它可学技能里威力最高的（上界）
+            # 优先，?看到它放，?的技能；否则用它可学技能里威力最高的（上界）
             sk = getattr(self, "foe_skill_seen", None)
             if not sk:
                 db = F._db()
@@ -2873,7 +2873,7 @@ class Bot:
             except Exception:
                 pass
             if not hp_max:
-                # 没录面板值时用种族值算（满个体、中性），比写死 400 准得�?
+                # 没录面板值时用种族值算（满个体、中性），比写死 400 准得。?
                 sp_me = F.species(me)
                 if sp_me:
                     hp_max = F.panel(sp_me["hp"], 60, 1.0, hp=True)
@@ -2943,8 +2943,8 @@ class Bot:
             name = None
             if img is not None and getattr(img, "size", 0):
                 ocr = ocr_cn.Ocr()
-                # 和离线标注用同一套：整条 OCR + 精灵名词表最近邻�?
-                # pet_name() 实测会把名字读成"60级水桶模�?这种垃圾，弃用�?
+                # 和离线标注用同一套：整条 OCR + 精灵名词表最近邻。?
+                # pet_name() 实测会把名字读成"60级水桶模，?这种垃圾，弃用。?
                 lines = ocr.read_region(img)
                 vocab = species_vocab()
                 best, best_s = None, 0.0
@@ -2966,25 +2966,25 @@ class Bot:
             return False
         if getattr(self, "my_name", None) != "恶魔狼":
             return False
-        # 银月狼王和恶魔狼同族相似�?.72 那一档会把狼王认成恶魔狼 �?
-        # 一上场就狂变身。首领化只认高置信度�?
+        # 银月狼王和恶魔狼同族相似?.72 那一档会把狼王认成恶魔狼 。?
+        # 一上场就狂变身。首领化只认高置信度。?
         if getattr(self, "my_score", 0.0) < 0.85:
             return False
-        # 用户确认：自家精灵看"名字 + 头像"。头像会混（银月狼王也是银白狼）�?
-        # 名字不会 —�?名字不是"恶魔�?就绝不按 Q，否则会卡在背包里�?
+        # 用户确认：自家精灵看"名字 + 头像"。头像会混（银月狼王也是银白狼）。?
+        # 名字不会 —?名字不是"恶魔狼就绝不按 Q，否则会卡在背包里。?
         nm = self._hud_name()
-        # fail-closed：读不到名字就不变（宁可这回合不变，也不能给狼王�?Q
-        # 卡在背包里）。读到了但不是恶魔狼，更不变�?
+        # fail-closed：读不到名字就不变（宁可这回合不变，也不能给狼王?Q
+        # 卡在背包里）。读到了但不是恶魔狼，更不变。?
         if not nm:
             return False
         if "恶魔狼" not in str(nm):
             if not getattr(self, "_leader_name_skip", False):
                 self._leader_name_skip = True
-                log("LEADER -> skip (HUD name is %s, not 恶魔�?" % nm)
+                log("LEADER -> skip (HUD name is %s, not 恶魔狼" % nm)
             return False
         if not getattr(self, "_leader_name_ok", False):
             self._leader_name_ok = True
-            log("LEADER -> HUD name confirmed 恶魔�? transforming")
+            log("LEADER -> HUD name confirmed 恶魔狼 transforming")
         if now - getattr(self, "pet_at", 0.0) < 1.2:
             return False
         if not (self._ui_ready() or st.get("bar")):
@@ -2995,16 +2995,16 @@ class Bot:
         return False
 
     def _battle_tick(self, st, now):
-        # ---- 辅助模式：我只在"回合快超�?时兜底放一�?---------------------
-        # 用来让我（或你）�?computeruse 亲自打，机器人只防止超时�?
-        # 同时�?如果交给它，它想按哪�?打进日志，形成对照数据�?
-        # 首领化优先于一切出招：变身不消耗回合，但它必须在上场动画结束后立刻�?
+        # ---- 辅助模式：我只在"回合快超，?时兜底放一个---------------------
+        # 用来让我（或你）?computeruse 亲自打，机器人只防止超时。?
+        # 同时，?如果交给它，它想按哪，?打进日志，形成对照数据。?
+        # 首领化优先于一切出招：变身不消耗回合，但它必须在上场动画结束后立刻。?
         if self._leader_first(st, now):
             return
 
         if getattr(self.args, "assist", False):
             # 倒下/强制换人必须永远放行：那时候技能栏是关的，辅助窗口
-            # 根本不会打开。之前被这道闸挡住，结果"精灵死了完全没反�?�?
+            # 根本不会打开。之前被这道闸挡住，结果"精灵死了完全没反?。?
             if not (self._faint_pending(st) or self._assist_go(st, now)):
                 return
 
@@ -3089,7 +3089,7 @@ class Bot:
                 if (now - self.nodraw_since > 8.0
                         and now - self.acted_at > 8.0):
                     # 决策窗口开着但技能栏始终没画出来：先把画面留证，
-                    # 下次才能离线看清到底�?动画期间"还是"检测器漏认"�?
+                    # 下次才能离线看清到底，?动画期间"还是"检测器漏认"。?
                     self._dump_unreadable("nodraw")
                     self.ensure_focus()
                     self.send_key(2)
@@ -3134,18 +3134,18 @@ class Bot:
         if self.acted_at and now - self.acted_at < 1.2:
             return
         if self.acted_at and now - self.acted_at < 8.0:
-            # 回合真的翻过去了就不用等�?8 秒。实测每一手都白等 8 �?
-            # （T1->T2 间隔 15 �?= 8 秒闸�?+ 7 秒动画）�?
+            # 回合真的翻过去了就不用等?8 秒。实测每一手都白等 8 。?
+            # （T1->T2 间隔 15 ?= 8 秒闸?+ 7 秒动画）。?
             #
-            # 判据只能�?*卡面**（四张卡的文�?+ lit 位）：血条在攻击动画�?
-            # 会连续变化，拿它�?新回�?等于没有闸门（历史上就是这么连按
-            # 5 次的）。卡面只在新回合抽牌时才变，所以它一变就是新回合�?
+            # 判据只能?*卡面**（四张卡的文?+ lit 位）：血条在攻击动画。?
+            # 会连续变化，拿它，?新回，?等于没有闸门（历史上就是这么连按
+            # 5 次的）。卡面只在新回合抽牌时才变，所以它一变就是新回合。
             card_key = (tuple((s["text"] if s else "") for s in st["skills"]),
                         tuple(bool(s and s.get("lit")) for s in st["skills"]))
             if (self.acted_card_key is not None
                     and card_key != self.acted_card_key
                     and now - self.acted_at >= 3.5 and stable):
-                self.acted_at = 0.0       # 新回合的牌已经抽出来�?
+                self.acted_at = 0.0       # 新回合的牌已经抽出来。?
             else:
                 self._gate(now, "press sent, waiting for the turn to resolve")
                 return
@@ -3210,8 +3210,8 @@ class Bot:
                 action, why = _charge_or_switch(ctx)
             elif len(lit) == 1:
                 # 只有一张卡放得出、数字又读不清：
-                #   · 如果这张�?*伤害�?*，盲目放它也比聚能强（聚能这回合白挨一下）
-                #   · 如果是增�?治疗卡（kind != "num"），聚能仍然更划�?
+                #   · 如果这张?*伤害?*，盲目放它也比聚能强（聚能这回合白挨一下）
+                #   · 如果是增，?治疗卡（kind != "num"），聚能仍然更划。?
                 only = lit[0]
                 if only.get("kind") == "num":
                     action, why = ("skill", only["index"]), \
@@ -3263,18 +3263,18 @@ class Bot:
                 why = "slot %d greyed -> gather energy" % action[1]
                 action = ("energy",)
 
-        # 聚能（F）只在真的是我的回合时才按。倒计时是最直接的信号，但它会闪�?
-        # 实测 21:10~21:14 五次出招里有三次 cnt=0，有的模式（PvE 训练家战�?
-        # 整段根本不画倒计时。原来的判据�?没倒计时就不按 F"，于�?0 能量�?
-        # 时候永远等不到倒计�?—�?21:14:33 之后整整 5 分钟没按过任何键�?
-        # 日志里只�?40 �?"GATE energy held: not my turn yet"�?
-        # 补一条硬信号：技能栏画着 + 四张卡全�?= 只可能是我的回合且没能量�?
-        # 这时 F 是唯一能推进回合的按键，按了顶多被动画吞掉一次�?
+        # 聚能（F）只在真的是我的回合时才按。倒计时是最直接的信号，但它会闪。?
+        # 实测 21:10~21:14 五次出招里有三次 cnt=0，有的模式（PvE 训练家战。?
+        # 整段根本不画倒计时。原来的判据，?没倒计时就不按 F"，于?0 能量。?
+        # 时候永远等不到倒计?—?21:14:33 之后整整 5 分钟没按过任何键。?
+        # 日志里只?40 ?"GATE energy held: not my turn yet"。?
+        # 补一条硬信号：技能栏画着 + 四张卡全?= 只可能是我的回合且没能量。?
+        # 这时 F 是唯一能推进回合的按键，按了顶多被动画吞掉一次。?
         if action[0] == "energy" and not st.get("countdown"):
             no_card = not any(s and s.get("lit") for s in st["skills"])
-            # 能量点还读得出来时用它做二次确认：只�?真的没能�?才允许不�?
-            # 倒计时就�?F。能�?>= 2 却四张卡全灰，说明是识别异常�?
-            # 这时候乱�?F 会白送一回合�?
+            # 能量点还读得出来时用它做二次确认：只，?真的没能，?才允许不。?
+            # 倒计时就?F。能?>= 2 却四张卡全灰，说明是识别异常。?
+            # 这时候乱?F 会白送一回合。
             en = st.get("energy")
             low = (en is None) or (en <= 1)
             if not (st.get("bar") and no_card and low):
@@ -3303,7 +3303,7 @@ class Bot:
         elif action[0] == "switch":
             # Mid-battle switching is E -> slot -> Space. Verified end to end on
             # 2026-11-18 14:05-14:15: E opened the party list, the number key
-            # selected the row, and Space confirmed the swap (音速犬 -> 冥古�?.
+            # selected the row, and Space confirmed the swap (音速犬 -> 冥古?.
             # The forced-switch panel is different: it is already open, so
             # _try_switch sends the slot directly.
             # Sending the slot without E just presses a skill key - that is why
@@ -3324,8 +3324,8 @@ class Bot:
                 idx = action[1] - 1
                 if rows and 0 <= idx < len(rows):
                     tx, ty = rows[idx]
-                    # rows 是窗口坐标（基准分辨率），必须走 phys 换算�?
-                    # 直接 r[0]+tx 在换分辨率后会点到别处�?
+                    # rows 是窗口坐标（基准分辨率），必须走 phys 换算。?
+                    # 直接 r[0]+tx 在换分辨率后会点到别处。?
                     px, py = self.screen.phys(tx, ty)
                     log("SWITCH -> click card at %d,%d" % (px, py))
                     # precheck=False: a focus click would dismiss the panel.
@@ -3412,9 +3412,9 @@ class Bot:
         mid-match, so we only act once we have been out of battle for a while
         AND the same UI has been seen on two consecutive polls.
         """
-        # 没有游戏窗口 / 窗口被最小化�?-32000：一律不点�?
-        # 以前 rect=None �?click_rel 会静默失败，�?advance 配额照扣�?
-        # 8 次之后整局都不再推进；更糟的是窗口刚好回来时可能落在错误的位置�?
+        # 没有游戏窗口 / 窗口被最小化?-32000：一律不点。?
+        # 以前 rect=None ?click_rel 会静默失败，?advance 配额照扣。?
+        # 8 次之后整局都不再推进；更糟的是窗口刚好回来时可能落在错误的位置。?
         if self.screen.rect is None:
             if now - getattr(self, "_nowin_at", 0.0) > 10.0:
                 self._nowin_at = now
@@ -3424,8 +3424,8 @@ class Bot:
             return
         if now < self.suppress_until:
             return
-        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数�?
-        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位�?
+        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。?
+        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。?
         if (self.match_ended_at
                 and self.match_count != getattr(self, "_rec_done_for", -1)
                 and now - self.match_ended_at < 90.0):
@@ -3459,7 +3459,7 @@ class Bot:
                 log("record read failed: %s" % e)
 
 
-        # The bottom-centre action button (确认首发 / 退�? is the single most
+        # The bottom-centre action button (确认首发 / 退出 is the single most
         # common reason to be stuck, so check it BEFORE the VS guard: the
         # pre-match lineup shares the teal/orange palette with the VS splash and
         # the guard would otherwise block the very click that starts the match.
@@ -3481,14 +3481,14 @@ class Bot:
         if now - self.clicked_at < CLICK_COOLDOWN_S:
             return
 
-        # 屏幕指纹：只用来判断"画面有没有换"，不再用它清�?advance_count�?
-        # 之前 advance_count 是整场累计的�? 次之后永久放弃，于是卡在结算�?
-        # 上再也不会动（实�?02:16-02:24 卡了 8 分钟）。改成按指纹清零后又走到
-        # 另一个极端：大世界的水面/�?待机动作让指纹不停变�?1:29:05~21:31:11
-        # 连点�?42 �?推进"，把角色点着走进水里�?
-        # 现在 advance_count �?*每场一发的预算**（_end_match / MATCH START 重置）：
-        # 实测正常�?结算页→升段页→大厅"链条最�?11 次点击，12 次够用；
-        # 超过就说明我们认不出这个画面了，停止盲点�?
+        # 屏幕指纹：只用来判断"画面有没有换"，不再用它清?advance_count。?
+        # 之前 advance_count 是整场累计的? 次之后永久放弃，于是卡在结算。?
+        # 上再也不会动（实?02:16-02:24 卡了 8 分钟）。改成按指纹清零后又走到
+        # 另一个极端：大世界的水面/?待机动作让指纹不停变?1:29:05~21:31:11
+        # 连点?42 ?推进"，把角色点着走进水里。?
+        # 现在 advance_count ?*每场一发的预算**（_end_match / MATCH START 重置）：
+        # 实测正常。结算页→升段页→大厅"链条最?11 次点击，12 次够用；
+        # 超过就说明我们认不出这个画面了，停止盲点。?
         fp = self._screen_fingerprint()
         if fp == getattr(self, "_fp_run", None):
             self._fp_run_n = getattr(self, "_fp_run_n", 0) + 1
@@ -3498,11 +3498,11 @@ class Bot:
         if self._fp_run_n >= 5:
             self._skip_logged = False
 
-        # 结算/升段页：点右上角"略略�?跳过。不�?ADVANCE 配额、不�?
-        # "只在一场结束后 120 秒内才允许点"的限�?—�?这个页面本身就是
-        # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）�?
+        # 结算/升段页：点右上角"略略略跳过。不?ADVANCE 配额、不。?
+        # "只在一场结束后 120 秒内才允许点"的限?—?这个页面本身就是
+        # 一场结束的证据，卡在这里等于整晚停摆（实测卡了 8 分钟）。?
         # 结算页只负责"点略略略跳过"。胜负判定统一在大厅排队时读段位卡
-        # 完成（那里卡片位置固定、可以慢慢读，也不会一个页面读两次）�?
+        # 完成（那里卡片位置固定、可以慢慢读，也不会一个页面读两次）。?
         import rank as _rank_now
         try:
             _card = _rank_now.read_card(self.screen)
@@ -3549,11 +3549,11 @@ class Bot:
             if self.advance_count in (1, 5, 8, 12):
                 log("advance splash (click %d)" % self.advance_count)
             self.ensure_focus()
-            # **只点屏幕正中偏下，绝不点右上角�?*
-            # RESULT_SKIP_REL=(2303,238) 是结算页�?略略�?�?
-            # 但在 VS/匹配/其它页面上那个位置是 **X 关闭按钮** —�?
-            # 隔次点它会把匹配取消掉，然后退回大世界再也回不来�?
-            # 真正的结算页由上面的 rank_card 分支单独处理，不需要这里兜底�?
+            # **只点屏幕正中偏下，绝不点右上角?*
+            # RESULT_SKIP_REL=(2303,238) 是结算页。略略略。?
+            # 但在 VS/匹配/其它页面上那个位置是 **X 关闭按钮** —。?
+            # 隔次点它会把匹配取消掉，然后退回大世界再也回不来。?
+            # 真正的结算页由上面的 rank_card 分支单独处理，不需要这里兜底。?
             self.click_rel(*ADVANCE_REL)
             self.advance_at = now
             return
@@ -3563,10 +3563,10 @@ class Bot:
             return                      # confirm on the next poll
         self.idle_seen = None
         # 胜负判定全部改到结算页的段位卡上（见 _idle_tick）。大厅徽章和
-        # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值�?
+        # 结算页徽章不在同一个位置，在这里读只会得到一条恒定值。?
         # 胜负判定：排队前读一次段位卡（大厅里卡片位置固定），
-        # 和上一场留下的比较。星级一�?+1 �?+2，升段会清零�?
-        # 所以还要看段位名有没有变�?
+        # 和上一场留下的比较。星级一个+1 ?+2，升段会清零。?
+        # 所以还要看段位名有没有变。?
         try:
             import rank as _rank
             ladder = _rank.read_card(self.screen)
@@ -3592,7 +3592,7 @@ class Bot:
         log("lobby -> \u5f00\u59cb\u6311\u6218")
         self.ensure_focus()
         self.click_rel(*LOBBY_BTN_REL)
-        # VS splash + battle intro cinematic: 特�?banners, no HP bars yet.
+        # VS splash + battle intro cinematic: 特?banners, no HP bars yet.
         # Clicking through it just wastes inputs, so stay quiet.
         self.suppress_until = now + 14.0
         self.clicked_at = now
@@ -3635,7 +3635,7 @@ class Bot:
             return False
         if top == self.screen.hwnd:
             return True
-        # 被挡住时先把游戏抬到最上层再检查一次，仍然不是就不�?
+        # 被挡住时先把游戏抬到最上层再检查一次，仍然不是就不。?
         try:
             _raise_topmost(self.screen.hwnd)
             time.sleep(0.12)
@@ -3663,7 +3663,7 @@ class Bot:
                 log("FOCUS LOST - click %d,%d dropped (fg=%s game=%s)"
                     % (x, y, _UD.GetForegroundWindow(), self.screen.hwnd))
                 return False
-        # 绝不盲点：目标不在客户区内、或那个像素不属于游戏窗口，直接丢弃�?
+        # 绝不盲点：目标不在客户区内、或那个像素不属于游戏窗口，直接丢弃。?
         if not self._click_target_ok(int(x), int(y)):
             log("CLICK GUARD - %d,%d 不在游戏窗口内或被遮挡，已丢弃" % (x, y))
             return False
@@ -3771,12 +3771,12 @@ class Bot:
             return 100.0 if v is None else v
 
         def score(s):
-            # 血量是主项；属性对位（打不打得�?/ 挨不挨得住）是副项�?
-            # 0.6 的权重是经验值：一�?80% 血但被对面双倍克制的，不该赢�?
-            # 一�?55% 血但克制对面的�?
+            # 血量是主项；属性对位（打不打得?/ 挨不挨得住）是副项。?
+            # 0.6 的权重是经验值：一个80% 血但被对面双倍克制的，不该赢。?
+            # 一个55% 血但克制对面的。?
             return hp_of(s) / 100.0 + 0.6 * self._matchup_score(s)
 
-        # 同分时按轮转错开，避免每次都挑同一�?
+        # 同分时按轮转错开，避免每次都挑同一个
         start = self.switch_count % len(cands)
         ordered = cands[start:] + cands[:start]
         best = max(ordered, key=score)
@@ -3930,7 +3930,7 @@ class Bot:
                 if not self.send_key("space", allow_focus_click=False):
                     log("FAINT -> space %d dropped" % (i + 1))
                 time.sleep(0.5)
-            # 首领�?is NOT triggered here any more. The panel-row -> party-slot
+            # 首领化is NOT triggered here any more. The panel-row -> party-slot
             # mapping was disproved (the panel excludes the pet on the field, so
             # "slot == leader_slot" never matched) and a death-count guess is
             # only a proxy. The HUD bust in the top-left corner names the pet
@@ -4018,15 +4018,15 @@ class Bot:
             # 身份字段：只有头像库认得出来时才有值（目前只有恶魔狼）
             "our_pet": getattr(self, "active_pet", None),
             "foe_pet": getattr(self, "foe_name", None),
-            # lit/plate 一定要记：否则离线分析"为什么没选最大伤�?时，
-            # 分不�?那张卡是灰的"�?决策算错�?�?
+            # lit/plate 一定要记：否则离线分析"为什么没选最大伤，?时，
+            # 分不，?那张卡是灰的"?决策算错?。?
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],
                         "t": s["text"], "lit": bool(s.get("lit")),
                         "plate": s.get("plate")} if s else None
                        for s in st["skills"]],
         }
-        # 有认不全的数字就留一张技能栏截图：事后能核对"为什么选这张卡"�?
-        # 只写日志的话，看�?"23?" 根本没法判断它到底是 230 还是 23�?
+        # 有认不全的数字就留一张技能栏截图：事后能核对"为什么选这张卡"。?
+        # 只写日志的话，看?"23?" 根本没法判断它到底是 230 还是 23。?
         try:
             if any(s and "?" in (s.get("text") or "") for s in st["skills"]):
                 self._dump_bar("partial")
