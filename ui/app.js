@@ -240,10 +240,12 @@ function render(st) {
     `<i class="${i < conf ? 'on' : ''}"></i>`).join('');
 
   // ── 技能
+  // 机器人只读卡面伤害，不读技能名。名字为空时显示"卡 N"，绝不编造。
   const wrap = $('skills');
   wrap.innerHTML = '';
   (st.skills || []).forEach((s, i) => {
     const na = s.dmg == null;
+    const idx = s.i != null ? s.i : i + 1;
     const row = document.createElement('div');
     row.className = 'skill' + (na ? ' na' : '') + skillTier(s);
     row.style.setProperty('--w', na || s.pct == null ? 0
@@ -251,10 +253,11 @@ function render(st) {
 
     const meta = [s.element, s.cost != null ? s.cost : null]
       .filter((x) => x != null).join('·');
+    const label = s.name || `卡 ${idx}`;
 
     row.innerHTML = `
-      <span class="sk-idx">${s.i != null ? s.i : i + 1}</span>
-      <span class="sk-name">${s.name || '—'}${
+      <span class="sk-idx">${idx}</span>
+      <span class="sk-name${s.name ? '' : ' unnamed'}">${label}${
         meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>
       <span class="sk-dmg">${na ? '—' : s.dmg}</span>
       <span class="sk-pct">${na ? (s.note || '—')

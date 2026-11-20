@@ -671,6 +671,14 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .skill.hot .sk-name { color: var(--ink-0); }
 
+/* 名字未知时用"卡 N"占位，视觉上弱一档，不假装是技能名 */
+.sk-name.unnamed {
+  color: var(--ink-2);
+  font-family: var(--font-num);
+  font-size: 12px;
+  letter-spacing: .02em;
+}
+
 /* 技能名后面的属性/消耗小标 */
 .sk-meta {
   font-size: 9px;

@@ -118,17 +118,36 @@ def strip_dwm_frame(hwnd):
         pass
 
 
-def fix_transparent(hwnd):
+def fix_transparent(hwnd, ready_check=None, timeout=12.0):
     """pywebview 的透明是延迟生效的。
 
-    它自己的注释写的是 "no idea why this works"。实测：光靠它还不够，
-    必须在浏览器加载完成后再 ShowWindow(0)/ShowWindow(5) 一次，
-    否则首帧是白底。
+    它自己的源码注释写的是 "no idea why this works"。实测：光靠它还不够。
+    正确的顺序是：
+
+        1. 等页面真的加载完（ready_check 返回 True）
+        2. ShowWindow(0) 隐藏
+        3. 等 0.5 秒（让 Chromium 完成一次隐藏帧的合成）
+        4. ShowWindow(5) 显示 —— 这一帧开始才是真正透明的
+
+    如果不等页面就绪就切，WebView2 还没画第一帧，
+    隐藏/显示等于什么都没发生，首帧就是白底（实测）。
     """
+    # 1. 等页面就绪
+    if ready_check is not None:
+        end = time.time() + timeout
+        while time.time() < end:
+            try:
+                if ready_check():
+                    break
+            except Exception:
+                pass
+            time.sleep(0.25)
+
+    # 2-4. 隐藏再显示
     UD.ShowWindow(hwnd, 0)     # SW_HIDE
-    time.sleep(0.45)
+    time.sleep(0.55)
     UD.ShowWindow(hwnd, 5)     # SW_SHOW
-    time.sleep(1.2)
+    time.sleep(1.4)
 
 
 # ============================================================ 服务
@@ -200,6 +219,19 @@ def main():
 
     state = {"hwnd": None, "visible": True, "pass_through": False}
 
+    def page_ready():
+        """页面真的画出来了才算就绪。
+
+        判据是面板元素的宽度 —— CSS 加载完成、布局跑过，它才 > 0。
+        比 readyState 靠谱：readyState=complete 时可能还没第一次绘制。
+        """
+        try:
+            w = win.evaluate_js(
+                "(document.getElementById('panel')||{}).offsetWidth||0")
+            return bool(w and int(w) > 100)
+        except Exception:
+            return False
+
     def setup():
         # 轮询等 native 就绪
         hwnd = None
@@ -216,11 +248,13 @@ def main():
             return
         state["hwnd"] = hwnd
 
-        fix_transparent(hwnd)
+        # 顺序很重要：先等页面画出来，再修透明
+        fix_transparent(hwnd, page_ready)
         add_layered(hwnd)
         hide_from_taskbar(hwnd)
         strip_dwm_frame(hwnd)
         set_topmost(hwnd)
+        state["ready"] = True
         print("窗口就绪 hwnd=%d" % hwnd)
 
     threading.Thread(target=setup, daemon=True).start()

@@ -731,30 +731,41 @@ class Bot:
                 except Exception:
                     pass
 
-            # 四张卡：卡面数字就是伤害，直接给前端
+            # 四张卡：机器人只读卡面伤害数字，**不读技能名**
+            # （digitread.read_skill 返回的 text 是 "245" 这种数字，不是名字）
+            # 所以这里绝不编造技能名，名字留 None，前端显示序号
             skills = []
             for s in (st.get("skills") or []):
                 if not s:
                     continue
                 dmg = s.get("value")
-                pct = None
-                if dmg and my_max is None:
-                    pass
+                kind = s.get("kind") or ""
                 # 占比 = 伤害 / 对面最大血。对面血量未知时留 None
-                if dmg and foe_name and hp_range:
+                pct = None
+                if dmg and hp_range:
                     base = sum(hp_range) / 2.0
                     if base > 0:
                         pct = 100.0 * dmg / base
+
+                # 卡片状态
+                if kind == "absent":
+                    note = "无卡"
+                elif dmg is None:
+                    note = "未读"
+                elif not s.get("lit", True):
+                    note = "能量不足"
+                else:
+                    note = None
+
                 skills.append(LS.skill_block(
                     s.get("index") or 0,
-                    name=s.get("text") or s.get("name"),
-                    element=s.get("element"),
-                    cost=s.get("cost"),
+                    name=None,               # 机器人不读名字，不编造
+                    element=None,
+                    cost=None,
                     dmg=dmg,
                     pct=pct,
-                    usable=bool(s.get("lit", True)),
-                    note=None if dmg else ("强化" if s.get("kind") == "status"
-                                           else "不可用"),
+                    usable=bool(s.get("lit", True)) and dmg is not None,
+                    note=note,
                 ))
 
             # 克制关系
