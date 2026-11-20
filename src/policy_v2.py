@@ -240,8 +240,14 @@ def decide(state):
                           "status %d: would likely die" % s["i"]))
             continue
         # 优先叠：给一个远高于任何攻击的分数（但能杀时不叠）
+        #
+        # 只能叠一次：policy_v2.decide 是纯函数，没有内部状态，
+        # 所以"是否已经叠过"由调用方通过 state["buffed"] 传入。
+        # 实测（2026-11-21 04:57）：不加这个判断会在 T1/T2 连续叠两次，
+        # 第二次纯属浪费回合（buff 上限 3 层但第二层收益远低于一次攻击）。
         early = (state.get("turn", 1) or 1) <= 2
-        if early and not foe_killable_now:
+        already = bool(state.get("buffed"))
+        if early and not already and not foe_killable_now:
             cands.append((9e9, ("skill", s["i"]),
                           "status %d: buff first (early turn, safe)" % s["i"]))
         else:

@@ -512,6 +512,7 @@ class Bot:
                         self.prev_my_pct = None
                         self.heal_streak = 0
                         self.charge_streak = 0
+                        self._buffed_this_match = False
                         self.advance_count = 0
                         self.advance_gave_up = False
                         self.active_pet = None
@@ -955,8 +956,14 @@ class Bot:
             "card_costs": my_card_costs(self.my_name),
             # turn 用于"前两回合优先叠 buff"（模拟器验证 +16% 胜率）
             "turn": self.turn,
+            # buffed 标记"本局已经叠过一次"，避免 T1/T2 连叠浪费回合。
+            # 实测（2026-11-21 04:57）不加这个判断会连续两回合都叠。
+            "buffed": getattr(self, "_buffed_this_match", False),
         }
         action, why, detail = policy_v2.decide(state)
+        # 记下"这回合真的要叠 buff"，供下一回合判断
+        if action and action[0] == "skill" and "buff first" in (why or ""):
+            self._buffed_this_match = True
         # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快。?
         # 它却建议换）。换人不可逆，先禁?v2 的换人，只保留它的出招建议。?
         if action and action[0] == "switch":
