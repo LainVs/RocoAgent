@@ -112,6 +112,96 @@ def star_power(stacks):
     return x * x + 24 * x - 24
 
 
+# ---------------------------------------------------------------- 属性克制
+#
+# 合成规则（三份独立实现一致：9178 getTypeEff、roco-cal ele_advantage.py、
+# loyshowdown 实机验证）：
+#     克制相加：被 1 个属性克 ×2，被 2 个 ×3（不是 ×4）
+#     抵抗相乘：被 1 个抵抗 ×0.5，被 2 个 ×0.25
+#     一克一抗 ×1
+#
+# 注意：dmg_calc.py 曾按 battle_config 的字段名猜成 (0.5, 0.75, 1.0, 2.0)，
+# 那是错的 —— 那 4 个字段不是这个用途。foe_damage.py 则把双属性相乘
+# （2×2=4），对双弱点高估 33%。两者都已删除，这里是唯一实现。
+
+TYPE_NAMES = ("普通", "火", "水", "草", "电", "冰", "武", "毒", "地", "翼",
+              "萌", "幻", "虫", "幽", "机械", "龙", "恶", "光")
+
+_EFF = None
+
+
+def _type_eff_table():
+    """{atk_name: {def_name: mult}}，从 DB 的 type_eff 读一次。"""
+    global _EFF
+    if _EFF is not None:
+        return _EFF
+    import sqlite3
+    import os
+    db_path = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "data", "roco.sqlite3")
+    table = {}
+    try:
+        db = sqlite3.connect(db_path)
+        try:
+            rows = db.execute(
+                "SELECT a.name, d.name, t.mult FROM type_eff t "
+                "JOIN types a ON a.id=t.atk JOIN types d ON d.id=t.def"
+            ).fetchall()
+            for atk, dfn, mult in rows:
+                table.setdefault(atk, {})[dfn] = float(mult)
+        finally:
+            db.close()
+    except Exception:
+        table = {}
+    _EFF = table
+    return table
+
+
+def type_effect(atk_type, def_types):
+    """攻击属性打防守方属性组合的最终倍率（加法规则）。"""
+    if not atk_type or not def_types:
+        return 1.0
+    table = _type_eff_table().get(atk_type) or {}
+    mults = [table.get(d, 1.0) for d in def_types]
+    if any(m == 0 for m in mults):
+        return 0.0
+    if len(mults) == 1:
+        return mults[0]
+    eff = sum(1 for m in mults if m > 1)
+    res = sum(1 for m in mults if m < 1)
+    if eff == 2:
+        return 3.0
+    if res == 2:
+        return 0.25
+    if eff == 1 and res == 1:
+        return 1.0
+    if eff == 1:
+        return 2.0
+    if res == 1:
+        return 0.5
+    return 1.0
+
+
+def defense_profile(def_types):
+    """防守方对 18 属性的承伤分组（等价于 pokemon.json 的 defense_profile）。
+
+    实测校验：水灵 ["水"] -> 2x 草/电、0.5x 火/机械，与 json 完全一致。
+    """
+    out = {"takes_3x_from": [], "takes_2x_from": [],
+           "takes_half_from": [], "takes_one_third_from": []}
+    for atk in TYPE_NAMES:
+        m = type_effect(atk, def_types)
+        if m >= 3.0:
+            out["takes_3x_from"].append(atk)
+        elif m >= 2.0:
+            out["takes_2x_from"].append(atk)
+        elif m <= 0.34:
+            out["takes_one_third_from"].append(atk)
+        elif m <= 0.5:
+            out["takes_half_from"].append(atk)
+    return out
+
+
 # ---------------------------------------------------------------- 区间
 
 def invested_sets(n=3):

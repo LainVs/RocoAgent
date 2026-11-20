@@ -204,12 +204,12 @@ def type_mix(species_name):
 def evaluate(species_name, me_types, sample=8):
     """返回这个对手可能的技能（名字/属性/概率/威力），用于伤害区间。
 
-    me_types: 我方属性 id 列表，用于标注"这招打我克制吗"。
+    me_types: 我方属性名列表，用于标注"这招打我克制吗"。
     """
-    import foe_damage as F
+    import statmodel as S
     out = []
     for name, p, power, tid in distribution(species_name, top=sample):
-        mult = F.type_mult([tid] if tid is not None else [], me_types)
+        mult = S.type_effect(tid, me_types) if tid else 1.0
         out.append({"skill": name, "p": round(p, 3), "power": power,
                     "type_id": tid, "mult_vs_me": mult})
     return out

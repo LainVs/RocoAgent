@@ -111,6 +111,83 @@ def expected_incoming(foe_name, my_name, skill_name=None):
     return rows[0]["dmg"] if rows else 0
 
 
+def best_damage_from(name, foe_name):
+    """Hardest hit `name` can land on `foe_name`, over its whole legal pool.
+
+    This is the "how much can I actually do to it" half of the switch score.
+    It went missing for a while: robot._best_damage called it, the attribute
+    did not exist, and the caller's `except Exception: continue` swallowed the
+    AttributeError - so every switch silently degraded to "first living pet"
+    (six live occurrences in bot_stdout.log on 2026-11-20).
+
+    Uses statmodel (the one verified model) with the DB species stats, and
+    returns 0 rather than raising when either side is unknown.
+    """
+    import statmodel as S
+    import sqlite3
+    from portrait_db import DB_PATH
+
+    me = _db_species(name)
+    foe = _db_species(foe_name)
+    if not me or not foe:
+        return 0
+
+    my_types = json.loads(me.get("type_names") or "[]")
+    foe_types = json.loads(foe.get("type_names") or "[]")
+
+    my_atk = _num(me.get("atk"))
+    foe_def = _num(foe.get("def"))
+    if my_atk <= 0 or foe_def <= 0:
+        return 0
+
+    best = 0
+    for skill_name in move_pool(name):
+        sk = D.skill(skill_name)
+        if not sk:
+            continue
+        power = _num(sk.get("power"))
+        if power <= 0:
+            continue
+        atk_type = sk.get("attribute")
+        stab = 1.25 if atk_type in my_types else 1.0
+        try:
+            dmg = S.damage(
+                S.calc_real_stat(my_atk, S.IV_PVP, 1.0),
+                S.calc_real_stat(foe_def, S.IV_PVP, 1.0),
+                power,
+                type_eff=S.type_effect(atk_type, foe_types),
+                stab=stab,
+            )
+        except Exception:
+            continue
+        best = max(best, int(dmg))
+    return best
+
+
+def _db_species(name):
+    """species row by name, preferring implemented/complete entries."""
+    import sqlite3
+    from portrait_db import DB_PATH
+    db = sqlite3.connect(DB_PATH)
+    db.row_factory = sqlite3.Row
+    try:
+        r = db.execute(
+            "SELECT * FROM species WHERE name=? "
+            "ORDER BY implemented DESC, total DESC LIMIT 1", (name,)
+        ).fetchone()
+        return dict(r) if r else None
+    finally:
+        db.close()
+
+
+def _num(v):
+    """DB 里的种族值可能是 '--' 占位（9178 导入的未实装宠）。"""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return 0
+
+
 def ko_turns(target_hp, per_turn):
     """How many turns of `per_turn` damage are needed. None when it cannot."""
     if not per_turn or per_turn <= 0:

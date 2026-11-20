@@ -2720,7 +2720,7 @@ class Bot:
         max_dmg = max(vals)
 
         try:
-            import foe_damage as F
+            import foe_hp as F
             foe = getattr(self, "foe_name", None)
             me = getattr(self, "my_name", None)
             if not foe or not me:
@@ -2729,7 +2729,9 @@ class Bot:
             sp_me = F.species(me)
             if not sp_foe or not sp_me:
                 return None
-            foe_hp_max = F.panel(sp_foe["hp"], 60, 1.0, hp=True)
+            foe_hp_max = F.max_hp(foe)
+            if not foe_hp_max:
+                return None
             foe_cur = foe_hp_max * (st.get("foe_pct") or 0) / 100.0
             if foe_cur <= 0:
                 return None
@@ -2742,29 +2744,32 @@ class Bot:
             lethal = False
             try:
                 import foe_moves
-                my_types = json.loads(sp_me["types"] or "[]")
+                my_types = json.loads(sp_me["type_names"] or "[]")
                 worst = 0
                 for ent in foe_moves.evaluate(foe, my_types, sample=6):
                     r = F.incoming(foe, ent["skill"], me)
                     if r:
                         worst = max(worst, r[1])
-                my_hp_max = F.panel(sp_me["hp"], 60, 1.0, hp=True)
-                my_cur = my_hp_max * (st.get("my_pct") or 0) / 100.0
+                my_hp_max = F.max_hp(me)
+                my_cur = (my_hp_max or 0) * (st.get("my_pct") or 0) / 100.0
                 lethal = worst >= my_cur
             except Exception:
                 pass
 
             ratio = max_dmg / foe_cur
 
-            # ?进攻克制（用户要的那个方向）：我的技能能不能打穿对面
-            #    卡面颜色就是答案：绿=克制(2.0)、白=中?1.0)、红=被抵?0.5)
-            their_types = json.loads(sp_foe["types"] or "[]")
-            my_types = json.loads(sp_me["types"] or "[]")
+            # 进攻克制（用户要的那个方向）：我的技能能不能打穿对面
+            #    卡面颜色就是答案：绿=克制(2.0)、白=中性(1.0)、红=被抵抗(0.5)
+            their_types = json.loads(sp_foe["type_names"] or "[]")
+            my_types = json.loads(sp_me["type_names"] or "[]")
             colors = [c.get("color") for c in cards if c.get("color")]
             n_red = sum(1 for c in colors if c == "red")
             n_green = sum(1 for c in colors if c == "green")
-            # 再叠，?我方属性打对面"的理论倍率（技能属性未知时用它兜底。?
-            off_mult = max([F.type_mult([t], their_types) for t in my_types] or [1.0])
+            # 再叠"我方属性打对面"的理论倍率（技能属性未知时用它兜底）。
+            # 必须走 statmodel.type_effect（加法规则）；foe_damage 原来用
+            # 相乘，双弱点会算成 4.0 而不是 3.0。
+            import statmodel as S
+            off_mult = max([S.type_effect(t, their_types) for t in my_types] or [1.0])
             resisted = (n_green == 0 and n_red >= max(2, len(colors) - 1))
 
             bench = self.next_switch_slot()
@@ -2802,7 +2807,7 @@ class Bot:
             return
         self._sw_in_turn = self.turn
         try:
-            import foe_damage as F
+            import foe_hp as F
             cards = [c for c in st["skills"] if c]
             vals = [c["value"] for c in cards if c.get("value") is not None]
             max_dmg = max(vals) if vals else 0
@@ -2811,9 +2816,7 @@ class Bot:
 
             foe_hp = None
             if foe:
-                sp = F.species(foe)
-                if sp:
-                    foe_hp = F.panel(sp["hp"], 60, 1.0, hp=True)
+                foe_hp = F.max_hp(foe)
             foe_cur = int(foe_hp * (st.get("foe_pct") or 0) / 100.0) if foe_hp else None
             ratio = (max_dmg / float(foe_cur)) if foe_cur else None
 
@@ -2846,11 +2849,14 @@ class Bot:
             return
         self._sh_in_turn = self.turn
         try:
-            import foe_damage as F
-            # 优先，?看到它放，?的技能；否则用它可学技能里威力最高的（上界）
+            import foe_hp as F
+            # 优先用看到它放过的技能；否则用它可学技能里威力最高的（上界）
             sk = getattr(self, "foe_skill_seen", None)
             if not sk:
-                db = F._db()
+                import sqlite3
+                from portrait_db import DB_PATH
+                db = sqlite3.connect(DB_PATH)
+                db.row_factory = sqlite3.Row
                 row = db.execute(
                     """SELECT s.name FROM species sp
                        JOIN species_skills ss ON ss.species_id=sp.id
