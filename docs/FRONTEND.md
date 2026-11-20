@@ -204,6 +204,63 @@ python ui\compose_test.py        # 对比度（面板压在真实游戏画面上
 
 ---
 
+## 五之三、原生桥（window.pywebview.api）
+
+悬浮窗里前端可以调这些原生能力。浏览器里没有这个对象，全部降级到 CSS。
+
+| 方法 | 作用 | 为什么 JS 做不到 |
+|---|---|---|
+| `drag()` | 让系统接管拖动 | CSS 只能移 DOM，窗口不动，拖出边界就看不见 |
+| `set_click_through(b)` | 改 `WS_EX_TRANSPARENT` | 扩展样式位只能 Win32 改 |
+| `set_opacity(0~255)` | `SetLayeredWindowAttributes` | 同上 |
+| `fit_window()` | 窗口贴合内容高度 | 折叠后必须缩，否则透明区域挡鼠标 |
+| `hide()` / `toggle_visible()` | 显隐 | — |
+| `quit()` | 退出 | — |
+
+**关键坑：不能在模块加载时取 `window.pywebview.api`。**
+
+pywebview 的 api 是**异步注入**的。写成
+
+```js
+const NATIVE = window.pywebview.api;   // 永远是 null
+```
+
+的话，脚本执行时它还不存在。必须每次调用时现取（`nativeApi()`），
+或者用 `callNative(method, ...args)` 包装。实测改成现取后
+`hasNative()` 立刻返回 true。
+
+---
+
+## 五之四、窗口尺寸标定（必须记住）
+
+pywebview 的 `create_window(width, height)` 参数**不是 CSS 像素**。
+200% DPI 下实测（5 组数据）：
+
+```
+create(340, 620) -> 窗口 680x1240 物理, inner 327x585 CSS
+create(400, 700) -> 窗口 800x1400 物理, inner 387x665 CSS
+create(500, 900) -> 窗口 1000x1800 物理, inner 487x865 CSS
+create(680,1240) -> 窗口 1360x1950 物理, inner 667x940 CSS
+create(706,1310) -> 窗口 1412x1950 物理, inner 693x940 CSS
+```
+
+规律：`inner_css = create_param - 13`（宽）/ `- 17`（高）
+
+所以 `css_size(css_w, css_h)` 要**加回**这两个常量：
+
+```python
+FRAME_W, FRAME_H = 13, 17
+def css_size(w, h):
+    return (int(w + FRAME_W), int(h + FRAME_H))
+```
+
+另外：**`SetWindowPos` 调尺寸时绝对不能传位置**。之前传了 `(0,0)`
+把窗口从初始位置挪到屏幕左上角，外部截图按旧坐标抓，看起来
+"面板被切"——查了半天才发现是坐标错位，不是渲染问题。
+必须用 `SWP_NOMOVE`。
+
+---
+
 ## 六、性能账（都是实测）
 
 | 项目 | 数字 | 说明 |
