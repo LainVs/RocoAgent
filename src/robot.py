@@ -113,6 +113,9 @@ class Bot:
     def __init__(self, args):
         self.screen = Screen()
         self.perc = Perc(self.screen)
+        # 技能卡读数稳定化（多帧投票，见 src/skill_reader.py）
+        import skill_reader
+        self._skill_stab = skill_reader.SkillStabilizer()
         self.args = args
         self.loop = asyncio.new_event_loop()
         self.ble = rocs.Session(verbose=False)
@@ -482,6 +485,37 @@ class Bot:
                 time.sleep(0.5)
                 continue
             self.last_state = st
+            # ---- 技能卡读数稳定化
+            #
+            # 实测（2026-11-21 06:51）：同一只音速犬、同一个对手、血量全程
+            # 100% 不变，卡面伤害却整组乱跳：
+            #     T4-T7  s2=350 s3=60   （连续 4 次一致，真值）
+            #     T8     s2=196 s3=420  （三个槽位同时变）
+            #     T9     s2=120 s3=50
+            # T8 的 s3=420 >= 对手血量 -> 判定 kill -> 实际只有 60 伤害。
+            #
+            # 根因在 perceive._slots：没检出的槽位，数字位置是用"已有槽位的
+            # 列中位数 ± 偏移"推断的，漏检时会把相邻卡片的数字框进来。
+            # 这里用多帧投票把它压住（只影响决策输入，turns.jsonl 仍记原始值）。
+            try:
+                if st.get("skills"):
+                    # 身份键的选择很关键。
+                    #
+                    # 踩过的坑（2026-11-21 07:10）：一开始传
+                    # `st.get("my_pet") or self.my_name`，但
+                    # Perc.observe() 的返回值里**没有 my_pet 字段**，
+                    # 于是永远退回 self.my_name —— 而 my_name 会随
+                    # 识别抖动在「音速犬」和 None 之间反复跳，
+                    # 每次跳都清空历史，稳定化等于没生效。
+                    #
+                    # 改用 active_pet（模板名，比 species 名稳定），
+                    # 且 None 不当作"换了精灵"（见 SkillStabilizer.update）。
+                    pet = getattr(self, "active_pet", None) \
+                        or getattr(self, "my_name", None)
+                    st["skills"] = self._skill_stab.update(
+                        st["skills"], pet=pet)
+            except Exception as e:
+                log("STABILIZER ERROR: %s: %s" % (type(e).__name__, e))
             now = time.time()
             # 感知耗时：系统栏最有用的指标（>50ms 变黄，>200ms 变红）
             self.last_obs_ms = round((now - _obs_t0) * 1000.0, 1)
