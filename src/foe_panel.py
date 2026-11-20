@@ -359,7 +359,21 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
             try:
                 import trait_db
                 res = trait_db.resolve(ability)
-                enough = bool(res["types"]) or len(res["candidates"]) == 1
+                # enough 的判据：属性够用就不必再跑整块 OCR。
+                #
+                # 原来写的是 `bool(types) or len(candidates)==1`，
+                # 实测（2026-11-21 04:48「氧循环」）有 9 个候选但
+                # **属性全是「草」**（best_types=["草"]），
+                # 明明够用却判 False -> 又跑整块 OCR -> 面板扫描 19.6 秒，
+                # 直接吃掉一个回合。
+                #
+                # 现在加两条：
+                #   · best_types 有值且 best_conf == "high"（候选属性一致）
+                #   · 或者候选数量 <= 3 且属性一致
+                enough = (bool(res["types"])
+                          or len(res["candidates"]) == 1
+                          or (res.get("best_types")
+                              and res.get("best_conf") == "high"))
             except Exception:
                 enough = False
         elif got and got.get("raw"):
