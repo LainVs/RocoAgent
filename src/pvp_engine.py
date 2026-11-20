@@ -124,6 +124,7 @@ def best_damage_from(name, foe_name):
     returns 0 rather than raising when either side is unknown.
     """
     import statmodel as S
+    import damage_v2 as DMG
     import sqlite3
     from portrait_db import DB_PATH
 
@@ -151,7 +152,7 @@ def best_damage_from(name, foe_name):
         atk_type = sk.get("attribute")
         stab = 1.25 if atk_type in my_types else 1.0
         try:
-            dmg = S.damage(
+            dmg = DMG.damage(
                 S.calc_real_stat(my_atk, S.IV_PVP, 1.0),
                 S.calc_real_stat(foe_def, S.IV_PVP, 1.0),
                 power,

@@ -1,0 +1,61 @@
+{
+  "category": "marks",
+  "items": [
+    {
+      "id": "charge_mark",
+      "label": "蓄电印记",
+      "stack_field": "charge_mark_stacks",
+      "enabled_field": "charge_mark_triggered",
+      "conditions": [
+        {
+          "mode": "burst"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "power_bonus",
+          "value_per_stack": 10
+        }
+      ]
+    },
+    {
+      "id": "wind_mark",
+      "label": "风起印记",
+      "description": "先手攻击时技能威力+20%。",
+      "enabled_field": "wind_mark_triggered",
+      "conditions": [
+        {
+          "mode": "first_attack"
+        }
+      ],
+      "effects": [
+        {
+          "kind": "power_multiplier",
+          "value": 0.2
+        }
+      ]
+    },
+    {
+      "id": "attack_mark",
+      "label": "攻击印记",
+      "stack_field": "attack_mark_stacks",
+      "effects": [
+        {
+          "kind": "power_multiplier",
+          "value_per_stack": 0.1
+        }
+      ]
+    },
+    {
+      "id": "momentum_mark",
+      "label": "蓄势印记",
+      "stack_field": "momentum_mark_stacks",
+      "effects": [
+        {
+          "kind": "power_multiplier",
+          "value_per_stack": 0.3
+        }
+      ]
+    }
+  ]
+}

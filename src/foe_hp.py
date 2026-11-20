@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import statmodel as S
+import damage_v2 as DMG
 
 DB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                   "data", "roco.sqlite3")
@@ -119,7 +120,7 @@ def incoming(foe_name, skill_name, my_name, my_def_iv=S.IV_PVP):
     out = []
     for atk_iv in (0, S.IV_PVP):
         atk = S.calc_real_stat(_num(foe.get("atk")), atk_iv, 1.0)
-        out.append(S.damage(atk, dfn, power, type_eff=mult, stab=stab))
+        out.append(DMG.damage(atk, dfn, power, type_eff=mult, stab=stab))
     return tuple(out)
 
 
