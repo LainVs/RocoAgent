@@ -330,6 +330,11 @@ async function poll() {
   lastSig = sig;
 
   render(st);
+
+  // 数据变了，窗口高度可能也要变（技能卡数量会变）。
+  // force=true 跳过去抖 —— 否则内容从"无技能"变"4 张卡"时，
+  // 窗口可能停在偏小的尺寸上不调整。
+  callNative('fit_window', true);
 }
 
 function renderEmpty() {

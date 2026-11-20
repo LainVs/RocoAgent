@@ -394,7 +394,8 @@ def main():
     print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
         pw, ph, args.width, args.height))
 
-    state = {"hwnd": None, "visible": True, "pass_through": False}
+    state = {"hwnd": None, "visible": True, "pass_through": False,
+             "css_w": args.width}
 
     # ---- 暴露给前端的 API（window.pywebview.api.*）
     class Api:
@@ -469,16 +470,18 @@ def main():
                 pass
             return True
 
-        def fit_window(self):
-            """让窗口高度贴合当前内容。
+        def fit_window(self, force=False):
+            """让窗口高度贴合当前内容（force=True 跳过去抖）。
 
-            折叠/展开后必须调这个 —— 否则折叠了窗口还是原来那么高，
-            下面一大片透明区域会挡住鼠标（透明区域也是窗口）。
-
-            坑：不能用 panel.scrollHeight —— 面板是 height:100% 的 flex 容器，
-            scrollHeight 返回的是**容器高度**而不是内容高度，
-            拿它去 resize 会让窗口越缩越大（实测 763 -> 1562）。
-            正确做法：累加所有直接子元素的实际高度。
+            坑 1：不能用 panel.scrollHeight —— 面板是 height:100% 的 flex 容器，
+                  scrollHeight 返回**容器高度**而不是内容高度。
+                  正确做法：累加所有直接子元素的实际高度。
+            坑 2：SetWindowPos 改尺寸会被 pywebview 的窗口约束挡住，
+                  必须用 win.resize()。
+            坑 3：不能每帧都 resize（会闪）。但也不能只用阈值去抖 ——
+                  内容从"无技能"变"4 张卡"时高度变化很大，
+                  而窗口当时可能已经偏小，去抖会把调整吞掉。
+                  所以 force=True 时无条件重算。
             """
             hwnd = state.get("hwnd")
             if not hwnd:
@@ -497,14 +500,21 @@ def main():
                     return Math.round(sum);
                   })()
                 """)
-                iw = win.evaluate_js("window.innerWidth")
                 if not h or int(h) < 40:
                     return False
 
-                css_w = int(iw or 340)
+                # 宽度固定用启动时的值，**绝不能读 window.innerWidth**：
+                # resize 之后 innerWidth 会变，再拿它去算会形成正反馈，
+                # 窗口越来越宽（实测 509 -> 639 -> … 无限增长）。
+                css_w = state.get("css_w") or args.width
                 css_h = int(h) + 2
                 screen_css = int(MAX_PHYS_H / max(1.0, dpi_scale()))
                 css_h = min(css_h, screen_css - 60)
+
+                prev = state.get("css_h")
+                if not force and prev is not None and abs(css_h - prev) <= 4:
+                    return True
+                state["css_h"] = css_h
 
                 pw, ph = css_size(css_w, css_h)
                 try:

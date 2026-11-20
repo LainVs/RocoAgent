@@ -165,7 +165,11 @@ body.embedded .overlay {
   will-change: auto;
 }
 body.embedded .overlay .panel {
-  height: 100%;
+  /* 用 min-height 而不是 height：
+     面板按内容自然撑开，但至少填满视口。
+     之前写 height:100% 会让 flex 子元素被迫收缩，
+     4 张技能卡只能显示 1 张（实测窗口 419px 装不下）。 */
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   border-radius: var(--r);
@@ -174,9 +178,11 @@ body.embedded .overlay .panel {
 /* 技能区：可以收缩（空间不够时压扁），但不主动膨胀
    （flex-grow=0）。否则窗口一大，技能区就把整块面板撑满，
    其他元素被挤到看不见。 */
+/* 技能区：按内容自然高度（flex-shrink=0 防止被压扁）。
+   之前写 flex: 0 1 auto 会让它在固定高度面板里收缩，
+   结果 4 张卡只显示出 1 张（实测窗口 419px 装不下）。 */
 body.embedded .skills {
-  flex: 0 1 auto;
-  overflow-y: auto;
+  flex: 0 0 auto;
   min-height: 0;
 }
 body.embedded .verdict { flex: none; }
