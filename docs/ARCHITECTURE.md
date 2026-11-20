@@ -1,7 +1,49 @@
 ﻿# RocoAgent 架构与决策模型
 
-> 最后更新：2026-11-18
+> 最后更新：2026-11-20
 > 目标：排位胜率 ≥ 60%，且可量化、可迭代
+
+---
+
+## 零、代码结构（2026-11-20 拆分）
+
+`robot.py` 原本 4126 行，已按职责拆成 6 个模块。**拆分是纯搬移**，
+118 个函数的反汇编逐项对比 0 差异（`scripts/verify_split.py`）。
+
+| 模块 | 行数 | 职责 |
+|---|---|---|
+| `config.py` | 165 | 常量 / 日志 / 单实例锁 / 崩溃留证（共享层） |
+| `winio.py` | 293 | 窗口查找 / 焦点 / 硬件点击 / `Screen` 截图与坐标换算 |
+| `perceive.py` | 572 | 词表 / 头像指纹 / 卡片可放判定 / `Perc` / 技能栏解析 |
+| `ui_probe.py` | 248 | 按钮 / VS 页 / 结算页 / 换人面板探测 |
+| `policy_legacy.py` | 231 | 旧 `decide()`：治疗 / 聚能 / 最大伤害 |
+| `robot.py` | 2640 | 门面 re-export + `Bot` 类 + 入口 |
+
+依赖方向是单向的：
+
+```
+config  <-  winio  <-  perceive  <-  ui_probe
+                              \        /
+                               policy_legacy
+                                     |
+                                  robot.py (Bot)
+```
+
+`robot.py` 保留全部原有名字的显式 re-export，所以 20 多处 `import robot`
+一处未改。**注意**：不能用 `import *`，下划线名字（`_card_lit` / `_read_bar`
+等）不会被导出，而 `test_lit.py` / `test_skillbar.py` 确实在用它们。
+
+### 伤害计算只有一套
+
+| 模块 | 职责 |
+|---|---|
+| `statmodel.py` | **唯一**的数值模型：面板值 / 等级系数 / 伤害 / 克制 / 区间 |
+| `damage.py` | 纯数据访问层（读 `roco-claude` 的 pokemon.json / skills.json） |
+| `foe_hp.py` | 对手血量 / 承伤查询的唯一入口 |
+
+已删除（依据实测）：`dmg_calc.py`（STAB 错）、`sim.py`（死代码）、
+`pet_state.py`（死代码）、`foe_damage.py`（克制规则错）、`policy.py`（死代码）。
+详见 `docs/DAMAGE_MODEL.md`。
 
 ---
 
