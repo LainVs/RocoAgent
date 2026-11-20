@@ -267,33 +267,69 @@ const NATIVE = window.pywebview.api;   // 永远是 null
 
 ---
 
-## 五之四、窗口尺寸标定（必须记住）
+## 五之四、窗口尺寸标定（这块踩了 10 轮，务必读完）
 
-pywebview 的 `create_window(width, height)` 参数**不是 CSS 像素**。
-200% DPI 下实测（5 组数据）：
+### 三套坐标口径，互相矛盾
 
-```
-create(340, 620) -> 窗口 680x1240 物理, inner 327x585 CSS
-create(400, 700) -> 窗口 800x1400 物理, inner 387x665 CSS
-create(500, 900) -> 窗口 1000x1800 物理, inner 487x865 CSS
-create(680,1240) -> 窗口 1360x1950 物理, inner 667x940 CSS
-create(706,1310) -> 窗口 1412x1950 物理, inner 693x940 CSS
-```
+这台机器 200% DPI，同一个窗口有三种读数：
 
-规律：`inner_css = create_param - 13`（宽）/ `- 17`（高）
+| 来源 | 口径 | 例子 |
+|---|---|---|
+| `create_window(width)` | **CSS 口径** | 传 353 -> 内视口 340 CSS |
+| `SetWindowPos(w)` | **物理像素** | 传 340 -> 窗口 340 物理 = 170 CSS |
+| `GetWindowRect` | 进程 DPI-aware 时物理，否则逻辑 | 同一窗口能读出两个值 |
 
-所以 `css_size(css_w, css_h)` 要**加回**这两个常量：
+**最容易踩的**：以为 `SetWindowPos` 和 `create_window` 一样是 CSS 口径，
+于是传 `css_w`，结果窗口被砍成一半（实测 680x1239 -> 400x503），
+面板底部被裁，技能区和替补都看不见。
+
+正确做法：
 
 ```python
-FRAME_W, FRAME_H = 13, 17
-def css_size(w, h):
+FRAME_W, FRAME_H = 13, 35      # 逻辑像素
+def css_size(w, h):            # create_window 用
     return (int(w + FRAME_W), int(h + FRAME_H))
+
+s = dpi_scale()                # 从页面读 devicePixelRatio 最可靠
+SetWindowPos(hwnd, 0, x, y, int(css_w * s), int(css_h * s), ...)   # 物理
 ```
 
-另外：**`SetWindowPos` 调尺寸时绝对不能传位置**。之前传了 `(0,0)`
-把窗口从初始位置挪到屏幕左上角，外部截图按旧坐标抓，看起来
-"面板被切"——查了半天才发现是坐标错位，不是渲染问题。
-必须用 `SWP_NOMOVE`。
+### `dpi_scale()` 里绝对不能调 `SetProcessDpiAwarenessContext`
+
+实测：一旦把进程标成 DPI-aware，随后 `create_window` 的 width/height
+会被当成物理像素，窗口只有预期的一半（340x620 -> 170x310），
+而且从外面完全看不出原因。
+
+保持系统默认的 DPI 虚拟化，让 `create` 和 `SetWindowPos` 的口径各自稳定。
+
+### `SetWindowPos` 的两个细节
+
+- **`hWndInsertAfter` 传 0（HWND_TOP）而不是 -1（HWND_TOPMOST）**。
+  传 -1 且窗口已是 TOPMOST 时，实测**尺寸参数被系统忽略**。
+  置顶单独用 `set_topmost()` 做。
+- **不要传 `SWP_NOMOVE`**。实测 `SWP_NOMOVE` + 尺寸参数时尺寸不生效。
+  直接把当前位置读出来再传回去。
+
+### `win.resize()` 会阻塞
+
+在透明 + 无焦点的窗口上，`win.resize()` 实测会卡死
+（日志只到 `start` 就没下文）。不要用它，用 `SetWindowPos`。
+
+### 截图验证必须 DPI-aware
+
+外部脚本如果不声明 DPI 感知，`GetWindowRect` 和 `PrintWindow`
+只能看到**一半**的尺寸（680x942 读成 340x471），会误判成"窗口太小"。
+
+```python
+UD.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+# 之后 GetWindowRect / PrintWindow 才是真实物理像素
+```
+
+### 调试用文件日志
+
+overlay 是脱离父进程跑的（`creationflags=DETACHED`），**stdout 拿不到**。
+必须写 `logs/overlay.log`，否则出问题时完全靠猜 ——
+这次的 10 轮排查全靠它才定位到根因。
 
 ---
 

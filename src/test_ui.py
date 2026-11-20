@@ -185,12 +185,15 @@ def test_contract():
 
 # ============================================================ 4. DOM
 DOM_WORKER = r'''
+import ctypes
+import ctypes.wintypes
 import json, os, sys, time, threading
 import webview
 
 port = int(sys.argv[1])
 out = sys.argv[2]
 result = {}
+UD = ctypes.windll.user32
 
 win = webview.create_window(
     "uitest", url="http://127.0.0.1:%d/index.html" % port,
@@ -238,6 +241,19 @@ def worker():
             });
           })()
         """)
+        # 窗口物理尺寸（必须 DPI-aware 才是真值，见 docs §五之四）
+        # 注意：SetProcessDpiAwarenessContext 必须在创建窗口**之前**调，
+        # 这里窗口已经建好了，调它没有意义还可能干扰 WebView2。
+        # 所以只读不设，接受"可能读到逻辑值"的局限。
+        try:
+            hwnd = UD.GetAncestor(win.native.Handle.ToInt32(), 2) or \
+                win.native.Handle.ToInt32()
+            r = ctypes.wintypes.RECT()
+            UD.GetWindowRect(hwnd, ctypes.byref(r))
+            result["win"] = json.dumps({
+                "w": r.right - r.left, "h": r.bottom - r.top})
+        except Exception as e:
+            result["win"] = json.dumps({"err": str(e)[:60]})
         win.evaluate_js(
             "document.dispatchEvent(new KeyboardEvent('keydown',"
             "{key:'a', altKey:true}))")
@@ -323,6 +339,14 @@ def test_dom(port):
     ok(dims.get("sw", 9999) <= dims.get("vw", 0),
        "面板不超出视口",
        "sw=%s vw=%s" % (dims.get("sw"), dims.get("vw")))
+
+    # 窗口尺寸合理性：不检查精确比例（外部读到的口径可能是逻辑值，
+    # 见 docs §五之四），只要求"窗口不是 0 且不比视口小"。
+    win_sz = json.loads(result.get("win") or "{}")
+    got_w = win_sz.get("w") or 0
+    got_h = win_sz.get("h") or 0
+    ok(got_w > 100 and got_h > 100,
+       "窗口尺寸合理", "%dx%d" % (got_w, got_h))
 
     ok(result.get("alphaAfterAltA") not in (None, "100", 100),
        "Alt+A 改了透明度", "alpha=%s" % result.get("alphaAfterAltA"))
