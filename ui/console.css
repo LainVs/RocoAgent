@@ -497,6 +497,53 @@ button, input, select {
   font-size: 13px;
 }
 
+/* ── 系统健康 ───────────────────────────────────────── */
+/* 这一块是"让我们清楚系统运行状态"的核心。
+   每个检测器独立显示，出问题能立刻定位是哪一环。 */
+.health {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+  gap: 8px;
+}
+.hitem {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+}
+.hitem .hdot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--ink-3);
+}
+.hitem.ok   .hdot { background: var(--win);  box-shadow: 0 0 0 3px rgba(78,201,176,.14); }
+.hitem.warn .hdot { background: var(--warn); box-shadow: 0 0 0 3px rgba(232,163,61,.14); }
+.hitem.bad  .hdot { background: var(--lose); box-shadow: 0 0 0 3px rgba(232,102,74,.14); }
+
+.hitem .hbody { min-width: 0; flex: 1; }
+.hitem .hlabel {
+  font-size: 10px;
+  color: var(--ink-3);
+  letter-spacing: .03em;
+  margin-bottom: 2px;
+}
+.hitem .hvalue {
+  font-size: 12px;
+  color: var(--ink-1);
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hitem.ok   .hvalue { color: var(--win); }
+.hitem.warn .hvalue { color: var(--warn); }
+.hitem.bad  .hvalue { color: var(--lose); }
+
 /* ── 实时状态卡片 ───────────────────────────────────── */
 .live-grid {
   display: grid;

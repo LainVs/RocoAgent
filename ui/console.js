@@ -99,6 +99,88 @@ async function refreshBot() {
 }
 
 /* ================================================================
+   系统健康
+   ----------------------------------------------------------------
+   这一块是"让我们清楚系统运行状态"的核心。
+
+   判据来自实测：fps_ms=745 且 bar=False 时机器人正在盲打
+   （技能栏从没画出来）。所以这两项必须独立显示，不能合并成一个
+   "总体健康"的绿灯 —— 那会掩盖具体哪一环坏了。
+   ================================================================ */
+function healthItem(label, value, level) {
+  return `<div class="hitem ${level}">
+    <i class="hdot"></i>
+    <div class="hbody">
+      <div class="hlabel">${label}</div>
+      <div class="hvalue">${value}</div>
+    </div>
+  </div>`;
+}
+
+async function refreshHealth() {
+  const grid = $('healthGrid');
+  const sub = $('healthSub');
+
+  let b, st;
+  try { b = await get('/api/bot'); } catch (e) { b = null; }
+  try { st = await get('/api/state'); } catch (e) { st = null; }
+
+  const items = [];
+
+  // 1. 机器人进程
+  if (!b) {
+    items.push(healthItem('机器人', '服务未连接', 'bad'));
+  } else if (b.phase === 'stopped') {
+    items.push(healthItem('机器人', '未运行', ''));
+  } else {
+    items.push(healthItem('机器人', `PID ${b.pid}`, 'ok'));
+  }
+
+  // 2. 状态推送新鲜度
+  if (!b || b.state_age == null) {
+    items.push(healthItem('状态推送', '无数据', b && b.running ? 'bad' : ''));
+  } else if (b.state_age < 3) {
+    items.push(healthItem('状态推送', `${b.state_age.toFixed(1)}s 前`, 'ok'));
+  } else {
+    items.push(healthItem('状态推送', `${b.state_age.toFixed(0)}s 前（过期）`, 'warn'));
+  }
+
+  // 3. 感知耗时
+  const ms = st && st.system ? st.system.fps_ms : null;
+  if (ms == null) {
+    items.push(healthItem('感知耗时', '无数据', ''));
+  } else {
+    const lv = ms > 200 ? 'bad' : ms > 50 ? 'warn' : 'ok';
+    items.push(healthItem('感知耗时', `${ms.toFixed(0)} ms`, lv));
+  }
+
+  // 4-6. 三个检测器（各自独立，出问题能定位到哪一环）
+  const dets = (st && st.system && st.system.detectors) || {};
+  const DET_LABEL = {
+    bar: '血条',
+    skillbar: '技能栏',
+    countdown: '倒计时',
+  };
+  Object.keys(DET_LABEL).forEach((k) => {
+    const on = !!dets[k];
+    items.push(healthItem(DET_LABEL[k], on ? '正常' : '读不到', on ? 'ok' : 'bad'));
+  });
+
+  // 7. 决策门（被拦住时显示原因，这是排查卡住的关键）
+  const gate = st && st.system ? st.system.gate : null;
+  items.push(healthItem('决策门', gate || '畅通', gate ? 'warn' : 'ok'));
+
+  grid.innerHTML = items.join('');
+
+  // 汇总
+  const bad = items.filter((x) => x.includes('class="hitem bad"')).length;
+  const warn = items.filter((x) => x.includes('class="hitem warn"')).length;
+  sub.textContent = bad ? `${bad} 项异常`
+    : warn ? `${warn} 项警告`
+    : b && b.running ? '全部正常' : '';
+}
+
+/* ================================================================
    实时状态（概览页）
    ================================================================ */
 function hpClass(p) {
@@ -503,7 +585,8 @@ async function refreshTurns() {
    页面切换 + 定时器管理
    ================================================================ */
 const REFRESH = {
-  overview: [['live', refreshLive, 1000], ['stats', refreshStats, 8000]],
+  overview: [['health', refreshHealth, 1500], ['live', refreshLive, 1000],
+             ['stats', refreshStats, 8000]],
   logs: [['log', pollLog, 700]],
   stats: [['stats', refreshStats, 8000], ['rounds', refreshRounds, 15000]],
   team: [['team', refreshTeam, 30000]],

@@ -227,77 +227,110 @@ def _enum_processes():
     return out
 
 
-def _cmdline_matches(pid, needles):
-    """读进程命令行并检查关键字。
+def _cmdline_of(pid):
+    """读进程命令行（走 PEB）。
 
-    只有 exe 是 python*.exe 时才需要读命令行（其它进程不可能跑 robot.py），
-    这样绝大多数进程都被跳过了。
+    为什么不用 PowerShell/WMI：实测 `Get-CimInstance Win32_Process`
+    单次 2~10 秒且阻塞。前端 1.5 秒轮询一次，请求立刻堆积把服务卡死
+    （实测 /api/bot 连续 4 次 10 秒超时）。
+    读 PEB 只要 1~2 ms/进程。
     """
     if os.name != "nt":
-        return False
+        return None
     import ctypes
     import ctypes.wintypes as wt
 
-    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     k32 = ctypes.windll.kernel32
-    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    ntdll = ctypes.windll.ntdll
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    PROCESS_VM_READ = 0x0010
+
+    class UNICODE_STRING(ctypes.Structure):
+        _fields_ = [("Length", wt.USHORT), ("MaximumLength", wt.USHORT),
+                    ("Buffer", ctypes.c_void_p)]
+
+    class PROCESS_BASIC_INFORMATION(ctypes.Structure):
+        _fields_ = [("Reserved1", ctypes.c_void_p),
+                    ("PebBaseAddress", ctypes.c_void_p),
+                    ("Reserved2", ctypes.c_void_p * 2),
+                    ("UniqueProcessId", ctypes.c_void_p),
+                    ("Reserved3", ctypes.c_void_p)]
+
+    h = k32.OpenProcess(
+        PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ, False, int(pid))
     if not h:
-        return False
+        return None
     try:
-        # QueryFullProcessImageNameW 拿 exe 路径；命令行要走 PEB，太麻烦。
-        # 实用近似：robot.py / botsup.py 一定是以脚本参数形式启动的，
-        # 这里用 WMI 替代 —— 但只在候选很少时才调，避免卡顿。
+        pbi = PROCESS_BASIC_INFORMATION()
+        if ntdll.NtQueryInformationProcess(
+                h, 0, ctypes.byref(pbi), ctypes.sizeof(pbi), None) != 0:
+            return None
+        if not pbi.PebBaseAddress:
+            return None
+
+        ptr = ctypes.sizeof(ctypes.c_void_p)
+        off = 0x20 if ptr == 8 else 0x10
+        pp = ctypes.c_void_p()
+        if not k32.ReadProcessMemory(
+                h, ctypes.c_void_p(pbi.PebBaseAddress + off),
+                ctypes.byref(pp), ptr, None):
+            return None
+
+        cmd_off = 0x70 if ptr == 8 else 0x40
+        us = UNICODE_STRING()
+        if not k32.ReadProcessMemory(
+                h, ctypes.c_void_p(pp.value + cmd_off),
+                ctypes.byref(us), ctypes.sizeof(us), None):
+            return None
+        if not us.Buffer or not us.Length:
+            return None
+
+        buf = ctypes.create_unicode_buffer(us.Length // 2 + 1)
+        if not k32.ReadProcessMemory(
+                h, ctypes.c_void_p(us.Buffer), buf, us.Length, None):
+            return None
+        return buf.value
+    except Exception:
         return None
     finally:
         k32.CloseHandle(h)
 
 
-def _pids_raw_ps(match):
-    """PowerShell 兜底（只在 Toolhelp 找不出候选时用）。"""
-    try:
-        out = subprocess.run(
-            ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process -Filter \"Name like 'python%%'\" | "
-             "Where-Object { $_.CommandLine -match '%s' } | "
-             "ForEach-Object { $_.ProcessId }" % match],
-            capture_output=True, timeout=6,
-            creationflags=NO_WINDOW)
-        text = (out.stdout or b"").decode("utf-8", "replace")
-        return [int(x) for x in text.split() if x.strip().isdigit()]
-    except Exception:
-        return []
-
-
 def _pids_both():
     """返回 (robot_pids, supervisor_pids)。
 
-    策略（从便宜到贵，绝大多数情况走第 1 步）：
-      1. 读 logs/bot.pid + 用 OpenProcess 验证存活  —— 微秒级
-      2. 如果 pid 文件不存在/失效，才枚举进程找 python
-      3. 最后才用 PowerShell 查命令行（只在可疑时）
-
-    为什么这么设计：PowerShell 查 WMI 实测 2~10 秒，前端 1.5 秒轮询一次，
-    请求立刻堆积把服务卡死（实测 /api/bot 连续 4 次 10 秒超时）。
+    策略（从便宜到贵）：
+      1. 读 logs/bot.pid + OpenProcess 验证存活 —— 微秒级，命中率最高
+      2. 没命中才枚举进程 + 读 PEB 命令行 —— 约 0.5 秒，但只走 python 进程
+      3. TTL 缓存 2 秒，避免高频轮询时反复枚举
     """
     now = time.time()
     with _PID_LOCK:
         if now - _PID_CACHE["at"] < _PID_TTL:
             return _PID_CACHE["robot"], _PID_CACHE["sup"]
 
-    robot = []
-    # 1. pid 文件 + 存活验证
+    robot, sup = [], []
+
+    # 1. pid 文件快路径
     pid = _read_pid_file()
     if pid and _alive(pid):
         robot = [pid]
 
-    # 2. 没有 pid 文件时才枚举（很快，Toolhelp32 微秒级）
+    # 2. 慢路径：枚举 + 读命令行（只在快路径没命中时）
     if not robot:
         procs = _enum_processes()
-        pythons = [p for p, name in procs if name.lower().startswith("python")]
-        if pythons and len(pythons) <= 8:
-            robot = _pids_raw_ps(r"robot\.py")
+        for pid_, name in procs:
+            low = name.lower()
+            if not (low.startswith("python") or low.startswith("botsup")):
+                continue
+            cl = _cmdline_of(pid_)
+            if not cl:
+                continue
+            if "robot.py" in cl:
+                robot.append(pid_)
+            elif "botsup.py" in cl:
+                sup.append(pid_)
 
-    sup = []
     with _PID_LOCK:
         _PID_CACHE.update({"at": now, "robot": robot, "sup": sup})
     return robot, sup
