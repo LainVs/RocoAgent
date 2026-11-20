@@ -28,7 +28,7 @@
 | 图像 | OpenCV（模板匹配 / 连通域 / 形态学） | 够用且可控 |
 | OCR | RapidOCR（ONNX Runtime，CPU） | 离线、中文好、无需 GPU |
 | 数据 | SQLite（`roco.sqlite3`） | 单文件、毫秒查询、可联表 |
-| UI | tkinter（原生，`roco_gui.py`） | 30–50MB，不占资源 |
+| UI | **待重新设计**（旧 tkinter / Web 两版已移除） | 见 `docs/UI_TODO.md` |
 | 模拟器 | Python + NRC_AI 引擎（MIT） | 借架构不借数据 |
 | 守护 | Windows 计划任务（每 2 分钟巡检） | 比常驻进程更抗崩溃 |
 
@@ -46,7 +46,7 @@
 ├── assets\portraits_foe\     对手头像模板（14 张）
 ├── data\roco.sqlite3         游戏数据库（1015 精灵 / 1378 技能）
 ├── logs\                     运行日志、截图、回合记录
-└── ui\                       旧的 Web UI（已废弃，勿用）
+└── (ui 目录已移除，等待重新设计)
 ```
 
 ---
@@ -129,7 +129,7 @@
 | `capture.py` | 结算页连拍、常速连拍 |
 | `record.py` | 读「历史战绩 胜利/失败」→ **权威胜负** |
 | `rank.py` | 段位卡（星数 + 段位名） |
-| `roco_gui.py` | 管理面板：日志/战绩/回合/队伍/头像标注 |
+| ~~`roco_gui.py`~~ | 管理面板已移除，队伍改用 `team_db.py --set` |
 | `label_portraits.py` | 未知头像自动标注（名字条 OCR → 封闭词表） |
 | `cleanup_portraits.py` | 头像库清理（去空白、去重复、每族留 3 张） |
 | `verify_portraits.py` | 头像一致性检查 |
@@ -249,7 +249,7 @@ buff 图标识别
 pythonw <ROCO_TOOLS>\espfast.py            # 或等 watchdog 拉起
 pythonw src\robot.py --seconds 7200    # 排位代打
 pythonw src\watchdog.py                # 巡检（计划任务每 2 分钟 --once）
-pythonw src\roco_gui.py                # 管理面板
+python src\team_db.py                 # 队伍查看/编辑（原管理面板的功能）
 ```
 
 计划任务：`RocoAgentWatchdog`（每 2 分钟 `watchdog.py --once`）

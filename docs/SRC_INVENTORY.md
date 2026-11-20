@@ -42,8 +42,8 @@
 |---|---|
 | `run_bot.py` | `python src\run_bot.py --supervisor` / `--stop` / `--status` |
 | `watchdog.py` | 由 `run_bot --supervisor` 拉起 |
-| `roco_gui.py` | 管理面板（tkinter），双击或 `pythonw src\roco_gui.py` |
-| `roco_ui.py` | Web 版管理面板（旧，已被 roco_gui 取代） |
+| ~~`roco_gui.py`~~ | **已移除**（2026-11-20，等待重新设计） |
+| ~~`roco_ui.py`~~ | **已移除**（同上） |
 | `selfcheck.py` | 启动前静态检查，不碰游戏 |
 
 ## 三、诊断 / 分析工具（按需手动跑）

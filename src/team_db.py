@@ -217,9 +217,52 @@ if __name__ == "__main__":
     import sys
     if "--dump" in sys.argv:
         print(json.dumps(dump_team(), ensure_ascii=False, indent=1))
+    elif "--set" in sys.argv:
+        # 命令行编辑（原来只能靠 tkinter 面板改，面板移除后补上）：
+        #   python src\team_db.py --set 1 --species 音速犬
+        #   python src\team_db.py --set 1 --species 音速犬 --nature 固执 --moves 技能1,技能2
+        a = sys.argv
+        slot = int(a[a.index("--set") + 1])
+        data = {}
+        if "--species" in a:
+            name = a[a.index("--species") + 1]
+            opts = {s["name"]: s for s in species_options()}
+            sp = opts.get(name)
+            if not sp:
+                print("未知精灵: %s" % name)
+                print("提示：可用 --list 查看前 40 个候选")
+                sys.exit(2)
+            data["species_id"] = sp["id"]
+        if "--nature" in a:
+            nm = a[a.index("--nature") + 1]
+            nats = {n["name"]: n for n in natures()}
+            if nm not in nats:
+                print("未知性格: %s" % nm)
+                sys.exit(2)
+            data["nature_id"] = nats[nm]["id"]
+        if "--moves" in a:
+            raw = a[a.index("--moves") + 1]
+            data["moves"] = [m.strip() for m in raw.split(",") if m.strip()]
+        if "--level" in a:
+            data["level"] = int(a[a.index("--level") + 1])
+        if "--max-hp" in a:
+            data["max_hp"] = int(a[a.index("--max-hp") + 1])
+        if not data:
+            print("没有要改的字段。可用：--species --nature --moves --level --max-hp")
+            sys.exit(2)
+        row = save_pet(slot, data)
+        print(json.dumps(row, ensure_ascii=False, indent=1))
+    elif "--species-list" in sys.argv:
+        for s in species_options()[:40]:
+            print("  %-14s %s" % (s["name"], s.get("type_names") or ""))
     else:
         db = connect()
         n = db.execute("SELECT count(*) FROM my_team").fetchone()[0]
         print("db ok, %d/6 slots filled" % n)
         print("species options: %d" % len(species_options()))
         print("natures: %d" % len(natures()))
+        print()
+        print("用法:")
+        print("  python src\\team_db.py --dump")
+        print("  python src\\team_db.py --species-list")
+        print("  python src\\team_db.py --set 1 --species 音速犬 --nature 固执 --moves 火云车,力量增强")
