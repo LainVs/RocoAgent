@@ -109,12 +109,14 @@ def fp(path):
 
 
 def main():
-    # 基线优先用 robot.py.orig；没有就从 git 取拆分前的版本
+    # 基线：robot.py.orig 或 git 里的"拆分完成时"版本。
+    # 拆分发生在 b899609，8a18c4c 是它之前最后一个提交（单一 robot.py）。
+    # 之后再改的属于新功能，不在本脚本职责内。
     baseline_path = ORIG
     if not os.path.exists(baseline_path):
         import subprocess
         r = subprocess.run(
-            ["git", "show", "8a18c4c:src/robot.py"],  # 拆分前的提交
+            ["git", "show", "8a18c4c:src/robot.py"],
             cwd=ROOT, capture_output=True)
         if r.returncode != 0:
             print("找不到基线：既没有 %s，也取不到 git 版本" % ORIG)
