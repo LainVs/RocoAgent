@@ -140,6 +140,27 @@ def test_none_pet_no_reset():
           "None 抖动后仍能纠正 slot1 为 350（实际 %s）" % out[0].get("value"))
 
 
+def test_stale_escape():
+    """真实值持续变化时必须能突破历史锁定。
+
+    实测（2026-11-21 07:40）：不加淘汰，第 1 帧的 [155,None,254,300]
+    会把后面 28 帧全部锁死，即使真实值已变成 [240,None,152,150]。
+    跨局时 pet 名字相同（同一只精灵打多局），历史不会因换精灵清空。
+    """
+    print()
+    print("=== 过时淘汰（防止永久锁死）===")
+    st = SkillStabilizer()
+    for _ in range(3):
+        st.update([card(155), None, card(254), card(300)], pet="甲")
+    # 真实值变了，连续喂 5 帧（超过 STALE_LIMIT=4）
+    outs = []
+    for _ in range(6):
+        out = st.update([card(240), None, card(152), card(150)], pet="甲")
+        outs.append(vals(out))
+    check(outs[-1] == [240, None, 152, 150],
+          "第 6 帧放行新值（实际 %s）" % outs[-1])
+
+
 def test_empty_input():
     print()
     print("=== 边界 ===")
@@ -158,6 +179,7 @@ if __name__ == "__main__":
     test_dash_slots()
     test_stabilized_flag()
     test_none_pet_no_reset()
+    test_stale_escape()
     test_empty_input()
     print()
     if FAILS:
