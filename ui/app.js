@@ -1,16 +1,20 @@
 /* ============================================================
-   RocoAgent 对战悬浮窗 · 视觉稿逻辑
+   RocoAgent 对战悬浮窗
    ------------------------------------------------------------
-   数据全是写死的，目的是先把「好看」和「交互手感」敲定。
-   接后端时只需替换 MOCK 与 render()，其余（拖拽/折叠/滑杆）原样保留。
+   两种数据来源，自动降级：
+     1. 机器人推送（ui_server 的 /api/state，新鲜 < 3s）→ 零额外开销
+     2. 自己感知（独立运行，自己抓屏）→ 还没接，先显示空态
 
-   真实版本里这些值从两处来：
-     · 机器人推送（快照新鲜 < 1.5s）→ 零额外截屏开销
-     · 自己感知（独立运行）          → mss 抓三块小区域
+   性能约束：
+     · 10Hz 轮询，只在数据变化时碰 DOM
+     · 无变化时整帧跳过
+     · document.hidden 时完全停止
    ============================================================ */
 'use strict';
 
-// ── 属性 → 颜色（与 DB 的 types.color 同源）
+const API = '';
+
+/* ---------------------------------------------------------------- 属性色 */
 const TYPE_COLOR = {
   普通: '#A8A878', 火: '#F08030', 水: '#6890F0', 草: '#78C850',
   电: '#F8D030', 冰: '#98D8D8', 武: '#C03028', 毒: '#A040A0',
@@ -19,82 +23,21 @@ const TYPE_COLOR = {
   恶: '#705848', 光: '#FFF68F',
 };
 
-// 克制倍率 → 强调色。面板整体色调本身就是情报，不用读字。
+// 克制倍率 → 强调色。面板整体色调本身就是情报。
 const ACCENT = {
-  strong: '#FF6B4A',   // 我打它克制
-  even:   '#7FD3E8',   // 中性
-  weak:   '#5B7FD4',   // 我被压
-};
-
-// ── 三个场景（覆盖真实会遇到的三种局面）
-const MOCK = {
-  A: {
-    accent: 'strong',
-    turn: 12, clock: 8, ms: 4.2,
-    dets: [true, true, true],
-    me:  { name: '寂灭骨龙', types: ['龙'], hp: 78, abs: 382, max: 490,
-           energy: 6, maxEnergy: 10, buffs: [{ t: '物攻 +1', neg: false }] },
-    foe: { name: '水灵', types: ['水'], hp: 45,
-           hpRange: '349~419', defRange: '178~231',
-           nature: '固执', conf: 62, confDots: 3, uncertainty: 0.30 },
-    skills: [
-      { name: '隼鳞',     dmg: 245, pct: 58, el: '龙', cost: 3 },
-      { name: '龙之怒',   dmg: 186, pct: 44, el: '龙', cost: 2 },
-      { name: '碎岩',     dmg: 92,  pct: 22, el: '地', cost: 1 },
-      { name: '龙舞',     dmg: null, note: '强化', el: '龙', cost: 3 },
-    ],
-    verdict: { kill: 2, die: 4, order: '先手', orderGood: true },
-    matchup: { out: 3.0, in: 0.5, tag: '双重克制' },
-  },
-
-  B: {
-    accent: 'even',
-    turn: 7, clock: 13, ms: 4.0,
-    dets: [true, true, true],
-    me:  { name: '音速犬', types: ['火'], hp: 100, abs: 366, max: 366,
-           energy: 8, maxEnergy: 10, buffs: [] },
-    foe: { name: '巨鼓象', types: ['地', '武'], hp: 92,
-           hpRange: '510~612', defRange: '241~312',
-           nature: '—', conf: 18, confDots: 1, uncertainty: 0.62 },
-    skills: [
-      { name: '火云车',   dmg: 121, pct: 21, el: '火', cost: 2 },
-      { name: '力量增效', dmg: null, note: '强化', el: '普通', cost: 1 },
-      { name: '闪击',     dmg: 96,  pct: 17, el: '普通', cost: 1 },
-      { name: '热风',     dmg: 74,  pct: 13, el: '火', cost: 3 },
-    ],
-    verdict: { kill: 5, die: 3, order: '后手', orderGood: false },
-    matchup: { out: 1.0, in: 1.0, tag: '互不克制' },
-  },
-
-  C: {
-    accent: 'weak',
-    turn: 19, clock: 4, ms: 41.7,
-    dets: [true, false, true],
-    me:  { name: '冰钻布鲁斯', types: ['冰'], hp: 23, abs: 79, max: 345,
-           energy: 2, maxEnergy: 10, buffs: [{ t: '物防 −1', neg: true }] },
-    foe: { name: '白金独角兽', types: ['光', '翼'], hp: 61,
-           hpRange: '402~483', defRange: '196~254',
-           nature: '胆小', conf: 84, confDots: 4, uncertainty: 0.14 },
-    skills: [
-      { name: '寒冰箭',   dmg: 48,  pct: 10, el: '冰', cost: 2 },
-      { name: '冰之砾',   dmg: 31,  pct: 6,  el: '冰', cost: 1 },
-      { name: '极寒风暴', dmg: null, note: '能量不足', el: '冰', cost: 4 },
-      { name: '雪之守护', dmg: null, note: '强化', el: '冰', cost: 2 },
-    ],
-    verdict: { kill: 7, die: 1, order: '后手', orderGood: false },
-    matchup: { out: 0.5, in: 3.0, tag: '被双重克制' },
-  },
+  strong: '#FF6B4A',
+  even:   '#7FD3E8',
+  weak:   '#5B7FD4',
 };
 
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
 
 let folded = false;
-let current = 'A';
+let lastSig = '';
+let pollTimer = null;
 
-/* ============================================================
-   工具
-   ============================================================ */
+/* ---------------------------------------------------------------- 工具 */
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
@@ -108,14 +51,14 @@ function setAccent(kind) {
 }
 
 function hpLevel(p) {
+  if (p == null) return 'ok';
   if (p <= 25) return 'low';
   if (p <= 55) return 'mid';
   return 'ok';
 }
 
-// 属性 chip：淡色底 + 属性色字，在游戏画面上也能一眼认出
 function typeChips(el, types) {
-  el.innerHTML = types.map((t) => {
+  el.innerHTML = (types || []).map((t) => {
     const c = TYPE_COLOR[t] || '#8A8F98';
     return `<span class="tchip" style="
       --tc-text:${c};
@@ -131,154 +74,305 @@ function energyPips(n, max) {
   return out;
 }
 
-// 头像：有图用图，没图用属性色方块 + 首字
-// 文件在 assets/portraits{,_foe}/<精灵名>.png，通过 ui/ 下的 junction 暴露给 HTTP
-// 两个目录只是采集来源不同（我方/敌方），头像本身通用，所以互相回退
-function avatar(el, name, types, side) {
-  const t = types[0];
-  const c = TYPE_COLOR[t] || '#8A8F98';
-  el.style.setProperty('--tc', c);
-  el.style.background = hexA(c, 0.20);
+/* 头像限并发加载（120 张同时请求会把服务打满） */
+const IMG_Q = [];
+const IMG_ACTIVE = new Set();
+const IMG_MAX = 4;
 
-  const first = side === 'foe' ? 'portraits_foe' : 'portraits';
-  const second = side === 'foe' ? 'portraits' : 'portraits_foe';
-  const file = encodeURIComponent(name) + '.png';
-
-  const img = new Image();
-  img.alt = '';
-  img.decoding = 'async';
-
-  let tried = 0;
-  img.onload = () => {
-    el.textContent = '';
-    el.replaceChildren(img);
-  };
-  img.onerror = () => {
-    tried += 1;
-    if (tried === 1) {
-      img.src = `${second}/${file}`;     // 换目录再试一次
-      return;
-    }
-    // 两个目录都没有：保留首字占位，这不是错误
-    if (!el.querySelector('img')) el.textContent = name.slice(0, 1);
-  };
-  img.src = `${first}/${file}`;
-
-  if (!el.querySelector('img')) el.textContent = name.slice(0, 1);
+function loadAvatar(el, name, side) {
+  if (!el || !name) return;
+  IMG_Q.push({ el, name, side });
+  pumpImages();
 }
 
+function pumpImages() {
+  while (IMG_ACTIVE.size < IMG_MAX && IMG_Q.length) {
+    runImage(IMG_Q.shift());
+  }
+}
+
+function runImage({ el, name, side }) {
+  const file = encodeURIComponent(name) + '.png';
+  const dirs = side === 'foe'
+    ? ['portraits_foe', 'portraits']
+    : ['portraits', 'portraits_foe'];
+  let idx = 0;
+  const img = new Image();
+  IMG_ACTIVE.add(img);
+
+  const done = () => { IMG_ACTIVE.delete(img); pumpImages(); };
+
+  img.onload = () => { el.textContent = ''; el.replaceChildren(img); done(); };
+  img.onerror = () => {
+    idx += 1;
+    if (idx < dirs.length) { img.src = dirs[idx] + '/' + file; return; }
+    el.textContent = name.slice(0, 1);
+    done();
+  };
+  img.src = dirs[0] + '/' + file;
+}
+
+/* ================================================================
+   渲染
+   ================================================================ */
 function skillTier(s) {
-  if (s.dmg == null) return '';
+  if (s.dmg == null || s.pct == null) return '';
   if (s.pct >= 100) return ' kill hot';
   if (s.pct >= 40) return ' high hot';
   if (s.pct >= 20) return ' mid';
   return '';
 }
 
-/* ============================================================
-   渲染
-   ============================================================ */
-function render(d) {
-  setAccent(d.accent);
-
+function render(st) {
   // ── 系统栏
-  $('sysTurn').textContent = 'T' + d.turn;
+  const sys = st.system || {};
+  const dets = sys.detectors || {};
+  const detArr = [dets.bar, dets.skillbar, dets.countdown];
+
+  $('sysTurn').textContent = st.turn != null ? 'T' + st.turn : 'T—';
+
   const clock = $('sysClock');
-  clock.textContent = String(d.clock).padStart(2, '0') + 's';
-  clock.classList.toggle('urgent', d.clock <= 5);
+  if (st.clock != null) {
+    clock.textContent = String(st.clock).padStart(2, '0') + 's';
+    clock.classList.toggle('urgent', st.clock <= 5);
+  } else if (dets.countdown) {
+    // 机器人只判断"倒计时数字在不在"，不读具体秒数（那要 OCR）。
+    // 不假装有数据，只表示"决策窗口开着"。
+    clock.textContent = '●';
+    clock.classList.remove('urgent');
+  } else {
+    clock.textContent = '';
+    clock.classList.remove('urgent');
+  }
 
   const ms = $('sysMs');
-  ms.textContent = d.ms.toFixed(1) + 'ms';
-  ms.className = 'hdr-ms' + (d.ms > 200 ? ' bad' : d.ms > 50 ? ' warn' : '');
+  if (sys.fps_ms != null) {
+    ms.textContent = sys.fps_ms.toFixed(1) + 'ms';
+    ms.className = 'hdr-ms' + (sys.fps_ms > 200 ? ' bad'
+      : sys.fps_ms > 50 ? ' warn' : '');
+  } else {
+    ms.textContent = '';
+    ms.className = 'hdr-ms';
+  }
 
-  $('sysDets').innerHTML = d.dets
+  $('sysDets').innerHTML = detArr
     .map((on) => `<i class="${on ? 'on' : ''}"></i>`).join('');
 
   const live = $('liveDot');
-  live.className = 'live-dot' + (d.dets.some((x) => x) ? '' : ' off');
+  const anyLive = detArr.some((x) => x);
+  live.className = 'live-dot' + (st._stale ? ' warn' : anyLive ? '' : ' off');
+
+  const stateText = st._stale ? '数据过期'
+    : st.mode === 'battle' ? '战斗中'
+    : st.mode === 'idle' ? '待机'
+    : '未连接';
+  $('sysState').textContent = stateText;
 
   // ── 我方
-  const me = d.me;
-  $('meName').textContent = me.name;
-  avatar($('meAvatar'), me.name, me.types, 'me');
+  const me = st.me || {};
+  $('meName').textContent = me.name || '未知';
+  loadAvatar($('meAvatar'), me.name, 'me');
   typeChips($('meTypes'), me.types);
-  $('mePct').textContent = Math.round(me.hp);
-  $('meAbs').textContent = `${me.abs} / ${me.max}`;
-  $('meEnergy').innerHTML = energyPips(me.energy, me.maxEnergy);
-  $('meBuff').textContent = me.buffs[0] ? me.buffs[0].t : '';
-  $('meBuff').className = 'buff' + (me.buffs[0] && me.buffs[0].neg ? ' neg' : '');
+  $('mePct').textContent = me.hp_pct == null ? '—' : Math.round(me.hp_pct);
+  $('meAbs').textContent = (me.hp_abs != null && me.hp_max != null)
+    ? `${me.hp_abs} / ${me.hp_max}` : '—';
+  $('meEnergy').innerHTML = me.energy != null
+    ? energyPips(me.energy, me.energy_max || 10) : '';
+  const buff0 = (me.buffs || [])[0];
+  $('meBuff').textContent = buff0
+    ? (buff0.name || '') + (buff0.layers ? ' +' + buff0.layers : '') : '';
+  $('meBuff').className = 'buff';
 
-  $('meBar').dataset.lvl = hpLevel(me.hp);
-  root.style.setProperty('--me-p', (me.hp / 100).toFixed(4));
-  root.style.setProperty('--me-g', (Math.min(100, me.hp + 5) / 100).toFixed(4));
+  $('meBar').dataset.lvl = hpLevel(me.hp_pct);
+  const meP = me.hp_pct == null ? 0 : me.hp_pct / 100;
+  root.style.setProperty('--me-p', meP.toFixed(4));
+  root.style.setProperty('--me-g', Math.min(1, meP + 0.05).toFixed(4));
 
-  // ── 敌方
-  const foe = d.foe;
-  $('foeName').textContent = foe.name;
-  avatar($('foeAvatar'), foe.name, foe.types, 'foe');
-  typeChips($('foeTypes'), foe.types);
-  $('foePct').textContent = Math.round(foe.hp);
-  $('foeHpRange').textContent = foe.hpRange;
-  $('foeDefRange').textContent = foe.defRange;
-  $('foeNature').textContent = foe.nature;
-  $('foeConf').textContent = foe.conf + '%';
-
-  $('foeBar').dataset.lvl = hpLevel(foe.hp);
-  root.style.setProperty('--foe-p', (foe.hp / 100).toFixed(4));
-  root.style.setProperty('--foe-g', (Math.min(100, foe.hp + 5) / 100).toFixed(4));
-
-  $('foeDots').innerHTML = Array.from({ length: 5 }, (_, i) =>
-    `<i class="${i < foe.confDots ? 'on' : ''}"></i>`).join('');
-
-  // ── 克制关系
-  if (d.matchup) {
-    const m = d.matchup;
-    $('muOut').textContent = '×' + m.out.toFixed(1);
-    $('muIn').textContent = '×' + m.in.toFixed(1);
-    $('muOut').parentElement.className = 'mu-side' + (m.out > 1 ? ' good' : m.out < 1 ? ' bad' : '');
-    $('muIn').parentElement.className = 'mu-side' + (m.in > 1 ? ' bad' : m.in < 1 ? ' good' : '');
+  // ── 克制
+  if (st.matchup) {
+    const m = st.matchup;
+    $('muOut').textContent = '×' + Number(m.out).toFixed(1);
+    $('muIn').textContent = '×' + Number(m.in).toFixed(1);
+    $('muOut').parentElement.className =
+      'mu-side' + (m.out > 1 ? ' good' : m.out < 1 ? ' bad' : '');
+    $('muIn').parentElement.className =
+      'mu-side' + (m.in > 1 ? ' bad' : m.in < 1 ? ' good' : '');
     const tag = $('muTag');
-    tag.textContent = m.tag;
+    tag.textContent = m.tag || '';
     tag.className = 'mu-tag' + (m.out > m.in ? ' good' : m.out < m.in ? ' bad' : '');
+  } else {
+    $('muOut').textContent = '×—';
+    $('muIn').textContent = '×—';
+    $('muTag').textContent = '属性未知';
+    $('muTag').className = 'mu-tag';
   }
 
-  // ── 技能（两行式：名字/伤害一行，伤害条全宽第二行）
+  // 强调色：由克制关系推出来
+  if (st.matchup) {
+    setAccent(st.matchup.out > st.matchup.in ? 'strong'
+      : st.matchup.out < st.matchup.in ? 'weak' : 'even');
+  } else {
+    setAccent('even');
+  }
+
+  // ── 敌方
+  const foe = st.foe || {};
+  $('foeName').textContent = foe.name || '未知';
+  loadAvatar($('foeAvatar'), foe.name, 'foe');
+  typeChips($('foeTypes'), foe.types);
+  $('foePct').textContent = foe.hp_pct == null ? '—' : Math.round(foe.hp_pct);
+  $('foeHpRange').textContent = foe.hp_range
+    ? `${foe.hp_range[0]}~${foe.hp_range[1]}` : '—';
+  $('foeDefRange').textContent = foe.def_range
+    ? `${foe.def_range[0]}~${foe.def_range[1]}` : '—';
+  $('foeNature').textContent = foe.nature || '—';
+  $('foeConf').textContent = foe.nature_conf != null
+    ? Math.round(foe.nature_conf * 100) + '%' : '';
+
+  $('foeBar').dataset.lvl = hpLevel(foe.hp_pct);
+  const foeP = foe.hp_pct == null ? 0 : foe.hp_pct / 100;
+  root.style.setProperty('--foe-p', foeP.toFixed(4));
+  root.style.setProperty('--foe-g', Math.min(1, foeP + 0.05).toFixed(4));
+
+  // 推测置信度点阵（0~5 格）
+  const conf = foe.nature_conf == null ? 0 : Math.round(foe.nature_conf * 5);
+  $('foeDots').innerHTML = Array.from({ length: 5 }, (_, i) =>
+    `<i class="${i < conf ? 'on' : ''}"></i>`).join('');
+
+  // ── 技能
   const wrap = $('skills');
   wrap.innerHTML = '';
-  d.skills.forEach((s, i) => {
+  (st.skills || []).forEach((s, i) => {
     const na = s.dmg == null;
     const row = document.createElement('div');
     row.className = 'skill' + (na ? ' na' : '') + skillTier(s);
-    row.style.setProperty('--w', na ? 0 : Math.min(1, s.pct / 100).toFixed(4));
+    row.style.setProperty('--w', na || s.pct == null ? 0
+      : Math.min(1, s.pct / 100).toFixed(4));
+
+    const meta = [s.element, s.cost != null ? s.cost : null]
+      .filter((x) => x != null).join('·');
 
     row.innerHTML = `
-      <span class="sk-idx">${i + 1}</span>
-      <span class="sk-name">${s.name}<span class="sk-meta">${s.el}·${s.cost}</span></span>
+      <span class="sk-idx">${s.i != null ? s.i : i + 1}</span>
+      <span class="sk-name">${s.name || '—'}${
+        meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>
       <span class="sk-dmg">${na ? '—' : s.dmg}</span>
-      <span class="sk-pct">${na ? (s.note || '—') : s.pct + '%'}</span>
+      <span class="sk-pct">${na ? (s.note || '—')
+        : (s.pct != null ? Math.round(s.pct) + '%' : '—')}</span>
       <span class="sk-bar"><i></i></span>
     `;
     wrap.appendChild(row);
   });
 
+  // 没有技能数据时给个占位
+  if (!(st.skills || []).length) {
+    wrap.innerHTML = `<div class="empty-skills">技能栏未识别</div>`;
+  }
+
   // ── 结论
-  const v = d.verdict;
-  $('vKill').textContent = v.kill;
-  $('vDie').textContent = v.die;
-  const order = $('vOrder');
-  order.textContent = v.order;
-  order.className = v.orderGood ? 'good' : 'bad';
+  const v = st.verdict;
+  if (v) {
+    $('vKill').textContent = v.kill_turns != null ? v.kill_turns : '—';
+    $('vDie').textContent = v.die_turns != null ? v.die_turns : '—';
+    const order = $('vOrder');
+    order.textContent = v.order === 'first' ? '先手'
+      : v.order === 'second' ? '后手' : '—';
+    order.className = v.order === 'first' ? 'good' : 'bad';
+  } else {
+    $('vKill').textContent = '—';
+    $('vDie').textContent = '—';
+    $('vOrder').textContent = '—';
+    $('vOrder').className = '';
+  }
 }
 
-/* ============================================================
-   交互
-   ============================================================ */
+/* ================================================================
+   数据轮询
+   ================================================================ */
+async function poll() {
+  if (document.hidden) return;
+  let st;
+  try {
+    const r = await fetch(API + '/api/state', { cache: 'no-store' });
+    st = await r.json();
+  } catch (e) {
+    $('sysState').textContent = '服务未连接';
+    $('liveDot').className = 'live-dot off';
+    return;
+  }
 
-// 透明度：只改面板底色 alpha。文字带描边，所以拉到 20% 仍然可读
-// （实测：alpha 0.20 时主信息对比度 10.65:1，见 ui/compose_test.py）
-//
-// 但图形元素（血条底槽、分隔线）没有描边，会跟着面板一起消失。
-// 所以给它们一个不透明度下限：面板 20% 时它们仍有 55% 的相对强度。
+  if (!st) {
+    // 机器人没跑：显示空态，但保留布局不跳动
+    renderEmpty();
+    return;
+  }
+
+  // 无变化就不碰 DOM —— 这是 10Hz 下不卡的关键
+  const sig = [
+    st.seq, st.turn, st.clock,
+    st.me && st.me.hp_pct, st.me && st.me.energy,
+    st.foe && st.foe.hp_pct, st.foe && st.foe.name,
+    (st.skills || []).map((s) => `${s.dmg}|${s.pct}|${s.name}`).join(','),
+    st._stale,
+  ].join('|');
+  if (sig === lastSig) return;
+  lastSig = sig;
+
+  render(st);
+}
+
+function renderEmpty() {
+  const sig = 'empty';
+  if (sig === lastSig) return;
+  lastSig = sig;
+
+  $('sysState').textContent = '未连接';
+  $('liveDot').className = 'live-dot off';
+  $('sysTurn').textContent = 'T—';
+  $('sysClock').textContent = '';
+  $('sysMs').textContent = '';
+  $('sysDets').innerHTML = '<i></i><i></i><i></i>';
+
+  $('meName').textContent = '等待连接';
+  $('mePct').textContent = '—';
+  $('meAbs').textContent = '—';
+  $('meTypes').innerHTML = '';
+  $('meEnergy').innerHTML = '';
+  $('meBuff').textContent = '';
+  root.style.setProperty('--me-p', '0');
+  root.style.setProperty('--me-g', '0');
+
+  $('foeName').textContent = '等待连接';
+  $('foePct').textContent = '—';
+  $('foeTypes').innerHTML = '';
+  $('foeHpRange').textContent = '—';
+  $('foeDefRange').textContent = '—';
+  $('foeNature').textContent = '—';
+  $('foeConf').textContent = '';
+  $('foeDots').innerHTML = '<i></i><i></i><i></i><i></i><i></i>';
+  root.style.setProperty('--foe-p', '0');
+  root.style.setProperty('--foe-g', '0');
+
+  $('muOut').textContent = '×—';
+  $('muIn').textContent = '×—';
+  $('muTag').textContent = '等待连接';
+  $('muTag').className = 'mu-tag';
+
+  $('skills').innerHTML =
+    `<div class="empty-skills">启动机器人后这里显示四张技能卡</div>`;
+  $('vKill').textContent = '—';
+  $('vDie').textContent = '—';
+  $('vOrder').textContent = '—';
+
+  setAccent('even');
+}
+
+/* ================================================================
+   交互
+   ================================================================ */
+
+// 透明度：只改面板底色 alpha。文字带描边，20% 仍可读。
+// 图形元素（血条底槽/边框）有下限补偿 —— 它们没有描边，会跟着面板消失。
 function bindAlpha() {
   const slider = $('alpha');
   const label = $('alphaVal');
@@ -288,16 +382,23 @@ function bindAlpha() {
     root.style.setProperty('--alpha', a.toFixed(2));
     label.textContent = v + '%';
 
-    // 图形元素的下限补偿：alpha 越低，它们相对越不透明
-    // 边框尤其重要 —— 面板 20% 时如果边框也消失，用户分不清面板和游戏画面
     const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
     root.style.setProperty('--well-a', (0.34 * boost).toFixed(3));
     root.style.setProperty('--line-a', (0.085 * boost).toFixed(3));
     root.style.setProperty('--line-soft-a', (0.045 * boost).toFixed(3));
-    root.style.setProperty('--edge-a', (0.10 * boost + (1 - a) * 0.10).toFixed(3));
+    root.style.setProperty('--edge-a',
+      (0.10 * boost + (1 - a) * 0.10).toFixed(3));
     root.style.setProperty('--edge-hi-a', (0.11 * boost).toFixed(3));
+
+    try { localStorage.setItem('overlay.alpha', String(v)); } catch (_) {}
   };
   slider.addEventListener('input', apply);
+
+  // 恢复上次的设置
+  try {
+    const saved = localStorage.getItem('overlay.alpha');
+    if (saved) slider.value = saved;
+  } catch (_) {}
   apply();
 }
 
@@ -311,13 +412,13 @@ function bindDrawer() {
   });
 }
 
-// 点击穿透（视觉稿只切状态，正式版走 WS_EX_TRANSPARENT）
 function bindPass() {
   const btn = $('btnPass');
   btn.addEventListener('click', () => {
     const on = btn.getAttribute('aria-pressed') !== 'true';
     btn.setAttribute('aria-pressed', String(on));
-    document.body.classList.toggle('pass-through', on);
+    // 正式版：这里调用窗口壳切 WS_EX_TRANSPARENT
+    window.__rocoPassThrough = on;
   });
 }
 
@@ -330,15 +431,19 @@ function bindFold() {
     folded = !folded;
     overlay.classList.toggle('folded', folded);
     btnFold.textContent = folded ? '展开' : '折叠';
+    try { localStorage.setItem('overlay.folded', folded ? '1' : '0'); } catch (_) {}
   };
   hdr.addEventListener('dblclick', (e) => {
     if (e.target.closest('button')) return;
     toggle();
   });
   btnFold.addEventListener('click', toggle);
+
+  try {
+    if (localStorage.getItem('overlay.folded') === '1') toggle();
+  } catch (_) {}
 }
 
-// 拖拽：只有标题栏可拖，避免调滑杆时误拖整个窗口
 function bindDrag() {
   const overlay = $('overlay');
   const hdr = $('hdr');
@@ -369,42 +474,45 @@ function bindDrag() {
     dragging = false;
     overlay.classList.remove('dragging');
     try { hdr.releasePointerCapture(e.pointerId); } catch (_) {}
+    try {
+      localStorage.setItem('overlay.pos',
+        overlay.style.left + ',' + overlay.style.top);
+    } catch (_) {}
   };
   hdr.addEventListener('pointerup', end);
   hdr.addEventListener('pointercancel', end);
+
+  // 恢复上次位置
+  try {
+    const pos = localStorage.getItem('overlay.pos');
+    if (pos) {
+      const [l, t] = pos.split(',');
+      overlay.style.left = l;
+      overlay.style.top = t;
+    }
+  } catch (_) {}
 }
 
-function bindScenarios() {
-  document.querySelectorAll('.demo-scen button').forEach((b) => {
-    b.addEventListener('click', () => {
-      document.querySelectorAll('.demo-scen button')
-        .forEach((x) => x.classList.remove('active'));
-      b.classList.add('active');
-      current = b.dataset.scenario;
-      render(MOCK[current]);
-    });
-  });
-}
-
-// 模拟血量跳动，验证补间是否顺滑
-function bindPulse() {
-  setInterval(() => {
-    if (current !== 'A') return;
-    const me = MOCK.A.me;
-    me.hp = Math.max(70, Math.min(85, me.hp + (Math.random() - 0.5) * 6));
-    me.abs = Math.round(me.max * me.hp / 100);
-    render(MOCK.A);
-  }, 2600);
-}
-
-/* ============================================================ */
+/* ================================================================ */
 document.addEventListener('DOMContentLoaded', () => {
-  render(MOCK.A);
   bindAlpha();
   bindDrawer();
   bindPass();
   bindFold();
   bindDrag();
-  bindScenarios();
-  bindPulse();
+
+  renderEmpty();
+  poll();
+  pollTimer = setInterval(poll, 100);
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      clearInterval(pollTimer);
+      pollTimer = null;
+    } else if (!pollTimer) {
+      lastSig = '';
+      poll();
+      pollTimer = setInterval(poll, 100);
+    }
+  });
 });

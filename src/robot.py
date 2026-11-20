@@ -466,6 +466,7 @@ class Bot:
             # A perception exception used to kill the process (rc=1, no traceback
             # in the log, supervisor restart mid-match). One bad frame must not
             # end the run: log it, back off, keep polling.
+            _obs_t0 = time.time()
             try:
                 st = self.perc.observe()
             except Exception as e:
@@ -479,6 +480,8 @@ class Bot:
                 continue
             self.last_state = st
             now = time.time()
+            # 感知耗时：系统栏最有用的指标（>50ms 变黄，>200ms 变红）
+            self.last_obs_ms = round((now - _obs_t0) * 1000.0, 1)
             # 把这一帧导出给前端（悬浮窗/控制台）。失败不影响主循环。
             self._publish_state(st, now)
 
@@ -686,6 +689,8 @@ class Bot:
         try:
             my_name = self.my_name or self.active_pet
             foe_name = self.foe_name
+            me_pct = st.get("my_pct")
+            foe_pct = st.get("foe_pct")
 
             # 血量：百分比来自视觉，绝对值需要 max_hp
             my_max = None
@@ -776,6 +781,43 @@ class Bot:
                 except Exception:
                     pass
 
+            # 结论：几回合能杀 / 几回合会死 / 先后手
+            verdict = None
+            try:
+                if my_name and foe_name and me_pct is not None and foe_pct is not None:
+                    import pvp_engine as E
+                    # 我的最强一击 vs 对面剩余血量
+                    my_best = E.best_damage_from(my_name, foe_name)
+                    foe_hp_now = None
+                    if hp_range:
+                        foe_hp_now = sum(hp_range) / 2.0 * (foe_pct / 100.0)
+                    kill_turns = None
+                    if my_best and foe_hp_now:
+                        kill_turns = max(1, int(-(-foe_hp_now // my_best)))
+                    # 对面的最强一击 vs 我的剩余血量
+                    inc = E.worst_incoming(foe_name, my_name, top=1)
+                    die_turns = None
+                    if inc and my_abs:
+                        die_turns = max(1, int(-(-my_abs // inc[0]["dmg"])))
+                    # 先后手：比速度
+                    order = None
+                    try:
+                        me_row = E._db_species(my_name)
+                        foe_row = E._db_species(foe_name)
+                        if me_row and foe_row:
+                            ms = E._num(me_row.get("spe"))
+                            fs = E._num(foe_row.get("spe"))
+                            if ms and fs:
+                                order = "first" if ms >= fs else "second"
+                    except Exception:
+                        pass
+                    if kill_turns or die_turns or order:
+                        verdict = {"kill_turns": kill_turns,
+                                   "die_turns": die_turns,
+                                   "order": order}
+            except Exception:
+                verdict = None
+
             # 系统指标
             detectors = {
                 "bar": bool(st.get("bar")),
@@ -795,17 +837,18 @@ class Bot:
                 mode="battle" if st.get("battle") else "idle",
                 me=LS.me_block(
                     name=my_name, types=my_types,
-                    hp_pct=st.get("my_pct"), hp_abs=my_abs, hp_max=my_max,
+                    hp_pct=me_pct, hp_abs=my_abs, hp_max=my_max,
                     energy=st.get("energy"),
                     energy_max=10,
                 ),
                 foe=LS.foe_block(
                     name=foe_name, types=foe_types,
-                    hp_pct=st.get("foe_pct"),
+                    hp_pct=foe_pct,
                     hp_range=hp_range, def_range=def_range,
                 ),
                 skills=skills,
                 matchup=matchup,
+                verdict=verdict,
                 system=system,
             )
             LS.publish(state)

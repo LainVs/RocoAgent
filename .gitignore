@@ -53,3 +53,7 @@ board.json
 
 # 对面头像模板：之前被 *.png 规则误排除，导致 71 张模板从未入库
 !assets/portraits_foe/*.png
+
+# live state (runtime artifact, written every frame by robot)
+logs/live_state.json
+logs/live_state.json.tmp

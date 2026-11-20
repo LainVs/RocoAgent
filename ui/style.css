@@ -821,6 +821,15 @@ input[type="range"]::-webkit-slider-thumb {
 .overlay.folded .side .bar { grid-area: bar; height: 6px; }
 .overlay.folded .side-head { margin-bottom: 0; }
 
+/* ── 空状态 ─────────────────────────────────────────── */
+.empty-skills {
+  padding: 22px 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-3);
+  text-shadow: var(--halo);
+}
+
 /* ── 拖动时提升层级 ─────────────────────────────────── */
 .overlay.dragging .panel {
   box-shadow: 0 22px 52px -16px rgba(0, 0, 0, 0.86);
