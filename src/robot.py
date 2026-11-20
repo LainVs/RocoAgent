@@ -844,14 +844,26 @@ class Bot:
                                       target=(box[2] - 2 * m, box[3] - 2 * m))
         # ---- 第二通道：角色立绘 ONNX 识别（roco-cal 模型，620 类）
         # HUD 头像只有 71 张模板，覆盖面极低；立绘模型实测置信度 0.76~1.00。
-        # 两个通道都跑，由 identify_fused 融合（HUD 高置信优先，否则用立绘）。
+        # 两个通道都跑，由 identify_fused 融合。
+        #
+        # 防抖：立绘框里会混入背景和 NPC，相邻帧可能给出不同答案
+        # （实测 01:12 连续给出 绿草精灵/白瑟/燃薪虫）。所以要求
+        # "连续 2 帧同一答案 + 高置信" 才覆盖 HUD。
         p_res = []
         if portrait_onnx.available():
             try:
                 p_res = portrait_onnx.predict_region(self.screen, "foe")
             except Exception as e:
                 log("FOE -> onnx failed: %s: %s" % (type(e).__name__, e))
-        fused = portrait_onnx.identify_fused(name, p_res, sc)
+        p_name = p_res[0][0] if p_res else None
+        if p_name and p_name == getattr(self, "_p_last", None):
+            self._p_stable = getattr(self, "_p_stable", 0) + 1
+        else:
+            self._p_last = p_name
+            self._p_stable = 1
+        fused = portrait_onnx.identify_fused(
+            name, p_res, sc,
+            prev=self.foe_name, stable_count=self._p_stable)
         if fused["conflict"]:
             log("FOE -> id conflict hud=%s(%.2f) portrait=%s(%.2f) -> use %s"
                 % (fused["hud"], fused["hud_conf"],
@@ -1048,10 +1060,6 @@ class Bot:
         if not data:
             log("FOE SCAN -> no panel (%.1fs)" % dt)
             return False
-        log("FOE SCAN -> %s lv%s 特性=%s 属性=%s 技能=%s (%.1fs)"
-            % (data.get("name"), data.get("level"), data.get("ability"),
-               data.get("types") or ("?(%s)" % data.get("types_how")),
-               data.get("skill"), dt))
         # 名字读不到但特性定出了物种：把物种名补回来，后面的伤害计算才有输入。
         # 原实现有两个 bug：
         #   1. 调用了 gamedb.species()，但这个函数根本不存在（gamedb 只有
@@ -1059,11 +1067,12 @@ class Bot:
         #   2. 只在 species_id 已有时才补名字，而 species_id 恰恰经常是 None
         #      （特性有 2 个以上候选时 foe_panel 不敢定物种）
         # 现在改成：species_id 为空但候选里的名字一致时，就采用那个名字。
+        # 注意顺序：**先补名字再打日志**，否则日志会出现
+        # "FOE SCAN -> None ... / name from trait: 叮叮卯" 这种自相矛盾的两行。
         if not data.get("name"):
             name = self._name_from_trait(data)
             if name:
                 data["name"] = name
-                log("FOE SCAN -> name from trait: %s" % name)
 
         # 属性兜底：严格结果 types 为 None 时用 best_types（默认猜测），
         # 并记下置信度，方便事后人工修正。用户口径：宁可按默认算，
@@ -1074,10 +1083,16 @@ class Bot:
         if not strict and best:
             data["types"] = best
             data["types_how"] = data.get("best_how") or "guess"
-            log("FOE SCAN -> types guessed %s (conf=%s, %d candidates)"
-                % (best, conf, len(data.get("trait_candidates") or [])))
             self._log_trait_guess(data, best, conf)
         data["types_conf"] = conf
+
+        # 汇总成一行，含"名字是怎么来的"
+        how = ""
+        if data.get("name") and data.get("ability"):
+            how = " (name<-trait)" if not data.get("level") else ""
+        log("FOE SCAN -> %s%s 特性=%s 属性=%s(conf=%s) 技能=%s (%.1fs)"
+            % (data.get("name") or "?", how, data.get("ability"),
+               data.get("types") or "?", conf, data.get("skill"), dt))
 
         if data.get("name"):
             self.foe_name = data["name"]
@@ -1439,6 +1454,16 @@ class Bot:
         mp = st.get("my_pct")
         return mp is not None and mp <= 0.5
 
+    def _has_healthy_bench(self, thresh=50.0):
+        """后排还有没有能打的（血量 > thresh，或从没上过场）。"""
+        for s in (1, 2, 3, 4, 5, 6):
+            if s == self.cur_slot:
+                continue
+            hp = self.slot_hp.get(s)
+            if hp is None or hp > thresh:
+                return True
+        return False
+
     def _switch_advice(self, st):
         """该不该换人。返回 (slot, reason) 或 None。
 
@@ -1519,8 +1544,26 @@ class Bot:
             if lives < 2:
                 return None
 
+            # ③ 刚换过：连换两回合等于把一只只精灵喂给对面。
+            #    实测 01:13:37 就是这个：T6 在 9.8% 换到 4 号，T7 立刻又换 5 号，
+            #    新上来的还没出过手就又被换掉，白白浪费两个回合。
+            if self.turn - getattr(self, "last_switch_turn", -99) <= 1:
+                log("SWITCH hold: 上一回合刚换过，让新上来的先打完一手")
+                return None
+
+            # ② 必死就送掉，不要换。
+            #    换人要花掉这一回合 —— 对面白打一下换上的新精灵，
+            #    新精灵也掉血，下回合又要换，这就是"残血→换→残血"的死循环。
+            #    这只反正要倒，让它倒：游戏会给一次免费换人（不计回合），
+            #    等于用一只必死的精灵换掉对面这一手，还白赚一个满血入场。
+            #    只有后排已经没有能打的（会直接崩盘）时才继续换。
             if lethal:
-                return bench, "会被秒（它最凶一击 >= 我当前血）"
+                if self._has_healthy_bench(50.0):
+                    log("SWITCH hold: 必死就送掉（%.0f%% 血，后排还有健康的）"
+                        % (st.get("my_pct") or 0))
+                    return None
+                return bench, "会被秒且后排没有健康的（只能抢一手）"
+
             if ratio < 0.15:
                 return bench, "打不动（%.0f%% 血/手）" % (ratio * 100)
             if resisted and ratio < 0.35:

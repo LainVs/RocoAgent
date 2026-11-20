@@ -186,40 +186,61 @@ def predict_region(screen, side="foe", topk=3):
 
 # ------------------------------------------------------------------ 双通道融合
 
-def identify_fused(hud_result, portrait_result, hud_conf=0.0):
+def identify_fused(hud_result, portrait_result, hud_conf=0.0,
+                   prev=None, stable_count=0):
     """融合 HUD 头像通道与立绘通道的结果。
 
     hud_result      : portraits.identify() 返回的名字或 None
     portrait_result : predict_region() 返回的 [(name, conf), ...]
     hud_conf        : HUD 通道的相似度分（0~1）
+    prev            : 当前已认定的名字（防抖用）
+    stable_count    : 立绘通道连续给出同一答案的次数
 
-    规则（用户口径：两个都用）：
-      1. HUD 高置信(>=0.90) -> 直接用
-      2. 否则立绘有结果且置信 >=0.50 -> 用立绘
-      3. 两者都有但冲突 -> 用立绘，并返回 conflict=True 供上层记录
-      4. 都不可用 -> None
+    实测教训（2026-11-21 01:12）
+    ---------------------------
+    原策略"立绘 >=0.50 就覆盖 HUD"导致每 2 秒抖动：
+        FOE -> 绿草精灵(0.83, 立绘) -> 白瑟(0.72) -> 燃薪虫(0.96) ...
+    因为立绘框里混了背景和 NPC，模型在相邻帧给出不同答案。
+    foe_name 一直变，决策全错。
+
+    新策略（稳定优先）
+    -----------------
+      1. HUD 置信 >=0.72 -> 用 HUD（游戏自己的名字最可信）
+      2. 立绘置信 >=0.85 且连续 2 帧同一答案 -> 才覆盖 HUD
+      3. 已有认定(prev) 时，只有新答案置信显著更高(>=0.90)才改
+      4. 都不满足 -> 保持 prev 不变（绝不抖）
     """
     top = portrait_result[0] if portrait_result else (None, 0.0)
     p_name, p_conf = top
     out = {"name": None, "conf": 0.0, "source": None, "conflict": False,
            "hud": hud_result, "hud_conf": round(hud_conf, 3),
-           "portrait": p_name, "portrait_conf": round(p_conf, 3)}
+           "portrait": p_name, "portrait_conf": round(p_conf, 3),
+           "kept": False}
 
-    if hud_result and hud_conf >= 0.90:
+    # 1. HUD 够可信，直接用（游戏显示的名字优先）
+    if hud_result and hud_conf >= 0.72:
         out.update(name=hud_result, conf=hud_conf, source="hud")
-        if p_name and p_name != hud_result and p_conf >= 0.50:
+        if p_name and p_name != hud_result and p_conf >= 0.85:
             out["conflict"] = True
         return out
 
-    if p_name and p_conf >= 0.50:
+    # 2. 立绘要"高置信 + 稳定"才敢用
+    if p_name and p_conf >= 0.85 and stable_count >= 2:
+        # 3. 已有认定时，除非显著更高，否则不改
+        if prev and prev != p_name and p_conf < 0.90:
+            out.update(name=prev, conf=0.0, source="kept", kept=True)
+            return out
         out.update(name=p_name, conf=p_conf, source="portrait")
         if hud_result and hud_result != p_name:
             out["conflict"] = True
         return out
 
+    # 4. 都不满足 -> 保持原判，绝不抖
+    if prev:
+        out.update(name=prev, conf=0.0, source="kept", kept=True)
+        return out
     if hud_result:
         out.update(name=hud_result, conf=hud_conf, source="hud-low")
-        return out
     return out
 
 
