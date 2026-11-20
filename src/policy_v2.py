@@ -148,6 +148,38 @@ def decide(state):
 
     cands = []
 
+    # ---- 必死保护：这回合一定会死，且换人/治疗能活 -------------------
+    #
+    # 实测（2026-11-21 03:20 T27）：我血 66/366（18%），对面 367，
+    # 承受 128 伤害必死，策略仍然选了攻击（score 0.0914）。
+    # 这是致命缺陷：明知会死还打，等于白送一只精灵。
+    #
+    # 判据：承受伤害 >= 当前血 -> 这回合会死。
+    #
+    # 速度相同也要算"可能后手"：实测音速犬和火羽速度都是 225，
+    # we_outspeed 判成 True，于是"必死保护"没触发，机器人拿 66 血
+    # 硬吃 128 伤害。速度相同时谁先手由游戏决定，保守起来更安全。
+    dying_this_turn = inc >= my_hp
+    if dying_this_turn:
+        # 换人：新精灵能扛住这一击才算有效
+        for slot, pet in enumerate(bench or [], start=1):
+            if not pet.get("name") or pet.get("hp", 0) <= 0:
+                continue
+            inc_new, _src = _incoming(foe_name, pet["name"],
+                                      pet.get("hp_max") or 1)
+            if inc_new < pet.get("hp", 0):
+                return (("switch", slot),
+                        "dying this turn (%d hp vs %d incoming) -> "
+                        "switch to %s which survives"
+                        % (my_hp, inc, pet["name"]), {})
+        # 没有能活的替补：优先选"能反杀"的攻击（死前换掉对面）
+        for s in me.get("skills") or []:
+            if s.get("kind") != "num" or not s.get("lit", True):
+                continue
+            if (s.get("dmg") or 0) >= foe_hp:
+                return (("skill", s["i"]),
+                        "dying but can trade: %d dmg kills foe" % s["dmg"], {})
+
     # ---- damaging skills -------------------------------------------------
     for s in me.get("skills") or []:
         if s.get("kind") != "num" or not s.get("lit", True):
