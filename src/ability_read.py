@@ -101,8 +101,12 @@ def read_ability(screen, vocab=None, dump=None):
     badge = find_badge(img)
     if badge is not None:
         x, y, w, h = badge
-        y0 = max(0, y - 30)
-        y1 = min(hh, y + h + 50)
+        # 横带只取"标签那一行"：标签顶部 -10 到 底部 +18。
+        # 实测（01:22 的嗜波螺面板）原来用 y-30..y+h+50 会把下面的
+        # 技能行（'热砂 对敌方精灵造成魔法伤害'）也带进来，
+        # 结果把技能名当成了特性。
+        y0 = max(0, y - 10)
+        y1 = min(hh, y + h + 18)
         # 名字在标签右边长一点：长特性名（'恶魔的晚宴'）要 200px 以上，
         # 面板整体右移时再从 x 推算，别写死。
         x1 = min(ww, max(420, x + w + 260))

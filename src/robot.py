@@ -885,17 +885,38 @@ class Bot:
                         self.foe_species_id = row[0]
                 except Exception:
                     pass
-        # 对面换人：HUD 头像会变。用 12x12 灰度粗指纹判断，光照/抖动不会
-        # 越过阈值，但换一只精灵一定越得过去。?
+        # 对面换人检测
+        #
+        # 原来靠 12x12 灰度指纹 + 阈值 14，实测**同一只精灵的帧间距离
+        # 高达 27.6**（动画/受击闪烁/光效），于是每帧都判成"换人"，
+        # 日志被 "FOE -> new bust (switch?)" 刷屏，foe_name 反复被清空。
+        #
+        # 新判据（名字优先，指纹只做兜底）：
+        #   1. HUD 认出的名字变了 -> 确定换人
+        #   2. 名字都读不到时，指纹距离 > 32（远高于实测最大 27.6）才算
         sig = _bust_sig(img)
+        hud_name = self._portrait_species(name, "foe") if name else None
         if self.foe_sig is None:
             self.foe_sig = sig
             self.foe_sig_at = now
-        elif _sig_dist(sig, self.foe_sig) > 14.0:
-            # 连续两帧都对不上才算换人：受击闪，?镜头推拉只影响一帧。?
+            self._foe_name_seen = hud_name
+        elif hud_name and self._foe_name_seen and hud_name != self._foe_name_seen:
+            log("FOE -> new bust (name %s -> %s)"
+                % (self._foe_name_seen, hud_name))
+            self.foe_sig = sig
+            self.foe_sig_at = now
+            self._foe_name_seen = hud_name
+            self.foe_name = None
+            self.foe_types = None
+            self.foe_species_id = None
+            self.foe_bust = None
+            self._foe_sig_streak = 0
+        elif not hud_name and _sig_dist(sig, self.foe_sig) > 32.0:
+            # 名字读不到时才看指纹，且阈值远高于实测噪声上限
             self._foe_sig_streak = getattr(self, "_foe_sig_streak", 0) + 1
-            if self._foe_sig_streak >= 2:
-                log("FOE -> new bust (switch?)")
+            if self._foe_sig_streak >= 3:
+                log("FOE -> new bust (sig only, dist=%.0f)"
+                    % _sig_dist(sig, self.foe_sig))
                 self.foe_sig = sig
                 self.foe_sig_at = now
                 self.foe_name = None
@@ -905,6 +926,8 @@ class Bot:
                 self._foe_sig_streak = 0
         else:
             self._foe_sig_streak = 0
+            if hud_name:
+                self._foe_name_seen = hud_name
         if name is not None and sc >= 0.60 and (margin if 'margin' in dir() else 1.0) >= 0.06:
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
@@ -1787,6 +1810,27 @@ class Bot:
         return False
 
     def _battle_tick(self, st, now):
+        # ---- 面板卡死逃生（最高优先级）
+        #
+        # 实测（2026-11-21 01:22）：特性面板关不干净，机器人卡在对战里
+        # 好几分钟，技能栏一直不出现，用户看到的就是"机器人不动了"。
+        # 这是最后一道保险：战斗中发现面板还开着超过 3 秒，直接 ESC。
+        try:
+            if st.get("battle"):
+                import foe_panel as _fp
+                if _fp.is_open(self.screen):
+                    if getattr(self, "_panel_stuck_at", None) is None:
+                        self._panel_stuck_at = now
+                    elif now - self._panel_stuck_at > 3.0:
+                        log("PANEL STUCK %.0fs -> forcing ESC"
+                            % (now - self._panel_stuck_at))
+                        self.send_key("esc", allow_focus_click=False)
+                        self._panel_stuck_at = now
+                else:
+                    self._panel_stuck_at = None
+        except Exception:
+            pass
+
         # ---- 辅助模式：我只在"回合快超，?时兜底放一个---------------------
         # 用来让我（或你）?computeruse 亲自打，机器人只防止超时。?
         # 同时，?如果交给它，它想按哪，?打进日志，形成对照数据。?

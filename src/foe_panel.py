@@ -102,6 +102,21 @@ def is_open(screen):
     return False
 
 
+def panel_gone(screen, timeout=2.0):
+    """等面板真的消失（最多 timeout 秒）。返回是否已关掉。
+
+    比 is_open 更宽松：不仅看 PANEL_BOX，还看整屏是否还有"大面积奶白卡片"。
+    实测面板有时会滑出 PANEL_BOX 范围，只看一块会漏判。
+    """
+    import time
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not is_open(screen):
+            return True
+        time.sleep(0.15)
+    return not is_open(screen)
+
+
 def open_panel(screen, click=None, session=None):
     """点对面头像，等面板出来。返回是否成功。
 
@@ -169,11 +184,24 @@ def close_panel(screen=None, click=None, esc=None, session=None):
     if screen is not None:
         if not is_open(screen):
             return
-        px, py = screen.phys_client(*PANEL_CLOSE_CLICK)
-        _click(px, py)
-        time.sleep(0.35)
-        if not is_open(screen):
-            return
+        # 最多试 4 轮：点空白 -> ESC -> 点空白 -> ESC，每轮都等面板真的消失。
+        # 实测（01:22 嗜波螺那次）只点一次 + 一次 ESC 关不掉，
+        # 面板挂着时机器人卡在对战里，之后 record.read 点到的是这个面板。
+        for attempt in range(4):
+            px, py = screen.phys_client(*PANEL_CLOSE_CLICK)
+            _click(px, py)
+            if panel_gone(screen, timeout=0.8):
+                return
+            _esc()
+            if panel_gone(screen, timeout=0.8):
+                return
+        # 4 轮都没关掉：再补两次 ESC + 长等待（面板可能有退出动画）
+        for _ in range(2):
+            _esc()
+            if panel_gone(screen, timeout=1.2):
+                return
+        _log("FOE PANEL close FAILED after 6 attempts - panel still open")
+        return
     _esc()
 
 
