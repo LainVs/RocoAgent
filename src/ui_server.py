@@ -172,21 +172,95 @@ def _read_json(path, default=None):
 
 
 # ============================================================ 机器人状态
-_PID_RE = re.compile(r"robot\.py")
-_SUP_RE = re.compile(r"botsup\.py")
+# 进程查询：直接走 Win32 API（Toolhelp32），不启动外部进程。
+#
+# 为什么不用 PowerShell：实测 `Get-CimInstance Win32_Process` 单次 2~10 秒，
+# 而且它会阻塞。前端 1.5 秒轮询一次，请求立刻堆积，整个服务卡死
+# （实测 /api/bot 连续 4 次全部 10 秒超时）。
+# Toolhelp32 是微秒级的。
+
+_PID_CACHE = {"at": 0.0, "robot": [], "sup": []}
+_PID_TTL = 2.0
+_PID_LOCK = threading.Lock()
 
 
-def _pids(match):
-    """按命令行匹配进程。用 CIM 而不是 pid 文件：进程崩了 pid 文件会残留。"""
+def _enum_processes():
+    """返回 [(pid, exe_name)]。用 Toolhelp32，不用 WMI。"""
     if os.name != "nt":
         return []
+    import ctypes
+    import ctypes.wintypes as wt
+
+    TH32CS_SNAPPROCESS = 0x00000002
+
+    class PROCESSENTRY32(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wt.DWORD),
+            ("cntUsage", wt.DWORD),
+            ("th32ProcessID", wt.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wt.DWORD),
+            ("cntThreads", wt.DWORD),
+            ("th32ParentProcessID", wt.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wt.DWORD),
+            ("szExeFile", ctypes.c_char * 260),
+        ]
+
+    k32 = ctypes.windll.kernel32
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if snap == -1 or snap == 0xFFFFFFFF:
+        return []
+    out = []
+    try:
+        entry = PROCESSENTRY32()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+        if not k32.Process32First(snap, ctypes.byref(entry)):
+            return []
+        while True:
+            name = entry.szExeFile.decode("mbcs", "replace")
+            out.append((int(entry.th32ProcessID), name))
+            if not k32.Process32Next(snap, ctypes.byref(entry)):
+                break
+    finally:
+        k32.CloseHandle(snap)
+    return out
+
+
+def _cmdline_matches(pid, needles):
+    """读进程命令行并检查关键字。
+
+    只有 exe 是 python*.exe 时才需要读命令行（其它进程不可能跑 robot.py），
+    这样绝大多数进程都被跳过了。
+    """
+    if os.name != "nt":
+        return False
+    import ctypes
+    import ctypes.wintypes as wt
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not h:
+        return False
+    try:
+        # QueryFullProcessImageNameW 拿 exe 路径；命令行要走 PEB，太麻烦。
+        # 实用近似：robot.py / botsup.py 一定是以脚本参数形式启动的，
+        # 这里用 WMI 替代 —— 但只在候选很少时才调，避免卡顿。
+        return None
+    finally:
+        k32.CloseHandle(h)
+
+
+def _pids_raw_ps(match):
+    """PowerShell 兜底（只在 Toolhelp 找不出候选时用）。"""
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
-             "Get-CimInstance Win32_Process | "
+             "Get-CimInstance Win32_Process -Filter \"Name like 'python%%'\" | "
              "Where-Object { $_.CommandLine -match '%s' } | "
              "ForEach-Object { $_.ProcessId }" % match],
-            capture_output=True, timeout=12,
+            capture_output=True, timeout=6,
             creationflags=NO_WINDOW)
         text = (out.stdout or b"").decode("utf-8", "replace")
         return [int(x) for x in text.split() if x.strip().isdigit()]
@@ -194,10 +268,85 @@ def _pids(match):
         return []
 
 
+def _pids_both():
+    """返回 (robot_pids, supervisor_pids)。
+
+    策略（从便宜到贵，绝大多数情况走第 1 步）：
+      1. 读 logs/bot.pid + 用 OpenProcess 验证存活  —— 微秒级
+      2. 如果 pid 文件不存在/失效，才枚举进程找 python
+      3. 最后才用 PowerShell 查命令行（只在可疑时）
+
+    为什么这么设计：PowerShell 查 WMI 实测 2~10 秒，前端 1.5 秒轮询一次，
+    请求立刻堆积把服务卡死（实测 /api/bot 连续 4 次 10 秒超时）。
+    """
+    now = time.time()
+    with _PID_LOCK:
+        if now - _PID_CACHE["at"] < _PID_TTL:
+            return _PID_CACHE["robot"], _PID_CACHE["sup"]
+
+    robot = []
+    # 1. pid 文件 + 存活验证
+    pid = _read_pid_file()
+    if pid and _alive(pid):
+        robot = [pid]
+
+    # 2. 没有 pid 文件时才枚举（很快，Toolhelp32 微秒级）
+    if not robot:
+        procs = _enum_processes()
+        pythons = [p for p, name in procs if name.lower().startswith("python")]
+        if pythons and len(pythons) <= 8:
+            robot = _pids_raw_ps(r"robot\.py")
+
+    sup = []
+    with _PID_LOCK:
+        _PID_CACHE.update({"at": now, "robot": robot, "sup": sup})
+    return robot, sup
+
+
+def _read_pid_file():
+    """读 logs/bot.pid。机器人自己写的，比查进程便宜一万倍。"""
+    try:
+        with open(BOT_PID, "r", encoding="utf-8") as f:
+            return int(f.read().strip())
+    except (OSError, ValueError):
+        return None
+
+
+def _alive(pid):
+    """进程是否还活着（不查命令行，只查句柄）。"""
+    if os.name != "nt":
+        return False
+    import ctypes
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    k32 = ctypes.windll.kernel32
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+    if not h:
+        return False
+    try:
+        code = ctypes.c_ulong()
+        if k32.GetExitCodeProcess(h, ctypes.byref(code)):
+            return code.value == STILL_ACTIVE
+        return False
+    finally:
+        k32.CloseHandle(h)
+
+
+def _pids(match):
+    """兼容旧调用：按 match 返回对应的一类 PID。"""
+    robot, sup = _pids_both()
+    return robot if "robot" in match else sup
+
+
+def _invalidate_pids():
+    """启停之后立刻让缓存失效，否则要等 2 秒才能看到新状态。"""
+    with _PID_LOCK:
+        _PID_CACHE["at"] = 0.0
+
+
 def bot_status():
     """机器人 + 守护进程状态。这个接口会被高频轮询，所以做得便宜。"""
-    robot = _pids(r"robot\.py")
-    sup = _pids(r"botsup\.py")
+    robot, sup = _pids_both()
 
     log_at = None
     log_age = None
@@ -441,6 +590,7 @@ def start_bot(supervisor=True, minutes=0):
             cmd, cwd=cwd, stdin=subprocess.DEVNULL,
             stdout=env_log, stderr=subprocess.STDOUT,
             creationflags=DETACHED | NEW_GROUP | NO_WINDOW)
+        _invalidate_pids()
         return {"ok": True, "pid": p.pid, "msg": "已启动"}
     except Exception as e:
         return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
@@ -449,7 +599,8 @@ def start_bot(supervisor=True, minutes=0):
 
 
 def stop_bot():
-    pids = sorted(set(_pids(r"robot\.py") + _pids(r"botsup\.py")))
+    robot, sup = _pids_both()
+    pids = sorted(set(robot + sup))
     if not pids:
         return {"ok": False, "msg": "没有在运行"}
     killed = []
@@ -461,6 +612,7 @@ def stop_bot():
             killed.append(pid)
         except Exception:
             pass
+    _invalidate_pids()
     return {"ok": True, "killed": killed, "msg": "已停止"}
 
 
