@@ -118,6 +118,7 @@ class Bot:
         self.ble = rocs.Session(verbose=False)
         self.acted_at = 0.0
         self.acted_card_key = None
+        self.acted_hp_key = None
         self.switched_at = 0.0
         self.clicked_at = 0.0
         self.bar_gone_since = None
@@ -506,6 +507,7 @@ class Bot:
                         self.miss_streak = 0
                         self.acted_at = 0.0
                         self.acted_card_key = None
+                        self.acted_hp_key = None
                         self.match_ended_at = 0.0
                         self.prev_my_pct = None
                         self.heal_streak = 0
@@ -2204,19 +2206,32 @@ class Bot:
         #   8 s wait for the turn to actually resolve before retrying
         if self.acted_at and now - self.acted_at < 1.2:
             return
-        if self.acted_at and now - self.acted_at < 8.0:
-            # 回合真的翻过去了就不用等?8 秒。实测每一手都白等 8 。?
-            # （T1->T2 间隔 15 ?= 8 秒闸?+ 7 秒动画）。?
-            #
-            # 判据只能?*卡面**（四张卡的文?+ lit 位）：血条在攻击动画。?
-            # 会连续变化，拿它，?新回，?等于没有闸门（历史上就是这么连按
-            # 5 次的）。卡面只在新回合抽牌时才变，所以它一变就是新回合。
-            card_key = (tuple((s["text"] if s else "") for s in st["skills"]),
-                        tuple(bool(s and s.get("lit")) for s in st["skills"]))
-            if (self.acted_card_key is not None
-                    and card_key != self.acted_card_key
-                    and now - self.acted_at >= 3.5 and stable):
-                self.acted_at = 0.0       # 新回合的牌已经抽出来。?
+        # 回合闸门：**卡面没变就不许再按**，不管过了多久。
+        #
+        # 实测（2026-11-21 03:21）：T28/T29/T30 三回合卡面完全相同
+        # （330/440/170/175），但机器人连按了 3 次。原因是旧逻辑只在
+        # `now - acted_at < 8.0` 内检查卡面，超过 8 秒就直接放行。
+        #
+        # 新逻辑：
+        #   · 8 秒内：等卡面变化（新回合抽牌）才放行
+        #   · 超过 8 秒：仍然要求"卡面变了 或 双方血量变了"，否则继续等
+        #     （血量变化说明回合真的推进了，即使卡面巧合相同）
+        if self.acted_at:
+            card_key = (
+                tuple((s["text"] if s else "") for s in st["skills"]),
+                tuple(bool(s and s.get("lit")) for s in st["skills"]))
+            hp_key = (round(st.get("my_pct") or 0, 1),
+                      round(st.get("foe_pct") or 0, 1))
+            waited = now - self.acted_at
+            if waited < 8.0:
+                fresh = (self.acted_card_key is not None
+                         and card_key != self.acted_card_key
+                         and waited >= 3.5 and stable)
+            else:
+                fresh = (card_key != getattr(self, "acted_card_key", None)
+                         or hp_key != getattr(self, "acted_hp_key", None))
+            if fresh:
+                self.acted_at = 0.0       # 新回合已经开始了
             else:
                 self._gate(now, "press sent, waiting for the turn to resolve")
                 return
@@ -2440,10 +2455,12 @@ class Bot:
             # poll instead of burning the whole decision window.
             return
         self.acted_at = now
-        # 记下出手瞬间的卡面，用来判断"回合是否真的翻过去了"
+        # 记下出手瞬间的卡面 + 双方血量，用来判断"回合是否真的翻过去了"
         self.acted_card_key = (
             tuple((s["text"] if s else "") for s in st["skills"]),
             tuple(bool(s and s.get("lit")) for s in st["skills"]))
+        self.acted_hp_key = (round(st.get("my_pct") or 0, 1),
+                             round(st.get("foe_pct") or 0, 1))
         if action[0] == "energy":
             self.charge_streak += 1
         else:
