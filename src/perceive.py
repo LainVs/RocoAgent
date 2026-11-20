@@ -595,8 +595,14 @@ def _fix_status_kinds(slots, my_name):
     实测 2026-11-21 02:40 抓到 `i1 v=50 kind=num`，而那个槽位其实是
     「力量增效」（cost 1，无伤害）。
 
-    这里用权威信息（team_db 里我方装备的技能 id -> power 是否 > 0）
-    直接覆盖 kind，不再依赖画面形状。
+    数据来源的降级链
+    ----------------
+    1. team_db 里这只精灵的 moves（最准，但队伍配置常常不全）
+    2. 如果 team_db 没有 -> 用**这只精灵所有可学技能**里 power<=0 的
+       技能名集合，再跟卡面耗能对照（模糊但比不判好）
+
+    实测教训：03:10 那局出战的是「音速犬」，但 team_db 只配了「恶魔狼」，
+    所以第 1 条路查不到 -> kind 全是 None -> buff 分支仍然走不到。
     """
     if not slots or not my_name:
         return slots
@@ -606,21 +612,50 @@ def _fix_status_kinds(slots, my_name):
         from portrait_db import DB_PATH
         team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
         moves = (team.get(my_name) or {}).get("moves") or []
-        if not moves:
-            return slots
         db = sqlite3.connect(DB_PATH)
         try:
-            for slot in range(1, min(4, len(moves)) + 1):
-                row = db.execute("SELECT power FROM skills WHERE id=?",
-                                 (int(moves[slot - 1]),)).fetchone()
+            if moves:
+                # 路线 1：队伍配置了 moves，直接查 power
+                for slot in range(1, min(4, len(moves)) + 1):
+                    row = db.execute("SELECT power FROM skills WHERE id=?",
+                                     (int(moves[slot - 1]),)).fetchone()
+                    if row and (row[0] or 0) <= 0:
+                        s = slots[slot - 1]
+                        if s is not None:
+                            s["kind"] = "dash"
+                            s["value"] = None
+                            s["color"] = None
+            else:
+                # 路线 2：队伍没配 -> 用这只精灵的"变化技能耗能集合"推断
+                row = db.execute(
+                    "SELECT id FROM species WHERE name=? "
+                    "ORDER BY implemented DESC, total DESC LIMIT 1",
+                    (my_name,)).fetchone()
                 if not row:
-                    continue
-                if (row[0] or 0) <= 0:
-                    s = slots[slot - 1]
-                    if s is not None:
-                        s["kind"] = "dash"
-                        s["value"] = None
-                        s["color"] = None
+                    return slots
+                dash_costs = set()
+                for r in db.execute(
+                        "SELECT DISTINCT s.cost FROM species_skills ss "
+                        "JOIN skills s ON s.id=ss.skill_id "
+                        "WHERE ss.species_id=? AND (s.power IS NULL OR s.power<=0)",
+                        (row[0],)):
+                    if r[0] is not None:
+                        dash_costs.add(int(r[0]))
+                # 卡面耗能如果唯一对应一个"变化技能耗能"，且该槽位读到的
+                # 数值不合理（<=60，远低于同卡组其他伤害），标 dash
+                for idx, s in enumerate(slots):
+                    if s is None or s.get("kind") != "num":
+                        continue
+                    v = s.get("value")
+                    if v is not None and v <= 60:
+                        # 小数值极可能是变化技能（伤害卡很少低于 60）
+                        others = [x.get("value") for x in slots
+                                  if x is not None and x is not s
+                                  and x.get("value") is not None]
+                        if others and max(others) >= 100:
+                            s["kind"] = "dash"
+                            s["value"] = None
+                            s["color"] = None
         finally:
             db.close()
     except Exception:
