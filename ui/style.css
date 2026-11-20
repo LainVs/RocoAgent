@@ -90,6 +90,8 @@ html, body {
     radial-gradient(900px 600px at 78% 82%, #2b2438 0%, transparent 58%),
     linear-gradient(152deg, #0d1014 0%, #141a22 48%, #0b0e13 100%);
 }
+/* 在真悬浮窗里：不要模拟背景，窗口本身就是透明的 */
+body.embedded .stage { display: none; }
 .stage::after {
   content: "";
   position: absolute;
@@ -140,12 +142,26 @@ html, body {
 .demo-hint { color: var(--ink-3); }
 
 /* ── 面板外壳 ───────────────────────────────────────── */
+/* 悬浮窗模式下贴左上角；浏览器预览时才居中。
+   body 加 .embedded 类（窗口壳注入）表示"我在真悬浮窗里"，
+   此时不留边距、不居中 —— 窗口大小就是面板大小。 */
 .overlay {
   position: absolute;
   top: 84px;
   left: calc(50% - 160px);
   width: 320px;
   will-change: transform;
+}
+
+body.embedded .overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: auto;
+}
+body.embedded .overlay .panel {
+  border-radius: var(--r);
 }
 
 .panel {

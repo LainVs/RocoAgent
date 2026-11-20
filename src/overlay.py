@@ -64,9 +64,34 @@ DWMWA_BORDER_COLOR = 34
 NO_WINDOW = 0x08000000
 DETACHED = 0x00000008
 
-# 默认尺寸（逻辑像素）。200% DPI 下实际翻倍。
+# 默认尺寸（**逻辑/CSS 像素**）。
+# 注意 DPI：实测 pywebview 把 width 当物理像素传给窗口，
+# 但 WebView2 又按 devicePixelRatio 缩放，所以：
+#     width=340, DPI=192 -> 窗口 680 物理px, 但 innerWidth 只有 327 CSS px
+# 结果面板（设计宽 320 CSS px）几乎撑满，边距全没了。
+# 正确做法：传物理像素 = 逻辑 × 缩放，这样 innerWidth 才等于设计尺寸。
 DEFAULT_W = 340
 DEFAULT_H = 620
+
+
+def dpi_scale():
+    """当前系统缩放倍数（192 DPI -> 2.0）。"""
+    try:
+        UD.SetProcessDPIAware()
+    except Exception:
+        pass
+    try:
+        gdi = ctypes.windll.gdi32
+        dc = UD.GetDC(0)
+        try:
+            dpi = gdi.GetDeviceCaps(dc, 88)     # LOGPIXELSX
+        finally:
+            UD.ReleaseDC(0, dc)
+        if dpi:
+            return max(1.0, dpi / 96.0)
+    except Exception:
+        pass
+    return 1.0
 
 
 # ============================================================ Win32
@@ -202,14 +227,19 @@ def main():
 
     print("悬浮窗")
     print("  地址  %s" % url)
-    print("  尺寸  %dx%d" % (args.width, args.height))
+    scale = dpi_scale()
+    print("  尺寸  %dx%d CSS px（DPI %.0f%% -> 物理 %dx%d）" % (
+        args.width, args.height, scale * 100,
+        int(args.width * scale), int(args.height * scale)))
     print("  Ctrl+Alt+O 显示/隐藏   Ctrl+Alt+P 点击穿透")
     print()
 
     win = webview.create_window(
         "RocoOverlay", url=url,
-        width=args.width, height=args.height,
-        x=40, y=40,
+        # 传物理像素：这样 innerWidth 才等于设计尺寸（见 dpi_scale 注释）
+        width=int(args.width * scale),
+        height=int(args.height * scale),
+        x=int(40 * scale), y=int(40 * scale),
         frameless=True,      # 无边框
         transparent=True,    # 像素级透明（圆角外透出桌面）
         on_top=True,         # 置顶
@@ -231,6 +261,29 @@ def main():
             return bool(w and int(w) > 100)
         except Exception:
             return False
+
+    def enter_embedded():
+        """告诉页面"我在真悬浮窗里"，让它贴左上角、不留预览边距。
+
+        然后按面板实际高度把窗口调成正好包住它 —— 这样不会有大片
+        透明空白（透明区域虽然看不见，但会挡住鼠标事件）。
+        """
+        try:
+            win.evaluate_js("document.body.classList.add('embedded')")
+        except Exception:
+            return
+        time.sleep(0.5)
+        try:
+            h = win.evaluate_js(
+                "(document.getElementById('panel')||{}).offsetHeight||0")
+            if h and int(h) > 100:
+                scale = dpi_scale()
+                UD.SetWindowPos(
+                    state["hwnd"], -1, 0, 0,
+                    int(args.width * scale), int((int(h) + 2) * scale),
+                    SWP_NOMOVE | SWP_SHOWWINDOW)
+        except Exception:
+            pass
 
     def setup():
         # 轮询等 native 就绪
@@ -254,6 +307,7 @@ def main():
         hide_from_taskbar(hwnd)
         strip_dwm_frame(hwnd)
         set_topmost(hwnd)
+        enter_embedded()
         state["ready"] = True
         print("窗口就绪 hwnd=%d" % hwnd)
 
