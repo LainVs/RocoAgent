@@ -330,6 +330,67 @@ def test_dom(port):
        "Alt+T 折叠了", "folded=%s" % result.get("foldedAfterAltT"))
 
 
+# ============================================================ 5. 窗口状态
+def test_window_state():
+    print("\n[5] 窗口状态持久化")
+    sys.path.insert(0, SRC)
+    try:
+        import overlay as OV
+    except Exception as e:
+        ok(False, "import overlay", str(e)[:60])
+        return
+
+    import json as _json
+
+    # 备份现有状态
+    backup = None
+    if os.path.exists(OV._STATE_FILE):
+        try:
+            with open(OV._STATE_FILE, encoding="utf-8") as f:
+                backup = f.read()
+        except Exception:
+            pass
+
+    try:
+        # 1. 写入后能读回
+        OV.save_window_state(x=700, y=400, w=353, h=468, folded=True)
+        st = OV.load_window_state()
+        ok(st.get("x") == 700 and st.get("y") == 400,
+           "位置往返", str(st))
+        ok(st.get("w") == 353 and st.get("h") == 468, "尺寸往返")
+        ok(st.get("folded") is True, "折叠状态往返")
+
+        # 2. 部分更新不清掉其它字段
+        OV.save_window_state(x=800)
+        st2 = OV.load_window_state()
+        ok(st2.get("x") == 800 and st2.get("y") == 400,
+           "部分更新保留其它字段", str(st2))
+
+        # 3. 文件不存在时返回空 dict（不抛异常）
+        try:
+            os.remove(OV._STATE_FILE)
+        except OSError:
+            pass
+        st3 = OV.load_window_state()
+        ok(st3 == {}, "文件不存在时返回空 dict", str(st3))
+
+        # 4. 没有残留 .tmp
+        ok(not os.path.exists(OV._STATE_FILE + ".tmp"), "无残留 .tmp")
+    finally:
+        # 恢复
+        try:
+            if backup is not None:
+                with open(OV._STATE_FILE, "w", encoding="utf-8") as f:
+                    f.write(backup)
+            else:
+                try:
+                    os.remove(OV._STATE_FILE)
+                except OSError:
+                    pass
+        except Exception:
+            pass
+
+
 # ============================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -364,6 +425,7 @@ def main():
         test_api(port)
         test_static(port)
         test_contract()
+        test_window_state()
         if not args.no_dom:
             test_dom(port)
     finally:
