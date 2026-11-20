@@ -361,8 +361,16 @@ class Screen:
         return self._fit(self._grab_at_client(self.sbox_client(box)), box)
 
     def grab_s(self, box):
-        """box 用**窗口坐标**（基准分辨率）-> 基准尺寸图。"""
-        return self._fit(self.grab(self.sbox(box)), box)
+        """box 用**窗口坐标**（基准分辨率）-> 基准尺寸图。
+
+        sbox() 返回的是**客户区像素坐标**，所以必须走 _grab_at_client，
+        不能走 grab()（grab 用窗口原点，会再多偏移 client_off=(13,58)）。
+
+        这个 bug 的表现：所有 grab_s 抓到的区域整体**偏右下 (13,58)**，
+        于是 band 检测里按钮的 y 偏移变成 74（真实 16），
+        abs_point 算出来的点击位置就偏下 58px —— 按钮永远点不到。
+        """
+        return self._fit(self._grab_at_client(self.sbox(box)), box)
 
     def grab_full(self):
         """整块客户区，基准尺寸。"""
@@ -428,9 +436,24 @@ class Screen:
         return (cw / float(self.BASE_CLIENT_W), ch / float(self.BASE_CLIENT_H))
 
     def abs_point(self, box, cx, cy):
-        """窗口坐标(框内偏移) -> 屏幕物理坐标。"""
-        p = self.phys(box[0] + cx, box[1] + cy)
-        return p
+        """box 是**窗口坐标**（基准分辨率），cx/cy 是 box 内的基准像素偏移
+        -> 屏幕物理坐标。
+
+        grab_s(box) 抓到的图已经缩回基准尺寸，所以图内像素 (cx, cy)
+        对应的客户区像素 = sbox(box) 原点 + (cx, cy) * scale。
+
+        以前这里直接走 phys()（会再减一次 BASE_OFF），
+        导致所有用 abs_point 定位的按钮**偏下 58px**，
+        机器人一直点在按钮外面 —— 结算页「退出」点不到、
+        「确认首发」点不到，都源于此。
+        """
+        sx, sy = self.scale()
+        cr = self.client_rect_on_screen()
+        if cr is None:
+            return None
+        sb = self.sbox(box)
+        return (cr[0] + int(round(sb[0] + cx * sx)),
+                cr[1] + int(round(sb[1] + cy * sy)))
 
     def client_rect_on_screen(self):
         if self.rect is None:
@@ -1015,10 +1038,13 @@ def has_exit_button(screen):
 
 
 def has_vs_screen(screen):
-    """The pre-match VS splash: hard left teal / right orange split.
+    """VS/确认首发页：左青右橙的整屏分色。
 
-    Nothing else in the game is close to these two colours, so it is a safe
-    'hands off' signal - we must never click while the match is loading.
+    **这是唯一能阻止机器人在这个页面乱点的判据。**
+    实测它一旦失效（颜色阈值卡太死），_idle_tick 会掉进
+    advance splash 分支，隔次点 RESULT_SKIP_REL=(2303,238) ——
+    那个位置正好是右上角的 X 关闭按钮，一点就把匹配取消了，
+    然后退回大世界，再也回不来（用户 11-20 反馈的"点左上角/退出"）。
     """
     left = screen.grab_s((150, 250, 300, 300))
     right = screen.grab_s((1900, 250, 300, 300))
@@ -1026,8 +1052,11 @@ def has_vs_screen(screen):
         return False
     ml = left.reshape(-1, 3).mean(axis=0)
     mr = right.reshape(-1, 3).mean(axis=0)
-    return (abs(ml[0] - 35) < 45 and abs(ml[1] - 135) < 45 and abs(ml[2] - 171) < 45
-            and abs(mr[0] - 196) < 45 and abs(mr[1] - 96) < 45 and abs(mr[2] - 22) < 45)
+    # 左：青/蓝绿（g、b 明显高于 r）
+    teal = (ml[1] > ml[0] + 12) and (ml[2] > ml[0] + 18)
+    # 右：橙（r 明显高于 b）
+    orange = (mr[0] > mr[2] + 35) and (mr[0] > 90)
+    return bool(teal and orange)
 
 
 def find_action_button(screen):
@@ -3287,12 +3316,12 @@ class Bot:
             if self.advance_count in (1, 5, 8):
                 log("advance splash (click %d)" % self.advance_count)
             self.ensure_focus()
-            # 隔次点右上角"略略略"：结算/升段页只有这个点有效，
-            # 别的 splash（ALL CLEAR / 奖励）点中间就行。
-            if self.advance_count % 2 == 0:
-                self.click_rel(*RESULT_SKIP_REL)
-            else:
-                self.click_rel(*ADVANCE_REL)
+            # **只点屏幕正中偏下，绝不点右上角。**
+            # RESULT_SKIP_REL=(2303,238) 是结算页的"略略略"，
+            # 但在 VS/匹配/其它页面上那个位置是 **X 关闭按钮** ——
+            # 隔次点它会把匹配取消掉，然后退回大世界再也回不来。
+            # 真正的结算页由上面的 rank_card 分支单独处理，不需要这里兜底。
+            self.click_rel(*ADVANCE_REL)
             self.advance_at = now
             return
         self.advance_count = 0

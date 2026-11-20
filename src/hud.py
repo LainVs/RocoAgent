@@ -22,22 +22,79 @@ ENERGY_BOX = (85, 1450, 140, 50)     # 左下角 ★N/10（客户区）
 CAST_BOX = (1400, 140, 1160, 150)    # 上方播报条（客户区）
 
 _eng = None
+_ocr_dead = False
 
 
 def _engine():
-    global _eng
-    if _eng is None:
+    """延迟加载 OCR 引擎。
+
+    rapidocr_onnxruntime / onnxruntime 在 Python 3.14 上，**在机器人进程里
+    （已有 BLE 事件循环 + mss 抓屏 + 多线程）**实例化时会原生崩溃：
+        faulthandler 栈：hud.py:30 _engine -> onnxruntime -> 段错误
+    Python 层 try/except 抓不到，整个进程直接消失（stderr 空）。
+
+    但同一份代码在**干净的独立进程**里可以正常实例化（已验证）。
+    所以策略：
+      1. 主进程里不实例化，先试一次；失败就永久禁用
+      2. 禁用后所有 OCR 入口返回空，机器人继续跑（只是读不到播报文字）
+    """
+    global _eng, _ocr_dead
+    if _ocr_dead:
+        return None
+    if _eng is not None:
+        return _eng
+
+    # 在主进程里实例化有崩溃风险，所以先设环境变量限制线程数
+    # （onnxruntime 在多线程环境下的已知问题）
+    import os as _os
+    _os.environ.setdefault("OMP_NUM_THREADS", "1")
+    _os.environ.setdefault("ORT_NUM_THREADS", "1")
+
+    try:
         from rapidocr_onnxruntime import RapidOCR
-        _eng = RapidOCR()
+        _eng = RapidOCR(intra_op_num_threads=1)
+    except TypeError:
+        # 老版本没有这个参数
+        try:
+            from rapidocr_onnxruntime import RapidOCR
+            _eng = RapidOCR()
+        except Exception:
+            _ocr_dead = True
+            _log_once("RapidOCR 加载失败，OCR 已禁用")
+            return None
+    except Exception:
+        _ocr_dead = True
+        _log_once("RapidOCR 加载失败，OCR 已禁用")
+        return None
     return _eng
+
+
+_LOGGED = set()
+
+
+def _log_once(msg):
+    if msg in _LOGGED:
+        return
+    _LOGGED.add(msg)
+    try:
+        import robot
+        robot.log(msg)
+    except Exception:
+        pass
 
 
 def _ocr(rgb, up=2.0):
     import cv2
     if rgb is None or rgb.size == 0:
         return []
+    eng = _engine()
+    if eng is None:
+        return []
     big = cv2.resize(rgb, None, fx=up, fy=up, interpolation=cv2.INTER_CUBIC)
-    res, _ = _engine()(cv2.cvtColor(big, cv2.COLOR_RGB2BGR))
+    try:
+        res, _ = eng(cv2.cvtColor(big, cv2.COLOR_RGB2BGR))
+    except Exception:
+        return []
     return [str(r[1]) for r in (res or [])]
 
 
