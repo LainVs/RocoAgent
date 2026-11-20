@@ -69,6 +69,17 @@ def _engine():
     return _eng
 
 
+def warmup():
+    """Load the OCR engine *before* the BLE link is opened.
+
+    Importing onnxruntime after bleak has attached the WinRT Bluetooth stack
+    dies with a native access violation (0xC0000005) and no Python traceback:
+    every run on 11-20 ended 4 s in, right at the first hud._engine() call.
+    Loading it first is harmless, and every later import is a no-op.
+    """
+    return _engine() is not None
+
+
 _LOGGED = set()
 
 
@@ -154,21 +165,37 @@ def skill_vocab(db_path=None):
     finally:
         db.close()
 
-_last_text = (None, 0.0)
+# 播报条指纹：同一条播报会停留好几秒，而一次 OCR 要 2 秒以上。
+# 只按时间缓存（1.2 秒）等于在播报出现的那几秒里把主循环完全占满
+# （实测 blank 推理 2.4 秒），感知采样随之变稀，GATE 一直报 "read not stable"。
+# 这里用 32x8 的亮度指纹：只有画面真的换了才重新 OCR。
+_CAST_SIG = {"sig": None, "text": None, "at": 0.0}
+
+
+def _cast_sig(img):
+    try:
+        import cv2
+        small = cv2.resize(img, (32, 8), interpolation=cv2.INTER_AREA)
+        g = (small.mean(axis=2) / 32.0).astype("uint8")
+        return g.tobytes()
+    except Exception:
+        return None
 
 
 def read_cast_text(screen):
-    """播报条的原始文本（缓存 1.2 秒）。分流交给调用方。"""
-    global _last_text
+    """播报条的原始文本。同一条播报只 OCR 一次（按画面指纹判断）。"""
     import time
-    if time.time() - _last_text[1] < 1.2:
-        return _last_text[0]
     img = screen.grab_client(CAST_BOX)
     if img is None or img.size == 0:
         return None
     if float(img.max(axis=2).mean()) < 110:
+        _CAST_SIG.update(sig=None, text=None, at=time.time())
         return None
+    sig = _cast_sig(img)
+    now = time.time()
+    if sig is not None and sig == _CAST_SIG["sig"] and now - _CAST_SIG["at"] < 12.0:
+        return _CAST_SIG["text"]
     texts = _ocr(img, 1.5)
-    text = " ".join(texts).strip()
-    _last_text = (text or None, time.time())
-    return text or None
+    text = " ".join(texts).strip() or None
+    _CAST_SIG.update(sig=sig, text=text, at=now)
+    return text

@@ -40,31 +40,54 @@ def _ocr(rgb, up=2.0):
 
 
 def find_badge(img):
-    """找黄色"特性"标签，返回 (x, y, w, h) 或 None。"""
+    """找黄色"特性"标签，返回 (x, y, w, h) 或 None。
+
+    面板从上到下的顺序是固定的：名字 → 属性徽章 → "受伤提升/降低"属性块 → 特性。
+    所以只在下半部找 —— 否则上方的**属性徽章**（也是暖色小方块）会被当成标签，
+    返回一个 y≈180 的错位置，后面的 OCR 落空（实测就是这样读不到"上锁"）。
+    """
     import cv2
     import numpy as np
     if img is None or img.size == 0:
         return None
-    r = img[:, :, 0].astype(np.int16)
-    g = img[:, :, 1].astype(np.int16)
-    b = img[:, :, 2].astype(np.int16)
+    h_all = img.shape[0]
+    y_start = int(h_all * 0.55)          # 只搜下半部
+    sub = img[y_start:]
+    r = sub[:, :, 0].astype(np.int16)
+    g = sub[:, :, 1].astype(np.int16)
+    b = sub[:, :, 2].astype(np.int16)
     m = ((r > 175) & (g > 140) & (b < 120) & (r - b > 70) & (g - b > 50)).astype(np.uint8)
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
     n, _lab, st, _cen = cv2.connectedComponentsWithStats(m, 8)
     best = None
     for i in range(1, n):
         x, y, w, h, area = st[i]
-        if area < 400 or h < 18 or h > 70 or w < 30 or w > 160:
+        # 标签可能和下面的六边形特性图标连成一块（实测 h≈130），
+        # 所以放宽高度上限，但**取顶部 45px 当作标签**。
+        if area < 400 or h < 18 or h > 170 or w < 30 or w > 160:
             continue
-        if not (1.2 <= w / float(h) <= 6.0):
+        if not (1.2 <= w / float(h) <= 6.0) and not (w >= 55 and h > 70):
             continue
-        if best is None or area > best[4]:
-            best = (int(x), int(y), int(w), int(h), int(area))
-    return best[:4] if best else None
+        score = (area, -x)
+        if best is None or score > best[0]:
+            best = (score, int(x), int(y) + y_start, int(w),
+                    int(min(h, 45)))
+    return best[1:5] if best else None
 
 
 def read_ability(screen, vocab=None, dump=None):
-    """返回 {'ability': 名字或 None, 'raw': [...], 'badge': (x,y,w,h)}。"""
+    """返回 {'ability': 名字或 None, 'raw': [...], 'badge': (x,y,w,h)}。
+
+    只做**一次** OCR。裁剪框是"黄标签那一行 + 标签左margin"的横带
+    (x 0..~420, y 标签-30..标签+50)，实测这条带子对两种面板布局都能一次读出：
+
+        panel_210501  badge=(35,754) -> ['上锁', '特性', '敌方本回合使用的技能…']
+        panel_211304  badge=(30,702) -> ['恶魔的晚宴', '特性', '主动击败敌方精灵时…']
+
+    之前是"标签右边 110/260px 的窄条"，窄条会随布局切掉字头（'恶魔的明'）
+    或者整条返回空（514px 宽 → []），于是退回整块面板 OCR，一次要 6~10 秒，
+    两次 OCR 就把下一手技能吃掉了（实测 21:13 卡了 25 秒）。
+    """
     import cv2
     img = screen.grab_client(PANEL_BOX)
     if img is None or img.size == 0:
@@ -74,34 +97,43 @@ def read_ability(screen, vocab=None, dump=None):
             cv2.imwrite(dump, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
         except Exception:
             pass
+    hh, ww = img.shape[:2]
     badge = find_badge(img)
-    if badge is None:
-        # 找不到黄标签：退回整块 OCR，交给词表筛
-        lines = _ocr(img, 1.5)
-        return {"ability": _best(lines, vocab), "raw": lines, "badge": None}
-    x, y, w, h = badge
-    # 标签右边一条：特性名就在那里
-    y0 = max(0, y - 12)
-    y1 = min(img.shape[0], y + h + 14)
-    x0 = min(img.shape[1] - 1, x + w + 6)
-    x1 = min(img.shape[1], x + w + 520)
-    strip = img[y0:y1, x0:x1]
-    lines = _ocr(strip, 2.5)
+    if badge is not None:
+        x, y, w, h = badge
+        y0 = max(0, y - 30)
+        y1 = min(hh, y + h + 50)
+        # 名字在标签右边长一点：长特性名（'恶魔的晚宴'）要 200px 以上，
+        # 面板整体右移时再从 x 推算，别写死。
+        x1 = min(ww, max(420, x + w + 260))
+        band = img[y0:y1, 0:x1]
+    else:
+        # 找不到黄标签：特性行永远在面板最后，整条下半部兜底。
+        band = img[int(hh * 0.66):int(hh * 0.92), :]
+    lines = _ocr(band, 2.0)
     return {"ability": _best(lines, vocab), "raw": lines, "badge": badge}
 
 
 def _best(lines, vocab):
+    """逐行匹配，取分数最高的一行。
+
+    以前是把所有行拼成一段再匹配，描述里的字会把特性名淹掉；现在描述只用于
+    落盘补词表，不参与匹配。
+    """
     if not lines:
         return None
-    text = " ".join(t for t, _c in lines).strip()
-    if not text:
+    if not vocab:
         return None
-    if vocab:
-        import ocr_cn
+    import ocr_cn
+    best, best_s = None, 0.0
+    for text, _conf in lines:
+        text = text.strip()
+        if not text:
+            continue
         cand, score = ocr_cn.Ocr.match(text, vocab)
-        if cand and score >= 0.60:
-            return cand
-    return None
+        if cand and score > best_s:
+            best, best_s = cand, score
+    return best if best_s >= 0.60 else None
 
 
 def feature_vocab(db_path=None):

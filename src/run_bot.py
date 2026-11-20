@@ -35,14 +35,14 @@ NEW_GROUP = 0x00000200
 NO_WINDOW = 0x08000000
 
 
-def running():
-    """返回正在跑的 robot.py 的 PID 列表。"""
+def running(match="robot\\.py"):
+    """返回命令行里匹配 match 的进程 PID 列表。"""
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance Win32_Process | "
-             "Where-Object { $_.CommandLine -match 'robot\\.py' } | "
-             "ForEach-Object { $_.ProcessId }"],
+             "Where-Object { $_.CommandLine -match '%s' } | "
+             "ForEach-Object { $_.ProcessId }" % match],
             capture_output=True, timeout=30,
             creationflags=NO_WINDOW)
         text = (out.stdout or b"").decode("utf-8", "replace")
@@ -75,12 +75,48 @@ def start():
     return 0
 
 
+def start_supervisor(minutes=0, no_input=False):
+    """用看门狗启动：崩溃自动拉起，且整条链都脱离 shell。
+
+    minutes > 0 时看门狗到点会自己停掉机器人并退出（空转测试用）。
+    """
+    pids = running("robot\\.py") + running("botsup\\.py")
+    if pids:
+        print("已经在跑: %s" % pids)
+        return 0
+    sup = os.path.join(str(paths.TOOLS), "botsup.py")
+    if not os.path.exists(sup):
+        print("找不到看门狗: %s" % sup)
+        return 2
+    args = [PY, "-W", "ignore", "-u", sup, "--seconds",
+            str(int(minutes) * 60) if minutes else "0"]
+    if no_input:
+        args.append("--no-input")
+    logf = open(os.path.join(LOGS, "supervisor.out.log"), "a", encoding="utf-8")
+    p = subprocess.Popen(
+        args, cwd=str(paths.TOOLS), stdin=subprocess.DEVNULL,
+        stdout=logf, stderr=subprocess.STDOUT,
+        creationflags=DETACHED | NEW_GROUP | NO_WINDOW)
+    logf.close()
+    print("看门狗已启动 PID %d（日志 logs\\supervisor.out.log）" % p.pid)
+    time.sleep(4)
+    print("确认 supervisor: %s" % running("botsup\\.py"))
+    print("确认 robot     : %s" % running("robot\\.py"))
+    return 0
+
+
 def stop():
-    pids = running()
+    pids = running("robot\\.py") + running("botsup\\.py")
+    pids = sorted(set(pids))
     if not pids:
         print("没有在跑")
         return 0
-    for pid in pids:
+    # 先停看门狗，再停 bot，免得它把刚杀掉的 bot 又拉起来
+    sup = running("botsup\\.py")
+    for pid in sup:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, creationflags=NO_WINDOW)
+    for pid in running("robot\\.py"):
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                        capture_output=True, creationflags=NO_WINDOW)
     print("已停止: %s" % pids)
@@ -92,13 +128,16 @@ def stop():
 
 
 def status():
-    pids = running()
-    print("运行中: %s" % pids if pids else "未运行")
-    try:
-        age = time.time() - os.path.getmtime(LOG)
-        print("日志最后更新: %.0f 秒前" % age)
-    except OSError:
-        pass
+    bots = running("robot\\.py")
+    sups = running("botsup\\.py")
+    print("robot: %s" % (bots if bots else "未运行"))
+    print("supervisor: %s" % (sups if sups else "未运行"))
+    for name in ("bot_stdout.log", "supervisor_restarts.log", "crash.log"):
+        try:
+            age = time.time() - os.path.getmtime(os.path.join(LOGS, name))
+            print("%-22s 最后更新 %.0f 秒前" % (name, age))
+        except OSError:
+            print("%-22s 不存在" % name)
     return 0
 
 
@@ -106,9 +145,17 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--stop", action="store_true")
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--supervisor", action="store_true",
+                    help="用 botsup 看门狗启动（推荐，崩溃自动拉起）")
+    ap.add_argument("--minutes", type=int, default=0,
+                    help="看门狗预算（分钟，0=不限）；到点会连同机器人一起停")
+    ap.add_argument("--no-input", action="store_true",
+                    help="空转模式：只感知不操作（稳定性测试）")
     a = ap.parse_args()
     if a.stop:
         sys.exit(stop())
     if a.status:
         sys.exit(status())
+    if a.supervisor:
+        sys.exit(start_supervisor(a.minutes, a.no_input))
     sys.exit(start())

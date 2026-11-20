@@ -35,7 +35,14 @@ import math
 import rocodata
 
 STAB = 1.2
-MULT_SET = (0.5, 0.75, 1.0, 2.0)
+# 伤害倍率的**最终**档位（不是"每个属性的倍率"）：
+#   克制相加：被 1 个属性克 → ×2，被 2 个 → ×3（不是 ×4）
+#   抵抗相乘：被 1 个抵抗 → ×0.5，被 2 个 → ×0.25
+#   一克一抗 → ×1
+# 三份独立实现一致：9178 计算器（getTypeEff）、roco-cal（ele_advantage.py）、
+# loyshowdown 公式 v3。早先按 battle_config 的字段名猜成 (0.5,0.75,1,2) 是错的
+# —— 那 4 个字段不是这个用途。
+MULT_SET = (0.25, 0.5, 1.0, 2.0, 3.0)
 DEFAULT_K = 1.897
 
 
@@ -86,6 +93,10 @@ def fit_k(cards):
         if not ks_v:
             continue
         mean = sum(ks_v) / len(ks_v)
+        # k = 攻击/防御，PvP 实际范围大约 0.6~3.0。
+        # 不加这个约束会撞上"k×2、所有倍率÷2"的简并解（乘积不变，误差一样小）。
+        if not (0.6 <= mean <= 3.0):
+            continue
         var = sum((x - mean) ** 2 for x in ks_v) / len(ks_v)
         rel = math.sqrt(var) / mean if mean else 9e9
         if best is None or rel < best[2]:

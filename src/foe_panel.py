@@ -19,9 +19,24 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
+
+# 面板截图/调试图落在这里。之前这个常量根本没定义 —— ability_read 的 dump 参数
+# 每帧抛 NameError 被 except 吞掉，于是"快路径"从未生效，只能退回整块 OCR（+3~5s）。
+LOG_DIR = os.path.join(ROOT, "logs")
+
+
+def _log(msg):
+    """写进 bot_stdout.log（不依赖 robot，避免循环 import）。"""
+    try:
+        with open(os.path.join(LOG_DIR, "bot_stdout.log"), "a",
+                  encoding="utf-8") as fh:
+            fh.write("%s %s\n" % (time.strftime("%H:%M:%S"), msg))
+    except OSError:
+        pass
 
 # 点这里打开面板（对面头像中心）。实测位置随 HUD 状态浮动，给三个候选点。
 FOE_BUST_CLICK = (2192, 95)
@@ -50,15 +65,41 @@ SEGMENTS = {
 
 
 def is_open(screen):
-    img = screen.grab_client(PANEL_PROBE)
+    """面板是否打开：在 PANEL_BOX 里找"一整块奶白卡片"。
+
+    两个历史坑都要躲开：
+
+    1. 最早查的是固定小窗 (960,350,300,40)。实测（20:38 那局）面板整体下移了
+       ~60px，探针落在变暗的背景上 → 明明开着却判 False → open_panel 又点一下
+       把面板关掉，于是永远打不开。
+    2. 后来改成"整屏中间找大白块"，阈值 0.06。实测 21:26:19 误判：对面训练家
+       的白衬衫占满了中列，被判成面板已经开着 → 不点开面板，直接对着场景 OCR，
+       白花 6.7 秒，最后还点了一次"关闭"位置。
+
+    现在只看 PANEL_BOX 这一块（面板永远在这里），并且要求**最大的那块白连通域
+    占整块 >= 15%**：
+
+        真面板  panel_210501 / 211304 / 211401 : 白 0.195~0.201，大块 0.185~0.194
+        误判帧  panel_212619（训练家白衬衫）   : 白 0.115，    大块 0.108
+    """
+    import cv2
+    import numpy as np
+    img = screen.grab_client(PANEL_BOX)
     if img is None or img.size == 0:
         return False
-    mx = img.max(axis=2)
-    mn = img.min(axis=2)
-    bright = float((mn > 200).mean())
-    # 白底 + 深色文字：只有纯白（过曝的场景）不算，必须有字
-    dark = int((mx < 120).sum())
-    return bright > 0.45 and dark > 40
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
+    v = hsv[:, :, 2].astype(np.int16)
+    s = hsv[:, :, 1].astype(np.int16)
+    m = ((v > 195) & (s < 50)).astype(np.uint8)
+    if m.mean() < 0.17:
+        return False
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, np.ones((15, 15), np.uint8))
+    n, _lab, st, _ = cv2.connectedComponentsWithStats(m, 8)
+    total = float(img.shape[0] * img.shape[1])
+    for i in range(1, n):
+        if st[i, 4] / total > 0.15:
+            return True
+    return False
 
 
 def open_panel(screen, click=None, session=None):
@@ -75,7 +116,7 @@ def open_panel(screen, click=None, session=None):
     if is_open(screen):
         return True
     cx, cy = screen.client_rect_on_screen()[:2]
-    for tx, ty in FOE_BUST_CLICKS:
+    for n, (tx, ty) in enumerate(FOE_BUST_CLICKS):
         px, py = screen.phys_client(tx, ty)
         if click is not None:
             click(px, py)
@@ -85,10 +126,13 @@ def open_panel(screen, click=None, session=None):
                     session.click_at(px, py))
             else:
                 session.click_at(px, py)
-        # 面板有入场动画，0.5 秒就判"没开"会误判：
-        # 于是点下一个候选点，把刚开的面板又关掉（实测就是这样 4 连点都不成功）
-        for _ in range(8):
-            time.sleep(0.25)
+        # 轮询而不是"睡死"：面板动画约 0.3~0.5s，一旦检测到就立刻返回。
+        # 主候选点 0.9s（实机 20:40/20:45 两次都是第一个点就开），
+        # 备用点各 0.6s —— 最坏 2.1s，常见 0.4~0.8s。
+        budget = 0.9 if n == 0 else 0.6
+        t0 = time.time()
+        while time.time() - t0 < budget:
+            time.sleep(0.12)
             if is_open(screen):
                 return True
     return False
@@ -227,12 +271,13 @@ def read(screen, ocr=None, vocab=None):
 
 def _raw_ocr(rgb, upscale=2):
     import cv2
-    from rapidocr_onnxruntime import RapidOCR
+    import ability_read
 
     big = cv2.resize(rgb, None, fx=upscale, fy=upscale,
                      interpolation=cv2.INTER_CUBIC)
-    eng = RapidOCR()
-    res, _ = eng(cv2.cvtColor(big, cv2.COLOR_RGB2BGR))
+    # 复用 ability_read 的引擎单例：每次 new RapidOCR() 要重新加载模型，
+    # 一次就 1~2 秒，而这条路径的预算只有 1.5 秒。
+    res, _ = ability_read._engine()(cv2.cvtColor(big, cv2.COLOR_RGB2BGR))
     out = []
     for r in (res or []):
         pts, txt = r[0], r[1]
@@ -253,25 +298,79 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
     import numpy as np
     import portrait_db as P
 
+    t_panel = time.time()
     if not open_panel(screen, click=click, session=session):
+        _log("FOE PANEL open FAILED")
         return None
+    _log("FOE PANEL open in %.2fs" % (time.time() - t_panel))
     try:
+        t0 = time.time()
         bust = screen.grab_client(FOE_PORTRAIT_BOX)
-        data = read_name(screen, ocr=ocr) if fast else read(screen, ocr=ocr)
-        # 整块 OCR 经常读不到特性（小字 + 布局变化）——
-        # 用"黄标签定位"再读一次，布局无关。
-        if data is not None and not data.get("ability"):
+        # ---- 先读特性：黄标签定位 + 标签那一行横带 OCR（一次，~3 秒）
+        ability, badge = None, None
+        got = None
+        try:
+            import ability_read
+            # 只调一次：read_ability 内部就是一次 OCR（badge 行横带，
+            # 实测两种面板布局都能读全）。绝不在这里重试。
+            got = ability_read.read_ability(
+                screen, ability_read.feature_vocab(),
+                dump=os.path.join(LOG_DIR, "panel_%s.png"
+                                  % time.strftime("%H%M%S")))
+            if got:
+                ability = got.get("ability")
+                badge = got.get("badge")
+        except Exception as e:
+            _log("FOE PANEL ability_read failed: %s" % e)
+        t_ab = time.time()
+
+        # ---- 特性够用就不再跑整块 OCR（那一步要 2~3 秒）
+        enough = False
+        unknown_trait = None
+        if ability:
             try:
-                import ability_read
-                got = ability_read.read_ability(
-                    screen, ability_read.feature_vocab(),
-                    dump=os.path.join(LOG_DIR, "panel_%s.png"
-                                      % time.strftime("%H%M%S")))
-                if got and got.get("ability"):
-                    data["ability"] = got["ability"]
-                    data["ability_badge"] = got.get("badge")
+                import trait_db
+                res = trait_db.resolve(ability)
+                enough = bool(res["types"]) or len(res["candidates"]) == 1
             except Exception:
+                enough = False
+        elif got and got.get("raw"):
+            # 字读出来了、词表里没有 -> 新特性（实测 '上锁'）。落盘留证据，
+            # 以后补 features 表用；不算读失败。
+            unknown_trait = " ".join(t for t, _c in got["raw"])[:80]
+            _log("FOE PANEL unknown trait text: %s" % unknown_trait)
+            try:
+                import json
+                with open(os.path.join(LOG_DIR, "unknown_traits.jsonl"),
+                          "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"t": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                         "raw": unknown_trait},
+                                        ensure_ascii=False) + "\n")
+            except OSError:
                 pass
+
+        if fast:
+            data = read_name(screen, ocr=ocr)
+        elif enough:
+            data = {"name": None, "level": None, "ability": ability,
+                    "skill": None, "raw": [], "from": "trait_only"}
+        else:
+            # 不跑整块 OCR：那一步 6~10 秒，而且实测在"特性读不出/没入库"
+            # 的面板上它同样拿不到名字。只读顶部名字条（~1.5 秒）。
+            data = read_name(screen, ocr=ocr)
+        if data is None:
+            data = {"name": None, "level": None, "ability": None,
+                    "skill": None, "raw": []}
+        if not data.get("ability") and ability:
+            data["ability"] = ability
+            data["ability_badge"] = badge
+        if data.get("ability"):
+            data["ability_badge"] = badge
+        try:
+            _log("FOE PANEL timing: ability %.1fs, total %.1fs (trait_only=%s)"
+                 % (t_ab - t0, time.time() - t0, enough))
+        except Exception:
+            pass
     finally:
         close_panel(screen=screen, click=click, esc=esc, session=session)
     # 对面可以全员改名（昵称），名字读不到是常态 ——
@@ -279,14 +378,38 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
     if not data or not (data.get("name") or data.get("ability")):
         return data
 
-    db = P.connect()
+    sid = None
+    if data.get("name"):
+        db = P.connect()
+        try:
+            row = db.execute("SELECT id FROM species WHERE name=? "
+                             "ORDER BY implemented DESC, total DESC LIMIT 1",
+                             (data["name"],)).fetchone()
+            sid = row["id"] if row else None
+        finally:
+            db.close()
+
+    # ---- 特性反查（名字不可靠时用特性；名字可靠时用来交叉校验）
+    # 实测：1024 只物种里 583 只可以只靠特性确定属性，
+    # 194 只的特性有歧义（同特性多属性），63 只特性未识别。
+    # 歧义时 types=None —— 绝不猜，否则伤害计算会被污染。
     try:
-        row = db.execute("SELECT id FROM species WHERE name=? "
-                         "ORDER BY implemented DESC, total DESC LIMIT 1",
-                         (data["name"],)).fetchone()
-        sid = row["id"] if row else None
-    finally:
-        db.close()
+        import trait_db
+        res = trait_db.resolve(data.get("ability"), species_id=sid)
+        data["types"] = res["types"]
+        data["types_how"] = res["how"]
+        data["types_conf"] = "none" if res["ambiguous"] else "high"
+        data["trait_candidates"] = res["candidates"]
+        if sid is None and len(res["candidates"]) == 1:
+            sid = res["candidates"][0]        # 特性唯一 -> 直接定物种
+        elif sid is not None and res["candidates"] and sid not in res["candidates"]:
+            # 名字反查的物种不在特性候选里 -> 两者冲突，以特性为准更安全
+            data["name_conflict"] = True
+            if len(res["candidates"]) == 1:
+                sid = res["candidates"][0]
+    except Exception as e:
+        data["types_error"] = "%s: %s" % (type(e).__name__, e)
+
     data["species_id"] = sid
     if sid is None:
         return data
