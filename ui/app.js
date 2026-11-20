@@ -176,8 +176,12 @@ function render(st) {
   $('mePct').textContent = me.hp_pct == null ? '—' : Math.round(me.hp_pct);
   $('meAbs').textContent = (me.hp_abs != null && me.hp_max != null)
     ? `${me.hp_abs} / ${me.hp_max}` : '—';
-  $('meEnergy').innerHTML = me.energy != null
-    ? energyPips(me.energy, me.energy_max || 10) : '';
+  // 能量：读不到时显示"未知"，不画 pips（画 0 个会被误解成"没能量"）
+  if (me.energy != null) {
+    $('meEnergy').innerHTML = energyPips(me.energy, me.energy_max || 10);
+  } else {
+    $('meEnergy').innerHTML = '<span class="energy-na">能量未知</span>';
+  }
   const buff0 = (me.buffs || [])[0];
   $('meBuff').textContent = buff0
     ? (buff0.name || '') + (buff0.layers ? ' +' + buff0.layers : '') : '';
@@ -273,19 +277,23 @@ function render(st) {
   }
 
   // ── 结论
+  // 三项（击杀回合/被击杀回合/先后手）缺任何一项都不该给半吊子结论 ——
+  // "2 回合击杀 · — 回合被击杀" 比不显示更让人困惑。
   const v = st.verdict;
-  if (v) {
+  if (v && v.complete !== false && (v.kill_turns || v.die_turns)) {
     $('vKill').textContent = v.kill_turns != null ? v.kill_turns : '—';
     $('vDie').textContent = v.die_turns != null ? v.die_turns : '—';
     const order = $('vOrder');
     order.textContent = v.order === 'first' ? '先手'
       : v.order === 'second' ? '后手' : '—';
-    order.className = v.order === 'first' ? 'good' : 'bad';
+    order.className = v.order === 'first' ? 'good'
+      : v.order === 'second' ? 'bad' : '';
   } else {
     $('vKill').textContent = '—';
     $('vDie').textContent = '—';
-    $('vOrder').textContent = '—';
-    $('vOrder').className = '';
+    const order = $('vOrder');
+    order.textContent = '数据不足';
+    order.className = '';
   }
 }
 

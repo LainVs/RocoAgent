@@ -708,6 +708,17 @@ class Bot:
             if my_max and st.get("my_pct") is not None:
                 my_abs = int(round(my_max * st["my_pct"] / 100.0))
 
+            # 一致性校验：百分比和绝对值必须讲同一个故事。
+            # 实测抓到 hp_pct=100 但 hp_abs=0 的矛盾帧（力竭/换人瞬间，
+            # 血条读到了满值而 max_hp 还没更新）。这种帧对前端是毒药 ——
+            # 面板会显示"满血但已死"。矛盾时把两个都置为未知。
+            if my_abs is not None and my_max and me_pct is not None:
+                if my_abs <= 0 and me_pct >= 5:
+                    my_abs = None
+                    me_pct = None
+                elif abs(100.0 * my_abs / my_max - me_pct) > 15:
+                    my_abs = None
+
             # 我方属性
             my_types = []
             if my_name:
@@ -827,9 +838,14 @@ class Bot:
                     except Exception:
                         pass
                     if kill_turns or die_turns or order:
-                        verdict = {"kill_turns": kill_turns,
-                                   "die_turns": die_turns,
-                                   "order": order}
+                        # complete 表示三项全有。缺任何一项前端都不该
+                        # 用"2 回合击杀 · — 回合被击杀"这种半吊子结论。
+                        verdict = {
+                            "kill_turns": kill_turns,
+                            "die_turns": die_turns,
+                            "order": order,
+                            "complete": bool(kill_turns and die_turns and order),
+                        }
             except Exception:
                 verdict = None
 

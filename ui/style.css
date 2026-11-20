@@ -555,6 +555,11 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .energy i.on { background: var(--accent-soft); }
 .energy i.now { background: var(--accent); }
+.energy-na {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  text-shadow: var(--halo);
+}
 
 .buff {
   font-size: 10px;
