@@ -474,24 +474,49 @@ def main():
 
             折叠/展开后必须调这个 —— 否则折叠了窗口还是原来那么高，
             下面一大片透明区域会挡住鼠标（透明区域也是窗口）。
+
+            坑：不能用 panel.scrollHeight —— 面板是 height:100% 的 flex 容器，
+            scrollHeight 返回的是**容器高度**而不是内容高度，
+            拿它去 resize 会让窗口越缩越大（实测 763 -> 1562）。
+            正确做法：累加所有直接子元素的实际高度。
             """
             hwnd = state.get("hwnd")
             if not hwnd:
                 return False
             try:
-                h = win.evaluate_js(
-                    "(document.getElementById('panel')||{}).scrollHeight||0")
+                h = win.evaluate_js("""
+                  (() => {
+                    const p = document.getElementById('panel');
+                    if (!p) return 0;
+                    let sum = 0;
+                    for (const el of p.children) {
+                      const st = getComputedStyle(el);
+                      if (st.display === 'none') continue;
+                      sum += el.getBoundingClientRect().height;
+                    }
+                    return Math.round(sum);
+                  })()
+                """)
                 iw = win.evaluate_js("window.innerWidth")
                 if not h or int(h) < 40:
                     return False
-                s = dpi_scale()
-                css_h = int(h) + 1
-                # 不要超过屏幕可用高度
-                screen_css = int(MAX_PHYS_H / max(1.0, s))
+
+                css_w = int(iw or 340)
+                css_h = int(h) + 2
+                screen_css = int(MAX_PHYS_H / max(1.0, dpi_scale()))
                 css_h = min(css_h, screen_css - 60)
-                pw, ph = css_size(int(iw or 340), css_h)
-                UD.SetWindowPos(hwnd, 0, 0, 0, int(pw * s), int(ph * s),
-                                SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW)
+
+                pw, ph = css_size(css_w, css_h)
+                try:
+                    win.resize(pw, ph)
+                    return True
+                except Exception:
+                    pass
+
+                s = dpi_scale()
+                UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0,
+                                int(css_w * s) + 26, int(css_h * s) + 70,
+                                SWP_NOMOVE | SWP_SHOWWINDOW)
                 return True
             except Exception:
                 return False
