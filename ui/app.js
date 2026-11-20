@@ -581,6 +581,62 @@ function bindDrag() {
   } catch (_) {}
 }
 
+/* ================================================================
+   键盘快捷键
+   ----------------------------------------------------------------
+   打架时鼠标在游戏上，按快捷键比点面板快得多。
+
+     Alt+T   折叠 / 展开
+     Alt+A   透明度循环（100 / 78 / 55 / 35 / 20）
+     Alt+P   点击穿透开关
+     Alt+H   隐藏（Ctrl+Alt+O 叫回来）
+     Esc     关设置抽屉
+   ================================================================ */
+function bindHotkeys() {
+  const ALPHAS = [100, 78, 55, 35, 20];
+
+  document.addEventListener('keydown', (e) => {
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      const k = e.key.toLowerCase();
+      if (k === 't') {
+        e.preventDefault();
+        $('btnFold').click();
+        return;
+      }
+      if (k === 'a') {
+        e.preventDefault();
+        const slider = $('alpha');
+        const cur = +slider.value;
+        // 找下一个更小的档，到底就回到 100
+        let next = ALPHAS[0];
+        for (const v of ALPHAS) {
+          if (v < cur) { next = v; break; }
+        }
+        slider.value = next;
+        slider.dispatchEvent(new Event('input'));
+        return;
+      }
+      if (k === 'p') {
+        e.preventDefault();
+        $('btnPass').click();
+        return;
+      }
+      if (k === 'h') {
+        e.preventDefault();
+        callNative('hide');
+        return;
+      }
+    }
+    if (e.key === 'Escape') {
+      const drawer = $('drawer');
+      if (drawer.classList.contains('open')) {
+        drawer.classList.remove('open');
+        $('btnSet').setAttribute('aria-expanded', 'false');
+      }
+    }
+  });
+}
+
 /* ================================================================ */
 document.addEventListener('DOMContentLoaded', () => {
   bindAlpha();
@@ -588,6 +644,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindPass();
   bindFold();
   bindDrag();
+  bindHotkeys();
 
   renderEmpty();
   poll();

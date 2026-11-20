@@ -335,7 +335,27 @@ body.embedded .overlay .panel {
   text-shadow: var(--halo);
 }
 .drawer-row:first-child { padding-top: 9px; height: 38px; }
-.drawer-btns { padding-bottom: 10px; height: 40px; }
+.drawer-btns { padding-bottom: 6px; height: 36px; }
+
+/* 快捷键提示：一行小字，不抢视觉但让人知道有这些键 */
+.drawer-row.keys {
+  height: 22px;
+  padding-bottom: 8px;
+  gap: 10px;
+  font-size: 9.5px;
+  color: var(--ink-3);
+}
+.drawer-row.keys span { display: inline-flex; align-items: center; gap: 3px; }
+.drawer-row.keys kbd {
+  font-family: var(--font-num);
+  font-size: 9px;
+  padding: 0 3px;
+  border-radius: 2px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--ink-2);
+  line-height: 1.5;
+}
 
 .dlabel { font-size: 11px; color: var(--ink-2); flex: none; }
 .dval {
