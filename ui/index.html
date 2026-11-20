@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RocoAgent · 对战悬浮窗</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- 演示控制条：仅视觉稿阶段存在，正式版由窗口壳接管 -->
+<div class="demo-bar">
+  <span class="demo-title">M0 视觉稿</span>
+  <div class="demo-scen">
+    <button data-scenario="A" class="active">克制</button>
+    <button data-scenario="B">中性</button>
+    <button data-scenario="C">被克制</button>
+  </div>
+  <span class="demo-hint">拖标题栏移动 · 双击折叠</span>
+</div>
+
+<div class="stage" id="stage">
+
+  <div class="overlay" id="overlay">
+    <div class="panel" id="panel">
+
+      <!-- ── 系统栏 ────────────────────────────────── -->
+      <header class="hdr" id="hdr">
+        <i class="live-dot" id="liveDot"></i>
+        <span class="hdr-state" id="sysState">战斗中</span>
+        <span class="hdr-turn" id="sysTurn">T12</span>
+        <span class="hdr-clock" id="sysClock">08s</span>
+        <span class="grow"></span>
+        <span class="dets" id="sysDets"><i class="on"></i><i class="on"></i><i class="on"></i></span>
+        <span class="hdr-ms" id="sysMs">4.2ms</span>
+        <button class="ibtn" id="btnSet" title="设置" aria-label="设置" aria-expanded="false">
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M1 3.2h10M1 8.8h10" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+            <circle cx="4.2" cy="3.2" r="1.7" fill="currentColor"/>
+            <circle cx="7.8" cy="8.8" r="1.7" fill="currentColor"/>
+          </svg>
+        </button>
+      </header>
+
+      <!-- ── 设置抽屉 ──────────────────────────────── -->
+      <div class="drawer" id="drawer">
+        <div class="drawer-inner">
+          <div class="drawer-row">
+            <span class="dlabel">透明度</span>
+            <input type="range" id="alpha" min="20" max="100" value="84" step="1"
+                   aria-label="面板透明度">
+            <span class="dval" id="alphaVal">84%</span>
+          </div>
+          <div class="drawer-row drawer-btns">
+            <button class="tbtn" id="btnPass" aria-pressed="false">
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect x="1.2" y="4.2" width="7.6" height="5" rx="1.2" stroke="currentColor" stroke-width="1.1"/>
+                <path d="M3.2 4.2V3a1.8 1.8 0 013.6 0v1.2" stroke="currentColor" stroke-width="1.1"/>
+              </svg>
+              点击穿透
+            </button>
+            <button class="tbtn" id="btnFold">折叠</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── 我方 ──────────────────────────────────── -->
+      <section class="side self">
+        <div class="side-head">
+          <div class="avatar" id="meAvatar">寂</div>
+          <span class="pet-name" id="meName">寂灭骨龙</span>
+          <span class="tchips" id="meTypes"></span>
+          <span class="grow"></span>
+          <span class="hp-pct" id="mePct">78</span><span class="hp-unit">%</span>
+        </div>
+        <div class="bar" id="meBar">
+          <i class="ghost" id="meGhost"></i>
+          <i class="fill" id="meFill"></i>
+        </div>
+        <div class="side-foot">
+          <span class="hp-abs" id="meAbs">382 / 490</span>
+          <span class="grow"></span>
+          <span class="energy" id="meEnergy"></span>
+          <span class="buff" id="meBuff">物攻 +1</span>
+        </div>
+      </section>
+
+      <!-- ── 克制关系 ──────────────────────────────── -->
+      <div class="matchup" id="matchup">
+        <span class="mu-side">
+          <em>我打</em><b id="muOut">×3.0</b>
+        </span>
+        <span class="mu-arrow">⇄</span>
+        <span class="mu-side">
+          <em>打我</em><b id="muIn">×0.5</b>
+        </span>
+        <span class="grow"></span>
+        <span class="mu-tag" id="muTag">双重克制</span>
+      </div>
+
+      <!-- ── 敌方 ──────────────────────────────────── -->
+      <section class="side foe">
+        <div class="side-head">
+          <div class="avatar" id="foeAvatar">水</div>
+          <span class="pet-name" id="foeName">水灵</span>
+          <span class="tchips" id="foeTypes"></span>
+          <span class="grow"></span>
+          <span class="hp-pct" id="foePct">45</span><span class="hp-unit">%</span>
+        </div>
+        <div class="bar" id="foeBar">
+          <i class="ghost" id="foeGhost"></i>
+          <i class="fill" id="foeFill"></i>
+        </div>
+        <div class="infer">
+          <span class="kv"><em>血量</em><b id="foeHpRange">349~419</b></span>
+          <span class="kv"><em>物防</em><b id="foeDefRange">178~231</b></span>
+        </div>
+        <div class="infer infer2">
+          <span class="kv"><em>性格</em><b id="foeNature">固执</b><span class="conf" id="foeConf">62%</span></span>
+          <span class="grow"></span>
+          <span class="est" id="foeEst">
+            <em>推测</em>
+            <span class="dots" id="foeDots"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+          </span>
+        </div>
+      </section>
+
+      <!-- ── 技能 ──────────────────────────────────── -->
+      <section class="skills" id="skills"></section>
+
+      <!-- ── 结论 ──────────────────────────────────── -->
+      <footer class="verdict" id="verdict">
+        <span><b id="vKill">1</b> 回合击杀</span>
+        <span class="sep">·</span>
+        <span><b id="vDie">4</b> 回合被击杀</span>
+        <span class="sep">·</span>
+        <span id="vOrder">先手</span>
+      </footer>
+
+    </div>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
