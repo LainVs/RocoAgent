@@ -63,6 +63,7 @@ import digitread as dr  # noqa: E402
 import esp_shim as rocs  # noqa: E402  (BLE via the espfast daemon)
 import asyncio  # noqa: E402
 import portraits  # noqa: E402  (top-left HUD bust -> active pet)
+import portrait_onnx  # noqa: E402  (roco-cal 620 类立绘识别)
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -827,6 +828,37 @@ class Bot:
         items = portraits.load_library(portraits.FOE_LIB_DIR)
         name, sc = portraits.identify(img, items,
                                       target=(box[2] - 2 * m, box[3] - 2 * m))
+        # ---- 第二通道：角色立绘 ONNX 识别（roco-cal 模型，620 类）
+        # HUD 头像只有 71 张模板，覆盖面极低；立绘模型实测置信度 0.76~1.00。
+        # 两个通道都跑，由 identify_fused 融合（HUD 高置信优先，否则用立绘）。
+        p_res = []
+        if portrait_onnx.available():
+            try:
+                p_res = portrait_onnx.predict_region(self.screen, "foe")
+            except Exception as e:
+                log("FOE -> onnx failed: %s: %s" % (type(e).__name__, e))
+        fused = portrait_onnx.identify_fused(name, p_res, sc)
+        if fused["conflict"]:
+            log("FOE -> id conflict hud=%s(%.2f) portrait=%s(%.2f) -> use %s"
+                % (fused["hud"], fused["hud_conf"],
+                   fused["portrait"], fused["portrait_conf"], fused["source"]))
+        if fused["source"] == "portrait" and fused["name"]:
+            # 立绘通道给的是种族名（不带编号），可直接当 foe_name 用
+            if fused["name"] != self.foe_name:
+                log("FOE -> %s (%.2f, 立绘通道)" % (fused["name"], fused["conf"]))
+                self.foe_name = fused["name"]
+                self.foe_bust = fused["name"]
+                # 立绘通道能定名字，但 species_id 需要查库
+                try:
+                    import portrait_db as P
+                    row = P.connect().execute(
+                        "SELECT id FROM species WHERE name=? "
+                        "ORDER BY implemented DESC, total DESC LIMIT 1",
+                        (fused["name"],)).fetchone()
+                    if row:
+                        self.foe_species_id = row[0]
+                except Exception:
+                    pass
         # 对面换人：HUD 头像会变。用 12x12 灰度粗指纹判断，光照/抖动不会
         # 越过阈值，但换一只精灵一定越得过去。?
         sig = _bust_sig(img)
