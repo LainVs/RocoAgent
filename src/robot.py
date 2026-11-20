@@ -250,10 +250,17 @@ class Bot:
         process exited rc=1 without a traceback in the log, and the supervisor
         restarted it four seconds later mid-match. Reconnecting here keeps the
         bot alive across board resets and radio hiccups.
+
+        连续失败会主动退出：实测 00:55 之后板子彻底离线，每次命令都
+        "BLE titlebar failed (board offline)" 重试 2 次，机器人还在原地
+        空转 4 分钟（STUCK 113s/226s）。退出让 supervisor 重新拉起并做
+        完整 BLE 扫描，比原地死等有效。
         """
         for attempt in (1, 2):
             try:
-                return self.loop.run_until_complete(coro_factory())
+                r = self.loop.run_until_complete(coro_factory())
+                self._ble_fail = 0
+                return r
             except Exception as e:
                 log("BLE %s failed (%s), attempt %d" % (what, e, attempt))
                 try:
@@ -267,9 +274,16 @@ class Bot:
                         self.ble.connect(allow_discover=False))
                 except Exception:
                     ok = False
-                if not ok:
-                    time.sleep(0.5)
+                if ok:
+                    self._ble_fail = 0
                     continue
+                self._ble_fail = getattr(self, "_ble_fail", 0) + 1
+                if self._ble_fail >= 6:
+                    log("BLE offline x%d -> exiting so the supervisor "
+                        "restarts with a full scan" % self._ble_fail)
+                    raise SystemExit(3)
+                time.sleep(0.5)
+                continue
         return None
 
     def _click_to_focus(self):
@@ -2285,11 +2299,22 @@ class Bot:
                 # bot emit another 12 blind clicks every minute; at 15:46 that
                 # walked the character out of the PvP arena into the open world,
                 # where none of our detectors match and it never came back.
-                if not self.advance_gave_up:
-                    self.advance_gave_up = True
-                    log("advance cap reached on an unrecognised screen - "
-                        "stopping blind clicks")
-                return
+                #
+                # 但"永久放弃"也会死锁：实测 23:28 / 23:30 两次 cap 之后
+                # 画面其实换了（state 从 foe=None 变成 foe=92.2），
+                # 只是我们不再点，于是白等 60s 触发 STUCK。
+                # 折中：**画面指纹变了才重置**（同一画面绝不重复点）。
+                fp = self._screen_fingerprint()
+                if fp != getattr(self, "_advance_fp", None):
+                    self._advance_fp = fp
+                    self.advance_count = 0
+                    self.advance_gave_up = False
+                if self.advance_count >= 12:
+                    if not self.advance_gave_up:
+                        self.advance_gave_up = True
+                        log("advance cap reached on an unrecognised screen - "
+                            "stopping blind clicks")
+                    return
             self.advance_count += 1
             if self.advance_count in (1, 5, 8, 12):
                 log("advance splash (click %d)" % self.advance_count)
