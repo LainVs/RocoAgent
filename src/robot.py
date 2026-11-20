@@ -80,7 +80,7 @@ from config import (  # noqa: F401
     ADVANCE_REL, RESULT_SKIP_REL, FOE_NAME_BOX,
     ACTION_BTN_BAND, CONFIRM_BAND, RESULT_BAND, RESULT_LIST_BAND,
     STUCK_S, CLICK_COOLDOWN_S, ADVANCE_COOLDOWN_S,
-    SWITCH_ROW_ABS, log, acquire_lock, _stdout_is_log,
+    SWITCH_ROW_ABS, log, acquire_lock, _stdout_is_log, _log_exception,
 )
 
 # 感知与 IO 层已拆分，re-export 保持兼容。

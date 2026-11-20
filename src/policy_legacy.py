@@ -8,6 +8,13 @@ from __future__ import annotations
 import random
 import time
 
+# 这两个常量原本在 robot.py 的 1299-1305 行（decide 段之前），
+# 拆分时被切到了 config 段，但只有本模块用，所以放回这里。
+HEAL_HINTS = ("休息回复", "回复", "治疗")
+
+# 中文技能名 OCR 不可靠，但每只精灵的"非伤害槽位"（dash）模式是唯一的。
+# 队伍表：奶龙 1 泥浆铠甲(-) 2 过充(num) 3 电磁偏转(-) 4 休息回复(-) -> 治疗在 4 号槽
+HEAL_BY_DASH = {(1, 3, 4): 4}
 
 
 def _heal_slot(st):
