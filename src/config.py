@@ -96,6 +96,10 @@ RESULT_LIST_BAND = (120, 330, 420, 900)    # the six "我方战况" rows
 STUCK_S = 60.0                         # no progress for this long => force an action
 CLICK_COOLDOWN_S = 6.0
 ADVANCE_COOLDOWN_S = 2.5
+# 结算后锁定多少秒：这段时间只判胜负，不点任何"推进"。
+# 实测原来读完记录 1 秒就 advance splash -> lobby -> 开始挑战，用户根本
+# 看不见胜负画面；而且读记录要 2~3 秒，会和推进点击抢同一块屏幕。
+RESULT_HOLD = 8.0
 
 # Forced-switch panel: the five replacement rows down the left edge (physical
 # pixels), measured off a live frame at 1:1.

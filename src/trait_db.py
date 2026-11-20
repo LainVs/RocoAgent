@@ -143,7 +143,9 @@ def resolve(trait, portrait_id=None, species_id=None, db_path=None):
     """
     t = (trait or "").strip()
     out = {"trait": t, "candidates": [], "types": None,
-           "how": "unknown", "ambiguous": True, "families": []}
+           "how": "unknown", "ambiguous": True, "families": [],
+           "best_types": None, "best_species": None,
+           "best_how": None, "best_conf": "none"}
 
     # 特性读不到（空 / '？？？'）**不等于属性未知**：
     # '？？？' 是 PvE 专属首领条目的占位特性（desc："看不出特性"），
@@ -155,7 +157,10 @@ def resolve(trait, portrait_id=None, species_id=None, db_path=None):
             tn = types_of(known, db_path)
             if tn:
                 out.update({"types": tn, "how": "portrait",
-                            "ambiguous": False})
+                            "ambiguous": False,
+                            "best_types": tn,
+                            "best_species": int(known),
+                            "best_how": "portrait", "best_conf": "high"})
         return out
 
     e = index(db_path).get(t)
@@ -169,6 +174,10 @@ def resolve(trait, portrait_id=None, species_id=None, db_path=None):
         out["types"] = types[0]
         out["how"] = "unique" if len(e["ids"]) == 1 else "same_types"
         out["ambiguous"] = False
+        out["best_types"] = types[0]
+        out["best_species"] = e["ids"][0]
+        out["best_how"] = out["how"]
+        out["best_conf"] = "high"
         return out
 
     # 候选属性不同：用已知物种收窄
@@ -184,10 +193,74 @@ def resolve(trait, portrait_id=None, species_id=None, db_path=None):
                 out["types"] = r["type_names"].strip()
                 out["how"] = "portrait"
                 out["ambiguous"] = False
+                out["best_types"] = out["types"]
+                out["best_species"] = int(known)
+                out["best_how"] = "portrait"
+                out["best_conf"] = "high"
                 return out
 
     out["how"] = "ambiguous"
+    _fill_best(out, e, db_path)
     return out
+
+
+def _fill_best(out, e, db_path=None):
+    """候选属性不一致时，给出一个"最佳猜测"填进 out。
+
+    用户口径（2026-11-20）：宁可按默认算，也不要完全不算；
+    算错了后面可以人工二次修正。
+
+    优先级：
+      1. 候选名字全部相同 -> 名字确定，只是库里重复条目（如 千棘海针）
+      2. 属性组里数量最多的那个（平票取第一个）
+      3. 都没有 -> 取第一个候选
+    """
+    ids = e.get("ids") or []
+    if not ids:
+        return
+    db = connect(db_path)
+    try:
+        rows = []
+        for cid in ids:
+            r = db.execute("SELECT id,name,type_names FROM species WHERE id=?",
+                           (int(cid),)).fetchone()
+            if r:
+                rows.append((r["id"], r["name"] or "",
+                             (r["type_names"] or "").strip()))
+    finally:
+        db.close()
+    if not rows:
+        return
+
+    # 1) 名字全部相同
+    names = {n for _i, n, _t in rows}
+    if len(names) == 1:
+        tn = rows[0][2]
+        if tn and tn not in ("[]", "null"):
+            out.update({"best_types": tn, "best_species": rows[0][0],
+                        "best_how": "same_name", "best_conf": "high"})
+            return
+
+    # 2) 属性组按出现次数排序（稳定排序 -> 平票时保留第一个）
+    order = []
+    counts = {}
+    first_id = {}
+    for cid, _n, tn in rows:
+        if not tn or tn in ("[]", "null"):
+            continue
+        if tn not in counts:
+            order.append(tn)
+            counts[tn] = 0
+            first_id[tn] = cid
+        counts[tn] += 1
+    if not counts:
+        return
+    best_tn = max(order, key=lambda x: (counts[x], -order.index(x)))
+    conf = "low" if len(counts) > 1 else "high"
+    out.update({"best_types": best_tn, "best_species": first_id[best_tn],
+                "best_how": "majority" if len(counts) > 1 else "same_types",
+                "best_conf": conf})
+    return
 
 
 def types_of(species_id, db_path=None):

@@ -400,6 +400,12 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
         data["types_how"] = res["how"]
         data["types_conf"] = "none" if res["ambiguous"] else "high"
         data["trait_candidates"] = res["candidates"]
+        # 宽松结果：拿不准时也给一个默认值，供决策层"宁可按默认算"。
+        # 严格结果 types 保持原样（None = 不猜），两者并存。
+        data["best_types"] = res.get("best_types")
+        data["best_species"] = res.get("best_species")
+        data["best_how"] = res.get("best_how")
+        data["best_conf"] = res.get("best_conf")
         if sid is None and len(res["candidates"]) == 1:
             sid = res["candidates"][0]        # 特性唯一 -> 直接定物种
         elif sid is not None and res["candidates"] and sid not in res["candidates"]:

@@ -79,7 +79,7 @@ from config import (  # noqa: F401
     LOBBY_BTN, RESULT_BTN, LOBBY_BTN_REL, RESULT_BTN_REL,
     ADVANCE_REL, RESULT_SKIP_REL, FOE_NAME_BOX,
     ACTION_BTN_BAND, CONFIRM_BAND, RESULT_BAND, RESULT_LIST_BAND,
-    STUCK_S, CLICK_COOLDOWN_S, ADVANCE_COOLDOWN_S,
+    STUCK_S, CLICK_COOLDOWN_S, ADVANCE_COOLDOWN_S, RESULT_HOLD,
     SWITCH_ROW_ABS, log, acquire_lock, _stdout_is_log, _log_exception,
 )
 
@@ -497,6 +497,7 @@ class Bot:
                         self._pet_poll_at = 0.0
                         self.foe_name = None
                         self.foe_types = None
+                        self.foe_types_conf = "none"
                         self.foe_species_id = None
                         self.foe_bust = None
                         self._foe_poll_at = 0.0
@@ -512,6 +513,10 @@ class Bot:
                         # Per-match tally: a lifetime counter made the panel
                         # log read "dead=9" for a six-pet team.
                         self.dead_count = 0
+                        # 每局重置"已存过哪些未知头像"的去重集合，
+                        # 否则整晚只会存到第一局的几只。
+                        self._pet_unknown_sigs = []
+                        self._foe_unknown_sigs = []
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -765,11 +770,22 @@ class Bot:
                     self.slot_species[self.cur_slot] = sp
                     self.bench_names[self.cur_slot] = sp
             return
-        # Unknown bust: keep one sample every 10 s so the library can be
-        # extended by hand without replaying a match. Store the centre crop so
-        # every template in the library has the same geometry.
+        # Unknown bust: keep ONE sample per distinct pet per match.
+        #
+        # 原来每 10 秒存一张（头像 + 名字条各一份）。11-19 连续跑 20 小时
+        # 攒下 4669 张，而真正标注好的只有 18 张 —— 前 600 张只对应 176 只
+        # 不同精灵，最多的一只被存了 55 次。现在改成按头像指纹去重：
+        # 同一只精灵整场只存一次，不同精灵各存一次。
         if now - self._pet_unknown_at > 10.0:
             self._pet_unknown_at = now
+            seen = getattr(self, "_pet_unknown_sigs", None)
+            if seen is None:
+                seen = self._pet_unknown_sigs = []
+            sig = _bust_sig(img)
+            if sig is not None and any(_sig_dist(sig, s) < 10.0 for s in seen):
+                return          # 这只已经存过
+            if sig is not None:
+                seen.append(sig)
             ts = time.strftime("%H%M%S")
             path = os.path.join(portraits.LIB_DIR, "_unknown_%s.png" % ts)
             try:
@@ -850,6 +866,14 @@ class Bot:
             return
         if now - self._foe_unknown_at > 12.0:
             self._foe_unknown_at = now
+            seen = getattr(self, "_foe_unknown_sigs", None)
+            if seen is None:
+                seen = self._foe_unknown_sigs = []
+            sig = _bust_sig(img)
+            if sig is not None and any(_sig_dist(sig, s) < 10.0 for s in seen):
+                return          # 这只对面已经存过
+            if sig is not None:
+                seen.append(sig)
             ts = time.strftime("%H%M%S")
             path = os.path.join(portraits.FOE_LIB_DIR, "_unknown_%s.png" % ts)
             try:
@@ -982,23 +1006,118 @@ class Bot:
             % (data.get("name"), data.get("level"), data.get("ability"),
                data.get("types") or ("?(%s)" % data.get("types_how")),
                data.get("skill"), dt))
-        # 名字读不到但特性定出了物种：把物种名补回来，后面的伤害计算才有输入
-        if not data.get("name") and data.get("species_id"):
-            try:
-                import gamedb
-                sp = (gamedb.species() or {}).get(data["species_id"])
-                if sp and sp.get("name"):
-                    data["name"] = sp["name"]
-                    log("FOE SCAN -> name from trait: %s" % sp["name"])
-            except Exception:
-                pass
+        # 名字读不到但特性定出了物种：把物种名补回来，后面的伤害计算才有输入。
+        # 原实现有两个 bug：
+        #   1. 调用了 gamedb.species()，但这个函数根本不存在（gamedb 只有
+        #      build/report），所以 "name from trait" 从来没成功过
+        #   2. 只在 species_id 已有时才补名字，而 species_id 恰恰经常是 None
+        #      （特性有 2 个以上候选时 foe_panel 不敢定物种）
+        # 现在改成：species_id 为空但候选里的名字一致时，就采用那个名字。
+        if not data.get("name"):
+            name = self._name_from_trait(data)
+            if name:
+                data["name"] = name
+                log("FOE SCAN -> name from trait: %s" % name)
+
+        # 属性兜底：严格结果 types 为 None 时用 best_types（默认猜测），
+        # 并记下置信度，方便事后人工修正。用户口径：宁可按默认算，
+        # 也不要完全不算。
+        strict = data.get("types")
+        best = data.get("best_types")
+        conf = "high" if strict else (data.get("best_conf") or "none")
+        if not strict and best:
+            data["types"] = best
+            data["types_how"] = data.get("best_how") or "guess"
+            log("FOE SCAN -> types guessed %s (conf=%s, %d candidates)"
+                % (best, conf, len(data.get("trait_candidates") or [])))
+            self._log_trait_guess(data, best, conf)
+        data["types_conf"] = conf
+
         if data.get("name"):
             self.foe_name = data["name"]
             self.foe_bust = data["name"]
             self.foe_types = data.get("types")
+            self.foe_types_conf = conf
             self.foe_species_id = data.get("species_id")
             return True
         return False
+
+    def _log_trait_guess(self, data, picked, conf):
+        """把"猜出来的属性"写进 logs/trait_guess.jsonl，供人工二次修正。"""
+        try:
+            import sqlite3
+            from portrait_db import DB_PATH
+            cands = data.get("trait_candidates") or []
+            detail = []
+            if cands:
+                db = sqlite3.connect(DB_PATH)
+                try:
+                    for cid in cands[:12]:
+                        r = db.execute(
+                            "SELECT name,type_names FROM species WHERE id=?",
+                            (cid,)).fetchone()
+                        if r:
+                            detail.append("%s%s" % (r[0], r[1] or ""))
+                finally:
+                    db.close()
+            rec = {"t": time.strftime("%Y-%m-%d %H:%M:%S"),
+                   "trait": data.get("ability"),
+                   "picked": picked if isinstance(picked, (list, tuple))
+                   else [picked],
+                   "conf": conf,
+                   "how": data.get("best_how"),
+                   "name": data.get("name"),
+                   "candidates": detail}
+            with open(os.path.join(LOG_DIR, "trait_guess.jsonl"), "a",
+                      encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+
+    def _name_from_trait(self, data):
+        """特性 -> 候选物种 -> 名字。候选名字全部相同时才采用。
+
+        实测：溶解腐蚀 -> candidates=[5012, 5029]，两条都是"千棘海针"
+        （库里同名重复条目），所以名字是确定的，只是 id 不唯一。
+        """
+        cands = data.get("trait_candidates") or []
+        if not cands:
+            return None
+        try:
+            import sqlite3
+            from portrait_db import DB_PATH
+            db = sqlite3.connect(DB_PATH)
+            try:
+                names = set()
+                for cid in cands:
+                    r = db.execute("SELECT name FROM species WHERE id=?",
+                                   (cid,)).fetchone()
+                    if r and r[0]:
+                        names.add(r[0])
+            finally:
+                db.close()
+        except Exception:
+            return None
+        # 候选名字完全一致 -> 直接用（库里同名重复条目）
+        if len(names) == 1:
+            return names.pop()
+        # 名字不完全一致：若属性一致，说明"是哪只"不影响伤害计算，
+        # 取 best_species 的名字（用户口径：先给默认值，后面人工修正）
+        if data.get("best_conf") in ("high", "low") and data.get("best_species"):
+            try:
+                import sqlite3
+                from portrait_db import DB_PATH
+                db = sqlite3.connect(DB_PATH)
+                try:
+                    r = db.execute("SELECT name FROM species WHERE id=?",
+                                   (data["best_species"],)).fetchone()
+                    if r and r[0]:
+                        return r[0]
+                finally:
+                    db.close()
+            except Exception:
+                pass
+        return None
 
     def _cast_ocr(self, st):
         """播报分流：
@@ -2005,11 +2124,14 @@ class Bot:
             return
         if now < self.suppress_until:
             return
+        # 结算后先锁定 RESULT_HOLD 秒：只判胜负，不点任何推进。
+        # 实测读完记录 1 秒后就 advance splash -> lobby -> 开始挑战，
+        # 用户根本来不及看见胜负画面，而且读记录会和推进点击抢。
         # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。?
         # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。?
         if (self.match_ended_at
                 and self.match_count != getattr(self, "_rec_done_for", -1)
-                and now - self.match_ended_at < 90.0):
+                and now - self.match_ended_at < RESULT_HOLD):
             self._rec_done_for = self.match_count
             try:
                 import record
@@ -2020,6 +2142,9 @@ class Bot:
                     verdict = record.diff(prev, cur)
                     log("record %dW/%dL prev=%s -> %s"
                         % (cur[0], cur[1], prev, verdict))
+                    # prev 为 None 说明这是第一次读（record_state.json 还不存在）：
+                    # 只建立基线，不判胜负。原来这里会直接 prev[0] 崩掉
+                    # （日志 "record read failed: 0"）。
                     if verdict and prev:
                         rec = {"ts": time.strftime("%H:%M:%S"),
                                "before": prev[0], "after": cur[0],
@@ -2033,12 +2158,19 @@ class Bot:
                         except Exception:
                             pass
                         log("RESULT %s (%dW/%dL)" % (verdict, cur[0], cur[1]))
+                    elif prev is None:
+                        log("record baseline set to %dW/%dL (first run)" % cur)
                     self._rec_prev = cur
                     record.save_state(*cur)
                 self.suppress_until = now + 2.0
             except Exception as e:
                 log("record read failed: %s" % e)
 
+        # 结算观察窗口：判完胜负就停手，不点"推进"、不点"开始挑战"。
+        # 让用户能看见结算画面（胜负/伤害统计/段位变化）。
+        if (self.match_ended_at
+                and now - self.match_ended_at < RESULT_HOLD):
+            return
 
         # The bottom-centre action button (确认首发 / 退出 is the single most
         # common reason to be stuck, so check it BEFORE the VS guard: the
@@ -2599,6 +2731,10 @@ class Bot:
             # 身份字段：只有头像库认得出来时才有值（目前只有恶魔狼）
             "our_pet": getattr(self, "active_pet", None),
             "foe_pet": getattr(self, "foe_name", None),
+            # 对面属性是怎么来的：high=特性唯一/同名，low=多候选取多数，
+            # none=没有。复盘时用它区分"属性确定"和"属性是猜的"。
+            "foe_types": getattr(self, "foe_types", None),
+            "foe_types_conf": getattr(self, "foe_types_conf", "none"),
             # lit/plate 一定要记：否则离线分析"为什么没选最大伤，?时，
             # 分不，?那张卡是灰的"?决策算错?。?
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],

@@ -57,12 +57,18 @@ def read(screen, click, log=None):
     try:
         for attempt in range(3):
             click(px, py)
-            # 面板有入场动画，0.9 秒读一次常常还是空的；分两段等
+            # 面板有入场动画：实测 0.35s×4 常常还是空白（日志里大量
+            # "record ocr[1]: " 空字符串）。这里改成"最多等 2.5 秒、
+            # 一看到白底就多等 0.4 秒让数字画完再读"。
             img = None
-            for _ in range(4):
-                time.sleep(0.35)
+            deadline = time.time() + 2.5
+            while time.time() < deadline:
+                time.sleep(0.25)
                 img = screen.grab_client(RECORD_BOX)
                 if _panel_open(img):
+                    # 白底出现了，但数字可能还没画完 —— 再给它一点时间
+                    time.sleep(0.4)
+                    img = screen.grab_client(RECORD_BOX)
                     break
             if img is None or img.size == 0:
                 continue
