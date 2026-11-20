@@ -203,12 +203,16 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
     因为立绘框里混了背景和 NPC，模型在相邻帧给出不同答案。
     foe_name 一直变，决策全错。
 
-    新策略（稳定优先）
-    -----------------
-      1. HUD 置信 >=0.72 -> 用 HUD（游戏自己的名字最可信）
-      2. 立绘置信 >=0.85 且连续 2 帧同一答案 -> 才覆盖 HUD
-      3. 已有认定(prev) 时，只有新答案置信显著更高(>=0.90)才改
-      4. 都不满足 -> 保持 prev 不变（绝不抖）
+    新策略（稳定优先 + HUD 权威）
+    ----------------------------
+    实测（01:19）：HUD 说「绒光优优 42%」（游戏界面显示的，绝对正确），
+    立绘通道却给出「铂金独角兽 1.00」——模型对这个形态不准。
+    所以 **HUD 一旦给出名字，就是权威，立绘不得覆盖**。
+
+      1. HUD 有结果（>=0.60）-> 用 HUD，立绘只记日志
+      2. HUD 无结果 -> 立绘要 置信>=0.85 且 连续 2 帧同一答案
+      3. 已有认定(prev) 时，除非新答案 >=0.92 否则不改
+      4. 都不满足 -> 保持 prev（绝不抖）
     """
     top = portrait_result[0] if portrait_result else (None, 0.0)
     p_name, p_conf = top
@@ -217,22 +221,20 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
            "portrait": p_name, "portrait_conf": round(p_conf, 3),
            "kept": False}
 
-    # 1. HUD 够可信，直接用（游戏显示的名字优先）
-    if hud_result and hud_conf >= 0.72:
+    # 1. HUD 有名字 -> 权威，立绘不覆盖（只记录冲突供复盘）
+    if hud_result and hud_conf >= 0.60:
         out.update(name=hud_result, conf=hud_conf, source="hud")
         if p_name and p_name != hud_result and p_conf >= 0.85:
             out["conflict"] = True
         return out
 
-    # 2. 立绘要"高置信 + 稳定"才敢用
+    # 2. HUD 没有 -> 立绘要"高置信 + 稳定"才敢用
     if p_name and p_conf >= 0.85 and stable_count >= 2:
         # 3. 已有认定时，除非显著更高，否则不改
-        if prev and prev != p_name and p_conf < 0.90:
+        if prev and prev != p_name and p_conf < 0.92:
             out.update(name=prev, conf=0.0, source="kept", kept=True)
             return out
         out.update(name=p_name, conf=p_conf, source="portrait")
-        if hud_result and hud_result != p_name:
-            out["conflict"] = True
         return out
 
     # 4. 都不满足 -> 保持原判，绝不抖

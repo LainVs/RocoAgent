@@ -905,7 +905,7 @@ class Bot:
                 self._foe_sig_streak = 0
         else:
             self._foe_sig_streak = 0
-        if name is not None and sc >= 0.72 and (margin if 'margin' in dir() else 1.0) >= 0.06:
+        if name is not None and sc >= 0.60 and (margin if 'margin' in dir() else 1.0) >= 0.06:
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
                 log("FOE -> %s (%.2f)" % (sp, sc))
@@ -1476,6 +1476,9 @@ class Bot:
         if not st.get("battle") or not st.get("bar"):
             return None
         if getattr(self, "faint_at", None) is not None:
+            return None
+        # 换人连续失败后短暂禁掉，避免"想换→换不掉→再想换"的死循环
+        if time.time() < getattr(self, "switch_block_until", 0.0):
             return None
 
         cards = [c for c in st["skills"] if c]
@@ -2142,6 +2145,16 @@ class Bot:
                 self.switch_count += 1
                 self.last_switch_turn = self.turn
                 self.cur_slot = action[1]
+                self.switch_fail_streak = 0
+            else:
+                # 换人没生效（点击/空格被吞）。记一次失败，下一轮不要再选同一只，
+                # 否则会"想换→换不掉→再想换"无限循环，实测卡了 4 个回合。
+                self.switch_fail_streak = getattr(self, "switch_fail_streak", 0) + 1
+                if self.switch_fail_streak >= 3:
+                    log("SWITCH -> 连续 %d 次失败，本轮放弃换人"
+                        % self.switch_fail_streak)
+                    self.switch_block_until = time.time() + 12.0
+                    self.switch_fail_streak = 0
         if not ok:
             # The key never left the board because the game had lost the
             # foreground. Do not count it as a spent turn: retry on the next
