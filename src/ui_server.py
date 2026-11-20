@@ -313,8 +313,13 @@ def _pids_both():
 
     # 1. pid 文件快路径
     pid = _read_pid_file()
-    if pid and _alive(pid):
-        robot = [pid]
+    if pid:
+        if _alive(pid):
+            robot = [pid]
+        else:
+            # pid 文件残留（机器人崩了/被杀了）。删掉，否则每次缓存过期
+            # 都要走一遍枚举，白白多花 300ms。
+            _drop_pid_file()
 
     # 2. 慢路径：枚举 + 读命令行（只在快路径没命中时）
     if not robot:
@@ -334,6 +339,13 @@ def _pids_both():
     with _PID_LOCK:
         _PID_CACHE.update({"at": now, "robot": robot, "sup": sup})
     return robot, sup
+
+
+def _drop_pid_file():
+    try:
+        os.remove(BOT_PID)
+    except OSError:
+        pass
 
 
 def _read_pid_file():
@@ -501,11 +513,31 @@ def rounds(limit=50):
 
 
 # ============================================================ 图鉴 / 队伍
+# sqlite 连接复用。
+# 每次请求都 sqlite3.connect() 实测要 200~400ms（team 接口），
+# 因为要打开 2.9MB 的库并读 schema。复用后降到 ~5ms。
+_DB_LOCAL = threading.local()
+
+
 def _db():
+    """按线程复用连接。
+
+    ThreadingHTTPServer 是每请求一个线程，所以用 thread-local：
+    同一个线程的连续请求复用同一条连接，不同线程互不干扰。
+    sqlite 连接不能跨线程共享（check_same_thread），这是最省事的解法。
+    """
     import sqlite3
-    db = sqlite3.connect(DB_PATH)
-    db.row_factory = sqlite3.Row
-    return db
+    conn = getattr(_DB_LOCAL, "conn", None)
+    if conn is None:
+        conn = sqlite3.connect(DB_PATH, timeout=3.0)
+        conn.row_factory = sqlite3.Row
+        # 只读场景：用 WAL + 不锁库，避免和机器人抢写
+        try:
+            conn.execute("PRAGMA query_only=1")
+        except Exception:
+            pass
+        _DB_LOCAL.conn = conn
+    return conn
 
 
 def dex(q="", limit=60, offset=0):
@@ -538,8 +570,6 @@ def dex(q="", limit=60, offset=0):
         return {"items": items, "total": total}
     except Exception as e:
         return {"error": str(e), "items": [], "total": 0}
-    finally:
-        db.close()
 
 
 def team():
@@ -565,8 +595,6 @@ def team():
         return {"slots": slots}
     except Exception as e:
         return {"error": str(e), "slots": []}
-    finally:
-        db.close()
 
 
 # ============================================================ 日志增量
