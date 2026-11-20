@@ -209,14 +209,34 @@ python src\ui_server.py --port 8770 --open
 
 ```powershell
 python src\test_live_state.py    # 状态契约（6 组，不需要游戏）
-python src\test_ui.py            # 前端自检（29 项，含真实 DOM 渲染）
+python src\test_ui.py            # 前端自检（42 项，含真实 DOM + 韧性）
 python src\test_ui.py --no-dom   # 同上但跳过渲染（3 秒）
 python ui\compose_test.py        # 对比度（面板压在真实游戏画面上）
 ```
 
-`test_ui.py` 覆盖四组：API 契约 / 静态资源 / live_state 契约 / 面板 DOM。
-DOM 测试放**子进程**跑 —— pywebview 的 `start()` 会阻塞 GUI 循环，
-在主进程里跑会把整个测试卡死。
+`test_ui.py` 覆盖六组：
+
+| 组 | 内容 |
+|---|---|
+| 1 | ui_server 的 9 个 API 契约 |
+| 2 | 6 个静态资源 + 2 个头像（含回退目录） |
+| 3 | live_state 契约（7 项：精度 / None 不填 0 / 边界夹取） |
+| 4 | 窗口状态持久化（位置 / 尺寸 / 折叠 / 部分更新 / 无残留 .tmp） |
+| 5 | 面板 DOM（关键元素 / 无溢出 / 快捷键） |
+| 6 | 韧性（数据源断开再恢复） |
+
+两个必须记住的测试工程细节：
+
+**DOM 测试放子进程。** pywebview 的 `start()` 会阻塞 GUI 循环，
+在主进程里跑会把整个测试卡死。子进程 + 文件传结果才可靠。
+
+**测试环境必须真隔离。** 韧性测试要起一个独立服务（`ROCO_LOGS` 指向临时目录），
+但第一次写的是 `port+10`，撞上了别的进程 —— 连到的是旧服务
+（读机器人正在写的日志），于是断言全错、还看不出原因。
+现在改成动态找空闲端口 + 写完探针数据后主动验证 `/api/state`
+读到的确实是探针，否则明确报"端口被旧服务占用"。
+
+> 这一条比测试本身更重要：**环境不隔离，测试结果就是假的。**
 
 ---
 
