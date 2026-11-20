@@ -510,9 +510,12 @@ function bindDrag() {
   hdr.addEventListener('pointerdown', (e) => {
     if (e.target.closest('button')) return;
 
-    // 真悬浮窗：交给系统拖（窗口真的会动）
+    // 真悬浮窗：调原生拖动，窗口真的会动
+    // 传 devicePixelRatio + 按下点坐标 —— 后端用它们做基准，
+    // 少传按下点的话第一帧位移会被吃掉（实测固定偏移 -40,-28）
     if (hasNative()) {
-      callNative('drag');
+      callNative('drag', window.devicePixelRatio || 1, e.screenX, e.screenY);
+      dragging = true;
       return;
     }
 
@@ -527,6 +530,15 @@ function bindDrag() {
 
   hdr.addEventListener('pointermove', (e) => {
     if (!dragging) return;
+
+    // 真悬浮窗：把 e.screenX/Y（CSS 像素）交给后端，
+    // 后端按位移增量 × dpr 换算成物理像素移动窗口。
+    // 完全不依赖 GetCursorPos —— 那玩意儿会被 DPI 虚拟化。
+    if (hasNative()) {
+      callNative('drag_move', e.screenX, e.screenY);
+      return;
+    }
+
     const nx = ox + (e.clientX - sx);
     const ny = oy + (e.clientY - sy);
     const maxX = window.innerWidth - overlay.offsetWidth;
@@ -538,6 +550,12 @@ function bindDrag() {
   const end = (e) => {
     if (!dragging) return;
     dragging = false;
+
+    if (hasNative()) {
+      callNative('drag_end');
+      return;
+    }
+
     overlay.classList.remove('dragging');
     try { hdr.releasePointerCapture(e.pointerId); } catch (_) {}
     try {

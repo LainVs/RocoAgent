@@ -52,6 +52,7 @@ WS_EX_TOOLWINDOW = 0x00000080
 LWA_ALPHA = 0x2
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
+SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 HWND_TOPMOST = -1
@@ -77,33 +78,59 @@ DEFAULT_H = 620
 def dpi_scale():
     """真实 DPI 缩放倍数。
 
-    坑：非 DPI-aware 进程里 GetDeviceCaps 返回 96（假的），
-    而 WebView2 的 devicePixelRatio 是 2.0。所以先 SetProcessDpiAwarenessContext
-    再用 GetDpiForSystem，最后才退回 GetDeviceCaps。
+    坑：非 DPI-aware 进程里 GetDeviceCaps / GetDpiForSystem 都返回 96（假的），
+    而实际屏幕是 192 DPI（200%）。这时 GetCursorPos 返回逻辑坐标（1536x960），
+    但 SetWindowPos 用物理坐标（3072x1920）—— 差 2 倍，
+    直接混用会让窗口飞出去或纹丝不动（实测都遇到过）。
+
+    最可靠的判据：物理屏幕尺寸 / 逻辑屏幕尺寸。
+    这两个都用不依赖 DPI awareness 的 API 拿。
     """
     try:
-        # Win10 1703+ ：per-monitor v2
-        UD.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
-    except Exception:
-        try:
-            UD.SetProcessDPIAware()
-        except Exception:
-            pass
-    # 首选 GetDpiForSystem（DPI-aware 后才是真值）
-    try:
-        dpi = UD.GetDpiForSystem()
-        if dpi:
-            return max(1.0, dpi / 96.0)
+        # 物理尺寸（不受 DPI 虚拟化影响）
+        phys_w = UD.GetSystemMetrics(0)      # SM_CXSCREEN
+        # 用 EnumDisplaySettings 拿真实分辨率
+        import ctypes.wintypes as wt
+
+        class DEVMODE(ctypes.Structure):
+            _fields_ = [
+                ("dmDeviceName", wt.WCHAR * 32),
+                ("dmSpecVersion", wt.WORD), ("dmDriverVersion", wt.WORD),
+                ("dmSize", wt.WORD), ("dmDriverExtra", wt.WORD),
+                ("dmFields", wt.DWORD),
+                ("dmPositionX", ctypes.c_long), ("dmPositionY", ctypes.c_long),
+                ("dmDisplayOrientation", wt.DWORD),
+                ("dmDisplayFixedOutput", wt.DWORD),
+                ("dmColor", ctypes.c_short), ("dmDuplex", ctypes.c_short),
+                ("dmYResolution", ctypes.c_short),
+                ("dmTTOption", ctypes.c_short), ("dmCollate", ctypes.c_short),
+                ("dmFormName", wt.WCHAR * 32),
+                ("dmLogPixels", wt.WORD), ("dmBitsPerPel", wt.DWORD),
+                ("dmPelsWidth", wt.DWORD), ("dmPelsHeight", wt.DWORD),
+                ("dmDisplayFlags", wt.DWORD), ("dmDisplayFrequency", wt.DWORD),
+                ("dmICMMethod", wt.DWORD), ("dmICMIntent", wt.DWORD),
+                ("dmMediaType", wt.DWORD), ("dmDitherType", wt.DWORD),
+                ("dmReserved1", wt.DWORD), ("dmReserved2", wt.DWORD),
+                ("dmPanningWidth", wt.DWORD), ("dmPanningHeight", wt.DWORD),
+            ]
+
+        ENUM_CURRENT_SETTINGS = -1
+        dm = DEVMODE()
+        dm.dmSize = ctypes.sizeof(DEVMODE)
+        if UD.EnumDisplaySettingsW(None, ENUM_CURRENT_SETTINGS,
+                                   ctypes.byref(dm)):
+            real_w = dm.dmPelsWidth
+            if phys_w and real_w:
+                ratio = real_w / float(phys_w)
+                if ratio >= 1.0:
+                    return round(ratio, 2)
     except Exception:
         pass
+
+    # 退回 GetDpiForSystem（DPI-aware 后是真值）
     try:
-        gdi = ctypes.windll.gdi32
-        dc = UD.GetDC(0)
-        try:
-            dpi = gdi.GetDeviceCaps(dc, 88)     # LOGPIXELSX
-        finally:
-            UD.ReleaseDC(0, dc)
-        if dpi:
+        dpi = UD.GetDpiForSystem()
+        if dpi and dpi != 96:
             return max(1.0, dpi / 96.0)
     except Exception:
         pass
@@ -182,25 +209,93 @@ def strip_dwm_frame(hwnd):
         pass
 
 
-def begin_drag(hwnd):
-    """让窗口跟着鼠标走（原生拖动）。
+def begin_drag(hwnd, dpr=None, sx=None, sy=None):
+    """开始拖动窗口。
 
-    为什么不用 pywebview 的 easy_drag：那是"整窗可拖"，
-    会跟面板里的按钮/滑杆抢事件。
-    为什么不用 CSS 拖拽：CSS 只能移动 DOM 元素，窗口本身不动，
-    拖出窗口边界就看不见了。
+    坑 1：无边框窗口（frameless=True）**没有 WS_CAPTION**，
+          所以 WM_NCLBUTTONDOWN + HTCAPTION 被系统忽略。
+    坑 2：坐标口径三套并存且互相差 2 倍（前端 CSS / GetCursorPos 逻辑 /
+          SetWindowPos 物理），dpi_scale() 在不同线程里返回值还不一致。
+    坑 3：如果这里不记录按下点坐标，第一帧的位移会被吃掉 ——
+          实测固定偏移 (-40,-28)，正好是第一帧 20 CSS px × dpr。
 
-    正确做法：发 WM_NCLBUTTONDOWN + HTCAPTION，让系统接管拖动。
-    这是所有无边框窗口的标准做法。
+    解法：**完全不用光标坐标**。前端传 e.screenX/Y（CSS 像素），
+    这里按位移增量乘 dpr 换算成物理像素。起点用窗口 rect。
     """
     try:
-        WM_NCLBUTTONDOWN = 0x00A1
-        HTCAPTION = 2
-        UD.ReleaseCapture()
-        UD.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+        r = ctypes.wintypes.RECT()
+        UD.GetWindowRect(hwnd, ctypes.byref(r))
+        d = float(dpr or 1.0)
+        if d <= 0:
+            d = 1.0
+        _DRAG["active"] = True
+        _DRAG["hwnd"] = hwnd
+        _DRAG["dpr"] = d
+        # 用按下点做基准（前端传的），不传就等第一次 move
+        _DRAG["mouse"] = ((float(sx), float(sy))
+                          if sx is not None and sy is not None else None)
+        _DRAG["win"] = (r.left, r.top)
         return True
     except Exception:
         return False
+
+
+_DRAG = {"active": False, "hwnd": None, "mouse": None, "win": (0, 0),
+         "dpr": 1.0}
+
+# 由 overlay.main() 注册：{"win": <pywebview window>}。
+# 拖动优先走 win.move() —— 它会同步 pywebview 的内部状态，
+# 直接 SetWindowPos 有时会被窗口约束挡住。
+_WINDOW = {}
+
+
+def set_drag_pos(hwnd, screen_x=None, screen_y=None):
+    """按前端给的屏幕坐标移动窗口。
+
+    screen_x/screen_y 是 e.screenX/Y（CSS 像素）。
+    第一次调用时记录基准，之后按增量 × dpr 移动窗口。
+    """
+    if not _DRAG["active"] or _DRAG["hwnd"] != hwnd:
+        return False
+    try:
+        if screen_x is None or screen_y is None:
+            return False
+        sx, sy = float(screen_x), float(screen_y)
+
+        if _DRAG["mouse"] is None:
+            # 第一次 move：建立基准，窗口不动
+            _DRAG["mouse"] = (sx, sy)
+            return True
+
+        ox, oy = _DRAG["mouse"]
+        wx, wy = _DRAG["win"]
+        d = _DRAG.get("dpr") or 1.0
+
+        nx = wx + (sx - ox) * d
+        ny = wy + (sy - oy) * d
+        # 优先用 pywebview 自己的 move()：它会同步内部状态。
+        # 直接 SetWindowPos 有时会被 pywebview 的窗口约束挡住
+        # （实测传 HWND_TOP 和 HWND_TOPMOST 都不动）。
+        moved = False
+        try:
+            w = _WINDOW.get("win")
+            if w is not None:
+                # pywebview 的 move 用 CSS 像素
+                w.move(int(nx / d), int(ny / d))
+                moved = True
+        except Exception:
+            moved = False
+        if not moved:
+            UD.SetWindowPos(hwnd, HWND_TOPMOST, int(nx), int(ny), 0, 0,
+                            SWP_NOSIZE | SWP_NOACTIVATE)
+        return True
+    except Exception:
+        return False
+
+
+def end_drag():
+    _DRAG["active"] = False
+    return True
 
 
 def fix_transparent(hwnd, ready_check=None, timeout=12.0):
@@ -310,12 +405,27 @@ def main():
         点击穿透必须改 WS_EX_TRANSPARENT —— 这两件事 JS 都做不到。
         """
 
-        def drag(self):
-            """按住标题栏时调用，让系统接管拖动。"""
+        def drag(self, dpr=None, sx=None, sy=None):
+            """开始拖动（前端在 pointerdown 时调）。
+
+            必须带上按下点的 screenX/screenY —— 否则第一帧的位移会被吃掉
+            （实测固定偏移 (-40,-28)，就是第一帧那 20 CSS px × dpr 的量）。
+            """
             hwnd = state.get("hwnd")
             if not hwnd:
                 return False
-            return begin_drag(hwnd)
+            return begin_drag(hwnd, dpr, sx, sy)
+
+        def drag_move(self, sx=None, sy=None):
+            """拖动中（前端在 pointermove 时调，传 e.screenX / e.screenY）。"""
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            return set_drag_pos(hwnd, sx, sy)
+
+        def drag_end(self):
+            """结束拖动（前端在 pointerup 时调）。"""
+            return end_drag()
 
         def set_click_through(self, enabled):
             hwnd = state.get("hwnd")
@@ -400,6 +510,9 @@ def main():
         easy_drag=False,     # 拖拽自己实现（只有标题栏可拖）
         js_api=api,          # 前端可调 window.pywebview.api.*
     )
+
+    # 注册给拖动逻辑用（见 set_drag_pos）
+    _WINDOW["win"] = win
 
     def page_ready():
         """页面真的画出来了才算就绪。
