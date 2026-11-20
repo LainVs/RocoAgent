@@ -2548,19 +2548,33 @@ class Bot:
             return
         if now < self.suppress_until:
             return
-        # 结算后先锁定 RESULT_HOLD 秒：只判胜负，不点任何推进。
-        # 实测读完记录 1 秒后就 advance splash -> lobby -> 开始挑战，
-        # 用户根本来不及看见胜负画面，而且读记录会和推进点击抢。
-        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。?
-        # 每场只在回到大厅后读一次，比较两次计数即可，不依赖星级/段位。?
+        # 胜负判定（权威）：读"历史战绩"里的 胜利/失败 累计计数。
+        #
+        # 关键时序（实测 2026-11-21 03:40）：
+        #   "历史战绩"按钮**只在大厅有**。原来在 match_ended_at 后
+        #   RESULT_HOLD(8s) 内就读，那时还在结算页，点击落在空白处，
+        #   OCR 三次全空 -> results.jsonl 从 11-19 起就没再写入过。
+        #
+        # 现在改成：必须**确认已经回到大厅**才读。
+        # 判据：能读到"开始挑战"按钮（has_start_button），说明在大厅。
+        _in_lobby = False
+        try:
+            import robot as _rb
+            _in_lobby = _rb.has_start_button(self.screen)
+        except Exception:
+            _in_lobby = False
+
         if (self.match_ended_at
+                and _in_lobby
                 and self.match_count != getattr(self, "_rec_done_for", -1)
-                and now - self.match_ended_at < RESULT_HOLD):
-            self._rec_done_for = self.match_count
+                and now - self.match_ended_at < 180.0):
             try:
                 import record
                 cur = record.read(self.screen, lambda x, y: self.click_abs(x, y),
                                   log=log)
+                # 只有真的读到才标记完成；读失败下轮重试（180 秒窗口内）
+                if cur:
+                    self._rec_done_for = self.match_count
                 prev = getattr(self, "_rec_prev", None) or record.load_state()
                 if cur:
                     verdict = record.diff(prev, cur)
