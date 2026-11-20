@@ -57,3 +57,7 @@ board.json
 # live state (runtime artifact, written every frame by robot)
 logs/live_state.json
 logs/live_state.json.tmp
+
+# overlay window state (per-machine)
+config/overlay.json
+config/overlay.json.tmp

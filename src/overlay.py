@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import ctypes.wintypes
+import json
 import os
 import subprocess
 import sys
@@ -249,6 +250,45 @@ _DRAG = {"active": False, "hwnd": None, "mouse": None, "win": (0, 0),
 _WINDOW = {}
 
 
+# ---------------------------------------------------------------- 位置持久化
+# 为什么要自己存：pywebview 不记住无边框窗口的位置。
+# 用户把面板拖到屏幕右侧，关掉重开又回到左上角 —— 每次都要重新摆。
+# 存在 config/overlay.json，跟着仓库走，换机器也能带走。
+_STATE_FILE = os.path.join(ROOT, "config", "overlay.json")
+
+
+def load_window_state():
+    """读上次的窗口位置 / 尺寸 / 折叠状态。读不到就用默认。"""
+    try:
+        with open(_STATE_FILE, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        out = {}
+        for k in ("x", "y", "w", "h"):
+            v = d.get(k)
+            if isinstance(v, (int, float)):
+                out[k] = int(v)
+        if d.get("folded") is not None:
+            out["folded"] = bool(d["folded"])
+        return out
+    except Exception:
+        return {}
+
+
+def save_window_state(**kw):
+    """写窗口状态。原子替换，失败静默（不能因为存不了位置就让程序出错）。"""
+    try:
+        cur = load_window_state()
+        cur.update({k: v for k, v in kw.items() if v is not None})
+        os.makedirs(os.path.dirname(_STATE_FILE), exist_ok=True)
+        tmp = _STATE_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cur, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, _STATE_FILE)
+        return True
+    except Exception:
+        return False
+
+
 def set_drag_pos(hwnd, screen_x=None, screen_y=None):
     """按前端给的屏幕坐标移动窗口。
 
@@ -391,11 +431,23 @@ def main():
     # 窗口尺寸标定（见 css_size 注释）：
     #   想要 340x620 CSS 视口，要传 353x638。
     pw, ph = css_size(args.width, args.height)
+
+    # 恢复上次的窗口位置和尺寸（pywebview 自己不记无边框窗口的位置）
+    saved = load_window_state()
+    pos_x = saved.get("x", int(40 * scale))
+    pos_y = saved.get("y", int(40 * scale))
+    if saved.get("w"):
+        pw = saved["w"]
+    if saved.get("h"):
+        ph = saved["h"]
+
     print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
         pw, ph, args.width, args.height))
+    if saved:
+        print("  恢复  位置 (%d,%d)  尺寸 %dx%d" % (pos_x, pos_y, pw, ph))
 
     state = {"hwnd": None, "visible": True, "pass_through": False,
-             "css_w": args.width}
+             "css_w": args.width, "folded": bool(saved.get("folded"))}
 
     # ---- 暴露给前端的 API（window.pywebview.api.*）
     class Api:
@@ -425,8 +477,17 @@ def main():
             return set_drag_pos(hwnd, sx, sy)
 
         def drag_end(self):
-            """结束拖动（前端在 pointerup 时调）。"""
-            return end_drag()
+            """结束拖动，把窗口位置存下来（下次启动恢复）。"""
+            hwnd = state.get("hwnd")
+            ok = end_drag()
+            if hwnd:
+                try:
+                    r = ctypes.wintypes.RECT()
+                    UD.GetWindowRect(hwnd, ctypes.byref(r))
+                    save_window_state(x=r.left, y=r.top)
+                except Exception:
+                    pass
+            return ok
 
         def set_click_through(self, enabled):
             hwnd = state.get("hwnd")
@@ -462,6 +523,12 @@ def main():
             state["visible"] = not state["visible"]
             UD.ShowWindow(hwnd, 5 if state["visible"] else 0)
             return state["visible"]
+
+        def set_folded(self, folded):
+            """记录折叠状态，下次启动直接恢复（避免展开态闪一下再折叠）。"""
+            state["folded"] = bool(folded)
+            save_window_state(folded=bool(folded))
+            return True
 
         def quit(self):
             try:
@@ -519,6 +586,8 @@ def main():
                 pw, ph = css_size(css_w, css_h)
                 try:
                     win.resize(pw, ph)
+                    # 存下来，下次启动直接用这个高度
+                    save_window_state(w=pw, h=ph)
                     return True
                 except Exception:
                     pass
@@ -537,7 +606,7 @@ def main():
         "RocoOverlay", url=url,
         width=pw,
         height=ph,
-        x=int(40 * scale), y=int(40 * scale),
+        x=pos_x, y=pos_y,
         frameless=True,      # 无边框
         transparent=True,    # 像素级透明（圆角外透出桌面）
         on_top=True,         # 置顶

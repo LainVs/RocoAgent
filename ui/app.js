@@ -493,8 +493,11 @@ function bindFold() {
     overlay.classList.toggle('folded', folded);
     btnFold.textContent = folded ? '展开' : '折叠';
     try { localStorage.setItem('overlay.folded', folded ? '1' : '0'); } catch (_) {}
+    // 后端也存一份：真悬浮窗里窗口高度要跟着变，
+    // 下次启动直接按折叠态开，避免展开态闪一下再折叠。
+    callNative('set_folded', folded);
     // 折叠/展开后窗口要跟着缩，否则留一大片透明区域挡鼠标
-    setTimeout(() => callNative('fit_window'), 280);
+    setTimeout(() => callNative('fit_window', true), 280);
   };
   hdr.addEventListener('dblclick', (e) => {
     if (e.target.closest('button')) return;
