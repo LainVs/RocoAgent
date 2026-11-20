@@ -468,6 +468,8 @@ class Bot:
             # end the run: log it, back off, keep polling.
             _obs_t0 = time.time()
             try:
+                # 让 Perc 知道我方是谁，用于"用技能表纠正 num/dash 误判"
+                self.perc.my_name = getattr(self, "my_name", None)
                 st = self.perc.observe()
             except Exception as e:
                 self.perc_errors = getattr(self, "perc_errors", 0) + 1

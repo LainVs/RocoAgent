@@ -190,6 +190,11 @@ class Perc:
                     # capsule means "no card here", which is never pressable.
                     r["lit"] = bool(p75 is not None and p75 > 220.0)
                     skills[i] = r
+                # 用"我方装备的技能表"纠正 num/dash 误判。
+                # 实测：变化技能（力量增效）的卡面也画数字，digitread
+                # 会读成伤害（i1 v=50 kind=num），导致 policy_v2 的
+                # buff 分支永远走不到。这里用权威数据覆盖。
+                _fix_status_kinds(skills, getattr(self, "my_name", None))
 
         cnt = False
         if bars:
@@ -567,6 +572,77 @@ def _slots(crop, region, pills=None):
         if s and s.get("kind") == "num" and _is_dash(crop, s):
             s["kind"] = "dash"
             s["color"] = None
+    return slots
+
+
+def _fix_status_kinds(slots, my_name):
+    """用我方装备的技能表纠正 num/dash 误判（模块级辅助）。
+
+    为什么需要
+    ----------
+    `_is_dash` 只认画面上是两个横杠的卡。但变化技能（力量增效/防御/
+    剑舞…）在游戏里**卡面也画数字**，digitread 会把它读成伤害值 ——
+    实测 2026-11-21 02:40 抓到 `i1 v=50 kind=num`，而那个槽位其实是
+    「力量增效」（cost 1，无伤害）。
+
+    这里用权威信息（team_db 里我方装备的技能 id -> power 是否 > 0）
+    直接覆盖 kind，不再依赖画面形状。
+    """
+    if not slots or not my_name:
+        return slots
+    try:
+        import sqlite3
+        import team_db
+        from portrait_db import DB_PATH
+        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
+        moves = (team.get(my_name) or {}).get("moves") or []
+        if not moves:
+            return slots
+        db = sqlite3.connect(DB_PATH)
+        try:
+            for slot in range(1, min(4, len(moves)) + 1):
+                row = db.execute("SELECT power FROM skills WHERE id=?",
+                                 (int(moves[slot - 1]),)).fetchone()
+                if not row:
+                    continue
+                if (row[0] or 0) <= 0:
+                    s = slots[slot - 1]
+                    if s is not None:
+                        s["kind"] = "dash"
+                        s["value"] = None
+                        s["color"] = None
+        finally:
+            db.close()
+    except Exception:
+        pass
+    return slots
+
+
+def mark_status_slots(slots, costs, known_dash=None):
+    """用"我方装备的技能表"纠正 num/dash 判定。
+
+    为什么需要
+    ----------
+    `_is_dash` 只认画面上是两个横杠的卡。但变化技能（力量增效/防御/
+    剑舞…）在游戏里**卡面也画数字**（显示的是耗能或层数），
+    digitread 会把它读成伤害值 —— 实测 2026-11-21 02:40 抓到
+    `i1 v=50 kind=num`，而那个槽位其实是「力量增效」（cost 1，无伤害）。
+
+    这里用权威信息（team_db 里我方装备的技能 id -> 是否 power>0）
+    直接覆盖 kind，不再依赖画面形状。
+
+    costs     : {slot: cost}（my_card_costs 返回）
+    known_dash: {slot: True} 明确是变化技能的槽位（可选）
+    """
+    if not slots:
+        return slots
+    if known_dash:
+        for slot, is_dash in known_dash.items():
+            idx = int(slot) - 1
+            if 0 <= idx < len(slots) and slots[idx] and is_dash:
+                slots[idx]["kind"] = "dash"
+                slots[idx]["color"] = None
+                slots[idx]["value"] = None
     return slots
 
 
