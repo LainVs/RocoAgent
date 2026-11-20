@@ -195,6 +195,12 @@ class Perc:
                 # 会读成伤害（i1 v=50 kind=num），导致 policy_v2 的
                 # buff 分支永远走不到。这里用权威数据覆盖。
                 _fix_status_kinds(skills, getattr(self, "my_name", None))
+                # 补真实技能名 + 效果分类。
+                # 实测（2026-11-21）：下游只有 kind="dash" 这个"无伤害"
+                # 标记，无法区分「借用」（随机复制技能，打了纯亏）和
+                # 「钧势」（物防+140%，值得优先叠）。实盘连续 7 局
+                # 在 T1/T2 打 slot 4，而真实队伍所有 slot 4 都是借用。
+                attach_skill_names(skills, getattr(self, "my_name", None))
 
         cnt = False
         if bars:
@@ -688,6 +694,56 @@ def mark_status_slots(slots, costs, known_dash=None):
                 slots[idx]["kind"] = "dash"
                 slots[idx]["color"] = None
                 slots[idx]["value"] = None
+    return slots
+
+
+def attach_skill_names(slots, my_name):
+    """给每个槽位补上真实技能名与效果分类。
+
+    为什么需要
+    ----------
+    机器人只读卡面伤害数字，不读技能名，所以下游拿到的是
+    `kind="dash"` 这种"无伤害"标记，无法区分：
+        借用（随机复制技能） vs 钧势（物防+140%）
+    两者都是 power=0，但前者打出去纯亏一回合，后者值得优先叠。
+
+    实测（2026-11-21）：实盘连续 7 局在 T1/T2 打 slot 4，
+    而真实队伍所有 slot 4 都是「借用」/「取念」。
+
+    这里从 team_db 的队伍配置（moves 的 id 顺序 = 卡片顺序）
+    查真实技能名，再交给 skill_kind 分类，写入：
+        s["skill_name"] = "借用"
+        s["skill_kind"] = "copy"
+
+    查不到就什么都不写（下游按 unknown 处理，不会误判成 buff）。
+    """
+    if not slots or not my_name:
+        return slots
+    try:
+        import sqlite3
+        import team_db
+        from portrait_db import DB_PATH
+        import skill_kind as SK
+        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
+        moves = (team.get(my_name) or {}).get("moves") or []
+        if not moves:
+            return slots
+        db = sqlite3.connect(DB_PATH)
+        try:
+            for i, sid in enumerate(moves[:4]):
+                if i >= len(slots) or slots[i] is None:
+                    continue
+                row = db.execute("SELECT name FROM skills WHERE id=?",
+                                 (int(sid),)).fetchone()
+                if not row or not row[0]:
+                    continue
+                name = row[0]
+                slots[i]["skill_name"] = name
+                slots[i]["skill_kind"] = SK.classify(name)
+        finally:
+            db.close()
+    except Exception:
+        pass
     return slots
 
 

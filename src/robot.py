@@ -863,6 +863,20 @@ class Bot:
                 gate=getattr(self, "_last_gate", None),
             )
 
+            # 替补队伍：机器人只知道"见过名字"的那几只
+            bench = []
+            try:
+                for b in (self.bench_state() or []):
+                    if not b.get("name"):
+                        continue
+                    bench.append({
+                        "name": b["name"],
+                        "hp_pct": None,      # 替补血量不可见（不在场上）
+                        "alive": True,
+                    })
+            except Exception:
+                bench = []
+
             state = LS.build(
                 turn=self.turn,
                 clock=None,
@@ -882,6 +896,7 @@ class Bot:
                 matchup=matchup,
                 verdict=verdict,
                 system=system,
+                bench=LS.bench_block(bench),
             )
             LS.publish(state)
         except Exception:
@@ -914,6 +929,7 @@ class Bot:
             return None, "policy_v2: my hp unreadable"
 
         skills = []
+        slot_costs = my_card_costs(my_name)
         for s in st["skills"]:
             if not s:
                 continue
@@ -921,12 +937,24 @@ class Bot:
             # 否则会被当成一张"伤害未知的攻击卡"，buff 分支永远走不到。
             # 耗能从我方技能表取（my_card_costs），不依赖卡面 OCR。
             kind = s.get("kind")
-            slot_costs = my_card_costs(my_name)
             if kind == "dash":
+                # 关键：不能把"无伤害"直接当成 buff。
+                #
+                # 实测（2026-11-21）：实盘连续 7 局在 T1/T2 打 slot 4，
+                # 而真实队伍所有 slot 4 都是「借用」/「取念」——
+                # 每回合随机变成别人技能的复制技能，打了纯亏一回合。
+                # 根因是这里统一传 kind="dash"，policy_v2 又把它当 buff。
+                #
+                # 现在传 skill_kind 的真实分类（copy / self_buff /
+                # reduction / heal / enemy_debuff / other），
+                # policy_v2 只对 self_buff 走优先叠。
+                cls = s.get("skill_kind") or "unknown"
                 skills.append({
                     "i": s["index"], "dmg": None,
                     "cost": slot_costs.get(s["index"], 0),
-                    "kind": "dash", "lit": bool(s.get("lit", True)),
+                    "kind": cls,
+                    "name": s.get("skill_name"),
+                    "lit": bool(s.get("lit", True)),
                 })
                 continue
             # The number on the card is already post-effectiveness damage, so it

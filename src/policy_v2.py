@@ -206,16 +206,27 @@ def decide(state):
                           s["i"], dmg, taken,
                           "kill" if kills else ("outspeed" if we_outspeed else "slower"))))
 
-    # ---- non-damaging skills (buffs / heals / shields) -------------------
+    # ---- non-damaging skills (buffs / heals / shields / copy) ------------
     # 实测结论（模拟器自对弈，2026-11-21）：
     #   buff 当"得分为 0 + 常量奖励"的候选参与打分 -> 胜率 50.7%
     #   buff 无条件优先（前两回合、血够、还没叠过） -> 胜率 66.7%
     # 差 16 个百分点。原因是收益结构不同：
     #   攻击 = 这一回合的一次输出；buff = 后续每一回合的 +20%。
     #
-    # 所以这里改成"优先选择"：
-    #   前两回合 + 血够 + 能放 + 打不死对面 -> 直接叠
-    #   （能一击必杀时不叠，直接赢更好）
+    # **但 2026-11-21 晚发现这个 66.7% 站不住**：
+    #   模拟器假设 buff "每层 +20% 攻防、最多 3 层"，而 roco-cal 的
+    #   真实数据里没有叠层机制 —— 每个 buff 技能是一次性固定数值
+    #   （攻 buff 中位 +70%，防 buff 中位 +90%，且是不同技能）。
+    #   更严重的是真实队伍 24 个技能位里 **0 个 buff 技能**：
+    #   所有 slot 4 都是「借用」/「取念」（每回合随机变成别人技能）。
+    #   旧代码把这些 power=0 的复制技能一律当 buff，导致实盘连续 7 局
+    #   在 T1/T2 白打一回合。日志证据：`T1 SKILL 4 (buff first)`。
+    #
+    # 现在按 skill_kind 的真实分类处理：
+    #   self_buff     -> 前两回合优先叠（真正的增益，值得抢节奏）
+    #   copy          -> 明确排除，得分为 0（打了纯亏一回合）
+    #   reduction/heal/enemy_debuff/other/unknown -> 得分为 0 参与打分
+    #
     # 判断"这回合能不能一击必杀"（决定要不要先叠 buff）
     # 注意：不能用字符串匹配 "kill"（reason 里可能碰巧含这个词），
     # 要真的比较伤害和对面血量。
@@ -227,32 +238,72 @@ def decide(state):
         if d >= foe_hp:
             foe_killable_now = True
             break
+
+    # 兼容旧调用方：老代码传 kind="dash" 表示"无伤害技能"。
+    # 那种情况下没有名字可查，按 unknown 处理（不再无脑当 buff）。
+    BUFF_KINDS = ("self_buff",)
+    NON_BUFF_DASH = ("copy", "reduction", "heal", "enemy_debuff",
+                     "other", "unknown", "dash")
+
     for s in me.get("skills") or []:
-        if s.get("kind") != "dash" or not s.get("lit", True):
+        kind = s.get("kind")
+        if kind == "num":
+            continue
+        if kind not in BUFF_KINDS and kind not in NON_BUFF_DASH:
+            continue
+        if not s.get("lit", True):
             continue
         cost = s.get("cost") or 0
         if cost > energy:
             continue
+
+        if kind not in BUFF_KINDS:
+            # 无伤害但**不是**自身增益：复制技能 / 减伤 / 治疗 / 挂减益。
+            # 得分为 0，只作为"实在没别的可打"时的兜底，绝不优先。
+            #
+            # 复制技能（借用/取念）额外惩罚：它是随机的，期望收益低于
+            # 任何确定的攻击，而且打出去这一回合必定没有输出。
+            pen = -0.15 if kind == "copy" else 0.0
+            cands.append((pen, ("skill", s["i"]),
+                          "status %d: %s (no priority)" % (s["i"], kind)))
+            continue
+
         survives = inc < my_hp * (1.0 - w.get("buff_survive_floor", 0.25))
         if not survives:
             cands.append((-w.get("buff_no_survive_penalty", 0.25),
                           ("skill", s["i"]),
                           "status %d: would likely die" % s["i"]))
             continue
-        # 优先叠：给一个远高于任何攻击的分数（但能杀时不叠）
+
+        # 关键：buff 只在"叠完还能打够 N 次"时才值得。
+        #
+        # 实测（2026-11-21，真实 buff 模型 +70% 攻、不加防）：
+        #   无条件叠（前两回合）        -> 13.7%
+        #   预计还能活 2 回合以上才叠    -> 61.3%
+        #   纯贪心不叠                  -> 50.3%
+        #
+        # 原因：叠 buff 的代价是放弃这一回合的输出，收益是后续每回合 +70%。
+        # 叠完还能打 k 次，k >= 2 才回本。真实 buff 不加防御，精灵普遍
+        # 2 下就死，无条件叠通常只剩 1 次攻击 -> 净亏。
+        #
+        # 旧代码（虚构的 +60% 攻防、可叠 3 层）无条件叠能到 66.5%，
+        # 那是因为防御 buff 让精灵多活了几个回合，收益结构完全不同。
         #
         # 只能叠一次：policy_v2.decide 是纯函数，没有内部状态，
         # 所以"是否已经叠过"由调用方通过 state["buffed"] 传入。
-        # 实测（2026-11-21 04:57）：不加这个判断会在 T1/T2 连续叠两次，
-        # 第二次纯属浪费回合（buff 上限 3 层但第二层收益远低于一次攻击）。
-        early = (state.get("turn", 1) or 1) <= 2
+        need_turns = w.get("buff_need_turns", 2.0)
+        survive_turns = my_hp / max(1, inc)
+        early = (state.get("turn", 1) or 1) <= w.get("buff_max_turn", 4)
         already = bool(state.get("buffed"))
-        if early and not already and not foe_killable_now:
+        if early and not already and not foe_killable_now \
+                and survive_turns >= need_turns:
             cands.append((9e9, ("skill", s["i"]),
-                          "status %d: buff first (early turn, safe)" % s["i"]))
+                          "status %d: buff first (survive %.1f turns)" % (
+                              s["i"], survive_turns)))
         else:
             cands.append((0.0, ("skill", s["i"]),
-                          "status %d: buff (late/safe)" % s["i"]))
+                          "status %d: buff (no priority, survive %.1f)" % (
+                              s["i"], survive_turns)))
 
     # ---- charge ----------------------------------------------------------
     # Charging is not free: we still eat the incoming hit, and if that hit is
