@@ -305,4 +305,9 @@ def css_size(w, h):
 | 截图截到别的窗口 | SetForegroundWindow 让窗口自己移动 | 只 SetWindowPos 定位，不激活 |
 | 最小化窗口截图 | rect=(-32000,-32000,314,50) | 先 `ShowWindow(SW_RESTORE)` |
 | WebView2 白屏 | 页面中心是 (240,240,240) | 等 `panel.offsetWidth>100` 再修透明 |
+| pywebview api 异步注入 | `const NATIVE = window.pywebview.api` 永远是 null | 每次调用时现取 |
+| SetWindowPos 传位置 | 窗口被挪到 (0,0)，截图按旧坐标抓像"被切" | 只改尺寸，用 `SWP_NOMOVE` |
+| 血量自相矛盾 | hp_pct=100 但 hp_abs=0（力竭瞬间） | 一致性校验，矛盾时两个都置未知 |
+| 结论半吊子 | "2 回合击杀 · — 回合被击杀" | verdict 加 complete，不全时显示"数据不足" |
+| 能量空白 | 读不到时空白，被误解成 0 能量 | 显式显示"能量未知" |
 | 抽屉默认展开 | `grid-template-rows:0fr` 多子元素失效 | 包一层 `.drawer-inner` |
