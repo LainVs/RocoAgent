@@ -109,11 +109,23 @@ def fp(path):
 
 
 def main():
-    if not os.path.exists(ORIG):
-        print("缺少基线 %s" % ORIG)
-        return 2
-
-    before = fp(ORIG)
+    # 基线优先用 robot.py.orig；没有就从 git 取拆分前的版本
+    baseline_path = ORIG
+    if not os.path.exists(baseline_path):
+        import subprocess
+        r = subprocess.run(
+            ["git", "show", "8a18c4c:src/robot.py"],  # 拆分前的提交
+            cwd=ROOT, capture_output=True)
+        if r.returncode != 0:
+            print("找不到基线：既没有 %s，也取不到 git 版本" % ORIG)
+            return 2
+        text = r.stdout.decode("utf-8")
+        before_co = compile(text, "robot.py.orig", "exec")
+        items = []
+        collect(before_co, items)
+        before = index(items)
+    else:
+        before = fp(baseline_path)
     items = []
     for mod in NEW_MODULES:
         p = os.path.join(SRC_DIR, mod)
