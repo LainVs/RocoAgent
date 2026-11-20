@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RocoAgent · 控制台</title>
+<link rel="stylesheet" href="console.css">
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ── 顶栏 ──────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">RocoAgent <small>CONSOLE</small></div>
+
+    <div class="top-status">
+      <i class="dot off" id="botDot"></i>
+      <span id="botText">检测中…</span>
+      <span class="top-pid" id="botPid"></span>
+    </div>
+
+    <div class="grow"></div>
+
+    <button class="btn primary" id="btnStart">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><path d="M2.5 1.6v7.8l6.2-3.9z"/></svg>
+      启动
+    </button>
+    <button class="btn danger" id="btnStop" disabled>
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1.6" y="1.6" width="6.8" height="6.8" rx="1"/></svg>
+      停止
+    </button>
+    <a class="btn" href="index.html" target="_blank">
+      <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+        <rect x="1.2" y="1.2" width="8.6" height="8.6" rx="1.6" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M1.2 4h8.6" stroke="currentColor" stroke-width="1.1"/>
+      </svg>
+      悬浮窗
+    </a>
+  </header>
+
+  <!-- ── 主体 ──────────────────────────────────────── -->
+  <div class="main">
+
+    <nav class="sidebar">
+      <div class="nav-label">监控</div>
+      <button class="nav-item active" data-page="overview">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1.4" y="1.4" width="4.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="8" y="1.4" width="4.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="1.4" y="8" width="4.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2"/>
+          <rect x="8" y="8" width="4.6" height="4.6" rx="1.2" stroke="currentColor" stroke-width="1.2"/>
+        </svg>
+        <span>概览</span>
+      </button>
+      <button class="nav-item" data-page="logs">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 3.4h10M2 7h10M2 10.6h6.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        <span>实时日志</span>
+      </button>
+      <button class="nav-item" data-page="stats">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2 11.2V7.4M5.4 11.2V3.6M8.8 11.2V5.6M12.2 11.2V2.2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <span>战绩</span>
+      </button>
+
+      <div class="nav-sep"></div>
+      <div class="nav-label">数据</div>
+
+      <button class="nav-item" data-page="team">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="5" cy="4.4" r="2.2" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M1.2 11.6c0-2 1.7-3.2 3.8-3.2s3.8 1.2 3.8 3.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+          <circle cx="10.2" cy="4.8" r="1.7" stroke="currentColor" stroke-width="1.1"/>
+          <path d="M9 8.5c1.9 0 3.3 1.1 3.3 2.9" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
+        </svg>
+        <span>我方队伍</span>
+      </button>
+      <button class="nav-item" data-page="dex">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M2.2 2.6h4.2c.7 0 1.2.5 1.2 1.2v7.6c0-.6-.5-1.1-1.2-1.1H2.2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+          <path d="M11.8 2.6H7.6c-.7 0-1.2.5-1.2 1.2v7.6c0-.6.5-1.1 1.2-1.1h4.2z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+        </svg>
+        <span>精灵图鉴</span>
+      </button>
+      <button class="nav-item" data-page="turns">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M7 4v3.2l2 1.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+        </svg>
+        <span>回合明细</span>
+      </button>
+    </nav>
+
+    <main class="content">
+
+      <!-- ══════════ 概览 ══════════ -->
+      <section class="page active" id="page-overview">
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">当前状态</span>
+            <span class="card-sub" id="liveAge"></span>
+            <div class="card-actions">
+              <a class="btn" href="index.html" target="_blank" style="padding:4px 9px;font-size:11px">打开悬浮窗</a>
+            </div>
+          </div>
+          <div id="liveBody">
+            <div class="empty">
+              <svg width="26" height="26" viewBox="0 0 26 26" fill="none">
+                <rect x="3" y="3" width="20" height="20" rx="4" stroke="currentColor" stroke-width="1.6"/>
+                <path d="M8 13h10" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+              </svg>
+              <b>机器人未在推送状态</b>
+              <span>启动机器人后，这里会显示实时对局</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">战绩概览</span>
+            <span class="card-sub" id="statSub"></span>
+          </div>
+          <div class="metrics" id="statMetrics"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">近 20 场走势</span>
+            <span class="card-sub">左旧右新</span>
+          </div>
+          <div class="spark" id="spark"></div>
+        </div>
+
+      </section>
+
+      <!-- ══════════ 实时日志 ══════════ -->
+      <section class="page" id="page-logs">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">实时日志</span>
+            <span class="card-sub" id="logSub">bot_stdout.log</span>
+            <div class="card-actions">
+              <button class="btn" id="btnLogFollow" style="padding:4px 9px;font-size:11px">跟随中</button>
+              <button class="btn" id="btnLogClear" style="padding:4px 9px;font-size:11px">清屏</button>
+            </div>
+          </div>
+          <div class="logbox" id="logbox"></div>
+        </div>
+      </section>
+
+      <!-- ══════════ 战绩 ══════════ -->
+      <section class="page" id="page-stats">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">战绩统计</span>
+            <span class="card-sub" id="statsSub"></span>
+          </div>
+          <div class="metrics" id="statsMetrics"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">对局记录</span>
+            <span class="card-sub">来自 rounds.jsonl</span>
+          </div>
+          <table class="tbl" id="roundsTbl">
+            <thead>
+              <tr>
+                <th>#</th><th>开始</th><th>结束</th>
+                <th>时长</th><th>动作数</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ══════════ 队伍 ══════════ -->
+      <section class="page" id="page-team">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">我方队伍</span>
+            <span class="card-sub">来自 my_team 表</span>
+          </div>
+          <div class="team-grid" id="teamGrid"></div>
+        </div>
+      </section>
+
+      <!-- ══════════ 图鉴 ══════════ -->
+      <section class="page" id="page-dex">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">精灵图鉴</span>
+            <span class="card-sub" id="dexSub"></span>
+            <div class="card-actions">
+              <div class="search">
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <circle cx="5.2" cy="5.2" r="3.4" stroke="currentColor" stroke-width="1.2"/>
+                  <path d="M8 8l2.4 2.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                </svg>
+                <input id="dexSearch" placeholder="搜索精灵名…" autocomplete="off">
+              </div>
+            </div>
+          </div>
+          <div class="dex-grid" id="dexGrid"></div>
+        </div>
+      </section>
+
+      <!-- ══════════ 回合明细 ══════════ -->
+      <section class="page" id="page-turns">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">回合明细</span>
+            <span class="card-sub">来自 turns.jsonl（最近 100 条）</span>
+          </div>
+          <table class="tbl" id="turnsTbl">
+            <thead>
+              <tr>
+                <th>时间</th><th>回合</th><th>我方</th><th>敌方</th>
+                <th>能量</th><th>动作</th><th>理由</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<script src="console.js"></script>
+</body>
+</html>
