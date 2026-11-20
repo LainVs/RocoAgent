@@ -371,6 +371,45 @@ function renderEmpty() {
 }
 
 /* ================================================================
+   原生桥（pywebview）
+   ----------------------------------------------------------------
+   在真悬浮窗里，window.pywebview.api 提供原生能力：
+     drag()                 让系统接管拖动（窗口真的会移动）
+     set_click_through(b)   改 WS_EX_TRANSPARENT
+     set_opacity(0~255)     整体透明度
+     fit_window()           窗口贴合内容高度
+     hide() / toggle_visible() / quit()
+
+   浏览器里没有这个对象，所以全部降级到纯 CSS 行为。
+
+   坑：不能写成 const NATIVE = window.pywebview.api ——
+   pywebview 的 api 是**异步注入**的，脚本执行时它还不存在，
+   那样 NATIVE 永远是 null。必须每次调用时现取。
+   ================================================================ */
+function nativeApi() {
+  try {
+    return (window.pywebview && window.pywebview.api) || null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function hasNative() {
+  return !!nativeApi();
+}
+
+// 调用原生方法（失败静默降级）
+async function callNative(method, ...args) {
+  const api = nativeApi();
+  if (!api || typeof api[method] !== 'function') return null;
+  try {
+    return await api[method](...args);
+  } catch (_) {
+    return null;
+  }
+}
+
+/* ================================================================
    交互
    ================================================================ */
 
@@ -397,7 +436,6 @@ function bindAlpha() {
   };
   slider.addEventListener('input', apply);
 
-  // 恢复上次的设置
   try {
     const saved = localStorage.getItem('overlay.alpha');
     if (saved) slider.value = saved;
@@ -415,13 +453,20 @@ function bindDrawer() {
   });
 }
 
+// 点击穿透：真悬浮窗里改窗口样式，浏览器里只切状态
 function bindPass() {
   const btn = $('btnPass');
-  btn.addEventListener('click', () => {
+  btn.addEventListener('click', async () => {
     const on = btn.getAttribute('aria-pressed') !== 'true';
     btn.setAttribute('aria-pressed', String(on));
-    // 正式版：这里调用窗口壳切 WS_EX_TRANSPARENT
-    window.__rocoPassThrough = on;
+
+    if (hasNative()) {
+      await callNative('set_click_through', on);
+      // 穿透开着的时候，按钮自己也点不到了 —— 用热键 Ctrl+Alt+P 关
+      btn.textContent = on ? '已穿透（Ctrl+Alt+P 关）' : '点击穿透';
+    } else {
+      document.body.classList.toggle('pass-through', on);
+    }
   });
 }
 
@@ -435,6 +480,8 @@ function bindFold() {
     overlay.classList.toggle('folded', folded);
     btnFold.textContent = folded ? '展开' : '折叠';
     try { localStorage.setItem('overlay.folded', folded ? '1' : '0'); } catch (_) {}
+    // 折叠/展开后窗口要跟着缩，否则留一大片透明区域挡鼠标
+    setTimeout(() => callNative('fit_window'), 280);
   };
   hdr.addEventListener('dblclick', (e) => {
     if (e.target.closest('button')) return;
@@ -454,6 +501,14 @@ function bindDrag() {
 
   hdr.addEventListener('pointerdown', (e) => {
     if (e.target.closest('button')) return;
+
+    // 真悬浮窗：交给系统拖（窗口真的会动）
+    if (hasNative()) {
+      callNative('drag');
+      return;
+    }
+
+    // 浏览器：只能移动 DOM 元素（预览用）
     dragging = true;
     sx = e.clientX; sy = e.clientY;
     const r = overlay.getBoundingClientRect();
@@ -485,7 +540,6 @@ function bindDrag() {
   hdr.addEventListener('pointerup', end);
   hdr.addEventListener('pointercancel', end);
 
-  // 恢复上次位置
   try {
     const pos = localStorage.getItem('overlay.pos');
     if (pos) {
@@ -518,4 +572,16 @@ document.addEventListener('DOMContentLoaded', () => {
       pollTimer = setInterval(poll, 100);
     }
   });
+
+  // 原生桥是异步注入的。等它就绪后打个标记，
+  // 窗口壳和调试都能据此判断"现在是真悬浮窗环境"。
+  const waitNative = (tries) => {
+    if (hasNative()) {
+      document.body.classList.add('native-ready');
+      return;
+    }
+    if (tries <= 0) return;
+    setTimeout(() => waitNative(tries - 1), 120);
+  };
+  waitNative(40);
 });

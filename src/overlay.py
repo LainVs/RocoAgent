@@ -182,6 +182,27 @@ def strip_dwm_frame(hwnd):
         pass
 
 
+def begin_drag(hwnd):
+    """让窗口跟着鼠标走（原生拖动）。
+
+    为什么不用 pywebview 的 easy_drag：那是"整窗可拖"，
+    会跟面板里的按钮/滑杆抢事件。
+    为什么不用 CSS 拖拽：CSS 只能移动 DOM 元素，窗口本身不动，
+    拖出窗口边界就看不见了。
+
+    正确做法：发 WM_NCLBUTTONDOWN + HTCAPTION，让系统接管拖动。
+    这是所有无边框窗口的标准做法。
+    """
+    try:
+        WM_NCLBUTTONDOWN = 0x00A1
+        HTCAPTION = 2
+        UD.ReleaseCapture()
+        UD.SendMessageW(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0)
+        return True
+    except Exception:
+        return False
+
+
 def fix_transparent(hwnd, ready_check=None, timeout=12.0):
     """pywebview 的透明是延迟生效的。
 
@@ -278,6 +299,95 @@ def main():
     print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
         pw, ph, args.width, args.height))
 
+    state = {"hwnd": None, "visible": True, "pass_through": False}
+
+    # ---- 暴露给前端的 API（window.pywebview.api.*）
+    class Api:
+        """前端能调的原生能力。
+
+        为什么走 API 而不是纯 JS：
+        拖动窗口必须让 Windows 接管（WM_NCLBUTTONDOWN），
+        点击穿透必须改 WS_EX_TRANSPARENT —— 这两件事 JS 都做不到。
+        """
+
+        def drag(self):
+            """按住标题栏时调用，让系统接管拖动。"""
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            return begin_drag(hwnd)
+
+        def set_click_through(self, enabled):
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            state["pass_through"] = bool(enabled)
+            set_click_through(hwnd, bool(enabled))
+            return True
+
+        def set_opacity(self, alpha):
+            """整体透明度（0~255）。面板底色透明度由 CSS 控制，
+            这个只用于"整体隐身"。"""
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            try:
+                UD.SetLayeredWindowAttributes(hwnd, 0, int(alpha), LWA_ALPHA)
+                return True
+            except Exception:
+                return False
+
+        def hide(self):
+            hwnd = state.get("hwnd")
+            if hwnd:
+                UD.ShowWindow(hwnd, 0)
+                state["visible"] = False
+            return True
+
+        def toggle_visible(self):
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            state["visible"] = not state["visible"]
+            UD.ShowWindow(hwnd, 5 if state["visible"] else 0)
+            return state["visible"]
+
+        def quit(self):
+            try:
+                win.destroy()
+            except Exception:
+                pass
+            return True
+
+        def fit_window(self):
+            """让窗口高度贴合当前内容。
+
+            折叠/展开后必须调这个 —— 否则折叠了窗口还是原来那么高，
+            下面一大片透明区域会挡住鼠标（透明区域也是窗口）。
+            """
+            hwnd = state.get("hwnd")
+            if not hwnd:
+                return False
+            try:
+                h = win.evaluate_js(
+                    "(document.getElementById('panel')||{}).scrollHeight||0")
+                iw = win.evaluate_js("window.innerWidth")
+                if not h or int(h) < 40:
+                    return False
+                s = dpi_scale()
+                css_h = int(h) + 1
+                # 不要超过屏幕可用高度
+                screen_css = int(MAX_PHYS_H / max(1.0, s))
+                css_h = min(css_h, screen_css - 60)
+                pw, ph = css_size(int(iw or 340), css_h)
+                UD.SetWindowPos(hwnd, 0, 0, 0, int(pw * s), int(ph * s),
+                                SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW)
+                return True
+            except Exception:
+                return False
+
+    api = Api()
+
     win = webview.create_window(
         "RocoOverlay", url=url,
         width=pw,
@@ -288,9 +398,8 @@ def main():
         on_top=True,         # 置顶
         focus=False,         # 不抢焦点 —— 否则会打断游戏
         easy_drag=False,     # 拖拽自己实现（只有标题栏可拖）
+        js_api=api,          # 前端可调 window.pywebview.api.*
     )
-
-    state = {"hwnd": None, "visible": True, "pass_through": False}
 
     def page_ready():
         """页面真的画出来了才算就绪。
@@ -310,7 +419,6 @@ def main():
 
         实测面板内容只需约 360~420 CSS px，但默认窗口给 620，
         底部会留一大片透明空白 —— 透明区域虽然看不见，但会挡住鼠标。
-        所以先测量，再把窗口调成正好包住面板。
 
         注意：SetWindowPos 只改尺寸，**不要动位置**（SWP_NOMOVE）。
         之前传 (0,0) 把窗口挪到屏幕左上角，和初始位置不一致，
@@ -321,25 +429,8 @@ def main():
         except Exception:
             return
         time.sleep(0.6)
-        try:
-            h = win.evaluate_js(
-                "(document.getElementById('panel')||{}).scrollHeight||0")
-            iw = win.evaluate_js("window.innerWidth") or args.width
-            if not h or int(h) < 120:
-                return
-            css_h = int(h) + 1
-            screen_css = int(MAX_PHYS_H / max(1.0, dpi_scale()))
-            css_h = min(css_h, screen_css - 60)
-            pw, ph = css_size(int(iw), css_h)
-            s = dpi_scale()
-            # 只改尺寸，位置保持不动
-            UD.SetWindowPos(
-                state["hwnd"], 0, 0, 0,
-                int(pw * s), int(ph * s),
-                SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW)
-            print("  贴合内容：%dx%d CSS" % (int(iw), css_h))
-        except Exception:
-            pass
+        if api.fit_window():
+            print("  窗口已贴合内容")
 
     def setup():
         # 轮询等 native 就绪
