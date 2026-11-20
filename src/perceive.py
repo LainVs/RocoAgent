@@ -202,8 +202,18 @@ class Perc:
             # the full grab cost ~100 ms to read a 340x150 region.
             cnt_crop = self.screen.grab_s(CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
-        # 底板判据失效但技能栏/倒计时在?-> 仍然是在战斗。?
-        if bars and not battle and (visible or cnt):
+        # 底板判据失效但技能栏画着 -> 仍然是在战斗。
+        #
+        # 注意：**不能用倒计时兜底**。实测 2026-11-21 03:00，大厅的
+        # "进入排位"界面被误判成 battle=True：
+        #     my_ui=False foe_ui=False（血条底板没检测到，不在战斗）
+        #     但 bars=True（读到大厅横幅上的假数字 20.5/29.8）
+        #     cnt=True（大厅的"限时试用系别 5天0小时"被当成倒计时）
+        # 于是机器人以为在战斗，连按 5 次 2 键（bar never drew, blind）。
+        #
+        # 现在要求：要么底板确认，要么技能栏真的画出来了（visible），
+        # 单靠倒计时不再足以判定战斗。
+        if bars and not battle and visible:
             battle = True
 
         # Energy: a row of pips under the HP card. Only meaningful in battle,

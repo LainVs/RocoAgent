@@ -898,6 +898,18 @@ class Bot:
         for s in st["skills"]:
             if not s:
                 continue
+            # 变化技能（dash）没有伤害数字，不能走 _est_value 推算，
+            # 否则会被当成一张"伤害未知的攻击卡"，buff 分支永远走不到。
+            # 耗能从我方技能表取（my_card_costs），不依赖卡面 OCR。
+            kind = s.get("kind")
+            slot_costs = my_card_costs(my_name)
+            if kind == "dash":
+                skills.append({
+                    "i": s["index"], "dmg": None,
+                    "cost": slot_costs.get(s["index"], 0),
+                    "kind": "dash", "lit": bool(s.get("lit", True)),
+                })
+                continue
             # The number on the card is already post-effectiveness damage, so it
             # is exactly the figure policy_v2 wants.
             dmg = s.get("value")
@@ -912,7 +924,7 @@ class Bot:
                 pass
             skills.append({
                 "i": s["index"], "dmg": dmg, "cost": cost,
-                "kind": s.get("kind"), "lit": bool(s.get("lit", True)),
+                "kind": kind, "lit": bool(s.get("lit", True)),
             })
 
         state = {
