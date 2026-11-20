@@ -3144,9 +3144,27 @@ class Bot:
             return slot, "no foe identity, first living (map %s)" % mapping
 
         best = None
+        skipped = []
+        # 先用 team_db 的队伍配置补齐 bench_names。
+        #
+        # 实测（2026-11-21 04:30）：bench={1:'音速犬'}，其余槽位 no-name，
+        # 于是换人评分永远"no model data"。原因是 bench_names 只在
+        # `_check_active_pet` 里填过**当前上场那只**（cur_slot），
+        # 替补从来没被识别过。
+        # team_db 里已经配了 6 只（fill_team.py 写入），直接用它补。
+        try:
+            import team_db
+            for t in team_db.dump_team():
+                s = t.get("slot")
+                n = t.get("name")
+                if s and n and not self.bench_names.get(s):
+                    self.bench_names[s] = n
+        except Exception:
+            pass
         for slot, _pos, _fill in pool:
             name = self.bench_names.get(slot)
             if not name:
+                skipped.append("slot%d:no-name" % slot)
                 continue
             try:
                 import pvp_engine as E
@@ -3155,12 +3173,15 @@ class Bot:
                 taken = inc[0]["dmg"] if inc else 0
                 hp = E.max_hp(name) or 1
                 score = dmg / 200.0 - taken / float(hp)
-            except Exception:
+            except Exception as e:
+                skipped.append("slot%d:%s" % (slot, type(e).__name__))
                 continue
             if best is None or score > best[0]:
                 best = (score, slot, name, dmg, taken)
         if best is None:
             slot = pool[0][0]
+            log("PANEL MAP: no model data (%s), bench=%s"
+                % (",".join(skipped) or "-", dict(self.bench_names)))
             return slot, "no model data, first living"
         _s, slot, name, dmg, taken = best
         return slot, "%s dmg %d taken %d" % (name, dmg, taken)
