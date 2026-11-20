@@ -75,9 +75,25 @@ DEFAULT_H = 620
 
 
 def dpi_scale():
-    """当前系统缩放倍数（192 DPI -> 2.0）。"""
+    """真实 DPI 缩放倍数。
+
+    坑：非 DPI-aware 进程里 GetDeviceCaps 返回 96（假的），
+    而 WebView2 的 devicePixelRatio 是 2.0。所以先 SetProcessDpiAwarenessContext
+    再用 GetDpiForSystem，最后才退回 GetDeviceCaps。
+    """
     try:
-        UD.SetProcessDPIAware()
+        # Win10 1703+ ：per-monitor v2
+        UD.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+    except Exception:
+        try:
+            UD.SetProcessDPIAware()
+        except Exception:
+            pass
+    # 首选 GetDpiForSystem（DPI-aware 后才是真值）
+    try:
+        dpi = UD.GetDpiForSystem()
+        if dpi:
+            return max(1.0, dpi / 96.0)
     except Exception:
         pass
     try:
@@ -92,6 +108,29 @@ def dpi_scale():
     except Exception:
         pass
     return 1.0
+
+
+# 窗口开销（物理像素）：无边框窗口仍有 26x70 的非客户区。
+# 实测标定（200% DPI）：
+#   create(340,620) -> window 680x1240 phys, inner 327x585 CSS
+#   create(400,700) -> window 800x1400 phys, inner 387x665 CSS
+#   create(500,900) -> window 1000x1800 phys, inner 487x865 CSS
+# 规律：inner_css = create_param - 13（宽）/ - 17.5（高）
+#       => create_param = inner_css + 13 / + 17.5
+FRAME_W = 13
+FRAME_H = 17
+
+# 屏幕高度上限（物理像素）。实测 create 高度超过屏幕会被截到 1950。
+MAX_PHYS_H = 1950
+
+
+def css_size(css_w, css_h):
+    """把想要的 CSS 视口尺寸换算成 create_window 的 width/height 参数。
+
+    实测规律：create 参数本身会被 pywebview 乘 dpr，
+    再减掉固定的边框开销。所以反推要加回去。
+    """
+    return (int(css_w + FRAME_W), int(css_h + FRAME_H))
 
 
 # ============================================================ Win32
@@ -228,17 +267,21 @@ def main():
     print("悬浮窗")
     print("  地址  %s" % url)
     scale = dpi_scale()
-    print("  尺寸  %dx%d CSS px（DPI %.0f%% -> 物理 %dx%d）" % (
-        args.width, args.height, scale * 100,
-        int(args.width * scale), int(args.height * scale)))
+    print("  尺寸  %dx%d CSS px（DPI %.0f%%）" % (
+        args.width, args.height, scale * 100))
     print("  Ctrl+Alt+O 显示/隐藏   Ctrl+Alt+P 点击穿透")
     print()
 
+    # 窗口尺寸标定（见 css_size 注释）：
+    #   想要 340x620 CSS 视口，要传 353x638。
+    pw, ph = css_size(args.width, args.height)
+    print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
+        pw, ph, args.width, args.height))
+
     win = webview.create_window(
         "RocoOverlay", url=url,
-        # 传物理像素：这样 innerWidth 才等于设计尺寸（见 dpi_scale 注释）
-        width=int(args.width * scale),
-        height=int(args.height * scale),
+        width=pw,
+        height=ph,
         x=int(40 * scale), y=int(40 * scale),
         frameless=True,      # 无边框
         transparent=True,    # 像素级透明（圆角外透出桌面）
@@ -263,25 +306,38 @@ def main():
             return False
 
     def enter_embedded():
-        """告诉页面"我在真悬浮窗里"，让它贴左上角、不留预览边距。
+        """让页面知道"我在真悬浮窗里"，并让窗口贴合内容高度。
 
-        然后按面板实际高度把窗口调成正好包住它 —— 这样不会有大片
-        透明空白（透明区域虽然看不见，但会挡住鼠标事件）。
+        实测面板内容只需约 360~420 CSS px，但默认窗口给 620，
+        底部会留一大片透明空白 —— 透明区域虽然看不见，但会挡住鼠标。
+        所以先测量，再把窗口调成正好包住面板。
+
+        注意：SetWindowPos 只改尺寸，**不要动位置**（SWP_NOMOVE）。
+        之前传 (0,0) 把窗口挪到屏幕左上角，和初始位置不一致，
+        导致外部截图工具按旧坐标抓，看起来"面板被切"。
         """
         try:
             win.evaluate_js("document.body.classList.add('embedded')")
         except Exception:
             return
-        time.sleep(0.5)
+        time.sleep(0.6)
         try:
             h = win.evaluate_js(
-                "(document.getElementById('panel')||{}).offsetHeight||0")
-            if h and int(h) > 100:
-                scale = dpi_scale()
-                UD.SetWindowPos(
-                    state["hwnd"], -1, 0, 0,
-                    int(args.width * scale), int((int(h) + 2) * scale),
-                    SWP_NOMOVE | SWP_SHOWWINDOW)
+                "(document.getElementById('panel')||{}).scrollHeight||0")
+            iw = win.evaluate_js("window.innerWidth") or args.width
+            if not h or int(h) < 120:
+                return
+            css_h = int(h) + 1
+            screen_css = int(MAX_PHYS_H / max(1.0, dpi_scale()))
+            css_h = min(css_h, screen_css - 60)
+            pw, ph = css_size(int(iw), css_h)
+            s = dpi_scale()
+            # 只改尺寸，位置保持不动
+            UD.SetWindowPos(
+                state["hwnd"], 0, 0, 0,
+                int(pw * s), int(ph * s),
+                SWP_NOMOVE | SWP_NOZORDER | SWP_SHOWWINDOW)
+            print("  贴合内容：%dx%d CSS" % (int(iw), css_h))
         except Exception:
             pass
 

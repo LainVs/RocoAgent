@@ -153,13 +153,50 @@ body.embedded .stage { display: none; }
   will-change: transform;
 }
 
+/* ── 嵌入模式（真悬浮窗）─────────────────────────────
+   窗口大小由 overlay.py 决定，面板撑满整个视口。
+   内部用 flex 纵向排列，技能区吃掉剩余空间 ——
+   这样窗口多大都不会有空白或溢出。 */
 body.embedded .overlay {
   position: fixed;
-  top: 0;
-  left: 0;
+  inset: 0;
   width: 100%;
-  height: auto;
+  height: 100%;
+  will-change: auto;
 }
+body.embedded .overlay .panel {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--r);
+  overflow: hidden;
+}
+/* 技能区：可以收缩（空间不够时压扁），但不主动膨胀
+   （flex-grow=0）。否则窗口一大，技能区就把整块面板撑满，
+   其他元素被挤到看不见。 */
+body.embedded .skills {
+  flex: 0 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+}
+body.embedded .verdict { flex: none; }
+body.embedded .side { flex: none; }
+body.embedded .matchup { flex: none; }
+body.embedded .hdr { flex: none; }
+body.embedded .drawer { flex: none; }
+
+/* 嵌入模式压缩非关键间距，给技能区腾地方 */
+body.embedded .side { padding: 8px 12px 9px; }
+body.embedded .side-head { margin-bottom: 6px; }
+body.embedded .matchup { padding: 6px 12px; }
+body.embedded .infer { margin-top: 6px; }
+body.embedded .infer2 { margin-top: 4px; }
+body.embedded .skills { padding: 2px 12px 4px; }
+body.embedded .skill { padding: 5px 0 4px 7px; }
+body.embedded .verdict { height: 30px; }
+
+/* 技能区滚动条极细，不抢视觉 */
+body.embedded .skills::-webkit-scrollbar { width: 3px; }
 body.embedded .overlay .panel {
   border-radius: var(--r);
 }
