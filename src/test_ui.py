@@ -391,6 +391,230 @@ def test_window_state():
             pass
 
 
+# ============================================================ 6. 韧性
+RESILIENCE_WORKER = r'''
+import json, os, sys, time, threading
+import webview
+
+port = int(sys.argv[1])
+iso = sys.argv[2]
+out = sys.argv[3]
+result = {}
+
+win = webview.create_window(
+    "rtest", url="http://127.0.0.1:%d/index.html" % port,
+    width=353, height=600, x=-2000, y=-2000,
+    frameless=True, transparent=True, on_top=False, focus=False)
+
+
+def write_state(turn, hp, n):
+    sk = [{"i": i, "name": None, "element": None, "cost": None,
+           "dmg": v, "pct": p, "usable": True, "note": None}
+          for i, (v, p) in enumerate(
+              [(245, 58.0), (186, 44.0), (92, 22.0)][:n], 1)]
+    st = {
+        "t": time.time(), "seq": turn, "mode": "battle", "turn": turn,
+        "me": {"name": "测试", "types": ["龙"], "hp_pct": hp,
+               "hp_abs": int(490 * hp / 100), "hp_max": 490,
+               "energy": 6, "energy_max": 10, "buffs": [], "trait": None},
+        "foe": {"name": "对手", "types": ["水"], "hp_pct": 45.2,
+                "hp_range": [349, 419], "def_range": [178, 231],
+                "nature": None, "nature_conf": None, "known_skills": []},
+        "skills": sk,
+        "matchup": {"out": 3.0, "in": 0.5, "tag": "克制"},
+        "verdict": None,
+        "system": {"fps_ms": 4.2,
+                   "detectors": {"bar": True, "skillbar": True,
+                                 "countdown": True},
+                   "conflicts": 0, "gate": None},
+    }
+    p = os.path.join(iso, "live_state.json")
+    with open(p + ".tmp", "w", encoding="utf-8") as f:
+        json.dump(st, f, ensure_ascii=False)
+    os.replace(p + ".tmp", p)
+
+
+def worker():
+    try:
+        for _ in range(150):
+            time.sleep(0.2)
+            if win.native is not None:
+                break
+        time.sleep(4.0)
+
+        def snap():
+            return {
+                "pct": win.evaluate_js(
+                    "document.getElementById('mePct').textContent"),
+                "turn": win.evaluate_js(
+                    "document.getElementById('sysTurn').textContent"),
+                "skills": win.evaluate_js(
+                    "document.querySelectorAll('.skill').length"),
+                "state": win.evaluate_js(
+                    "document.getElementById('sysState').textContent"),
+            }
+
+        result["a_initial"] = snap()
+
+        write_state(5, 60.0, 3)
+        time.sleep(1.8)
+        result["b_changed"] = snap()
+
+        live = os.path.join(iso, "live_state.json")
+        try:
+            os.remove(live)
+        except OSError:
+            pass
+        time.sleep(2.0)
+        result["c_removed"] = snap()
+
+        write_state(9, 30.0, 2)
+        time.sleep(2.0)
+        result["d_restored"] = snap()
+    except Exception:
+        import traceback
+        result["error"] = traceback.format_exc()
+    finally:
+        with open(out, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False)
+        os._exit(0)
+
+
+threading.Thread(target=worker, daemon=True).start()
+webview.start()
+'''
+
+
+def test_resilience(port):
+    print("\n[6] 韧性（数据源断开再恢复）")
+    import tempfile
+
+    iso = os.path.join(tempfile.gettempdir(), "roco_iso")
+    os.makedirs(iso, exist_ok=True)
+    # 清掉上次残留的数据，否则初始状态不是"有数据"
+    for f in ("live_state.json", "live_state.json.tmp"):
+        try:
+            os.remove(os.path.join(iso, f))
+        except OSError:
+            pass
+
+    # 起一个用独立日志目录的服务。
+    # 端口要真的空着 —— 之前写 port+10 撞上了别的进程，
+    # 连到旧服务导致断言全错（旧服务读的是机器人正在写的日志）。
+    iso_port = None
+    for p in range(port + 20, port + 60):
+        if port_free(p):
+            iso_port = p
+            break
+    if iso_port is None:
+        ok(False, "找不到空闲端口")
+        return
+
+    env = dict(os.environ)
+    env["ROCO_LOGS"] = iso
+    srv = subprocess.Popen(
+        [sys.executable, os.path.join(SRC, "ui_server.py"),
+         "--port", str(iso_port)],
+        cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000 | 0x00000008)
+    if not wait_health(iso_port, timeout=12):
+        ok(False, "独立服务启动（端口 %d）" % iso_port)
+        try:
+            srv.terminate()
+        except Exception:
+            pass
+        return
+
+    # 确认它真的读的是独立目录
+    import json as _json
+    probe = {
+        "t": time.time(), "seq": 1, "mode": "battle", "turn": 1,
+        "me": {"name": "探针", "types": ["龙"], "hp_pct": 100.0,
+               "hp_abs": 490, "hp_max": 490, "energy": 6,
+               "energy_max": 10, "buffs": [], "trait": None},
+        "foe": {"name": "对手", "types": ["水"], "hp_pct": 45.2,
+                "hp_range": [349, 419], "def_range": [178, 231],
+                "nature": None, "nature_conf": None, "known_skills": []},
+        "skills": [], "matchup": None, "verdict": None,
+        "system": {"fps_ms": 4.2,
+                   "detectors": {"bar": True, "skillbar": True,
+                                 "countdown": True},
+                   "conflicts": 0, "gate": None},
+    }
+    pth = os.path.join(iso, "live_state.json")
+    with open(pth + ".tmp", "w", encoding="utf-8") as f:
+        _json.dump(probe, f, ensure_ascii=False)
+    os.replace(pth + ".tmp", pth)
+    time.sleep(0.3)
+    try:
+        got = get(iso_port, "/api/state")
+        if not got or got.get("me", {}).get("name") != "探针":
+            ok(False, "独立服务读到的是别的数据（端口被旧服务占用）",
+               "me=%s" % (got.get("me", {}).get("name") if got else None))
+            srv.terminate()
+            return
+    except Exception as e:
+        ok(False, "独立服务状态检查", str(e)[:60])
+        srv.terminate()
+        return
+    ok(True, "独立服务隔离正确", "端口 %d" % iso_port)
+
+    tmp = os.path.join(tempfile.gettempdir(), "roco_resilience.json")
+    try:
+        os.remove(tmp)
+    except OSError:
+        pass
+    script = os.path.join(tempfile.gettempdir(), "roco_res_worker.py")
+    with open(script, "w", encoding="utf-8") as f:
+        f.write(RESILIENCE_WORKER)
+
+    wp = subprocess.Popen(
+        [sys.executable, script, str(iso_port), iso, tmp],
+        cwd=ROOT, stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        creationflags=0x08000000)
+
+    end = time.time() + 45
+    while time.time() < end:
+        if os.path.exists(tmp):
+            break
+        time.sleep(0.4)
+
+    for proc in (wp, srv):
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
+    if not os.path.exists(tmp):
+        ok(False, "韧性测试超时")
+        return
+
+    try:
+        with open(tmp, encoding="utf-8") as f:
+            r = _json.load(f)
+    except Exception as e:
+        ok(False, "韧性结果解析", str(e)[:60])
+        return
+
+    if "error" in r:
+        ok(False, "韧性测试", r["error"][:100])
+        return
+
+    a = r.get("a_initial", {})
+    b = r.get("b_changed", {})
+    c = r.get("c_removed", {})
+    d = r.get("d_restored", {})
+
+    ok(b.get("pct") == "60", "数据变化后跟上", "pct=%s" % b.get("pct"))
+    ok(b.get("turn") == "T5", "回合号跟上", "turn=%s" % b.get("turn"))
+    ok(c.get("pct") == "—", "数据源消失后清空", "pct=%s" % c.get("pct"))
+    ok(c.get("state") == "未连接", "显示未连接", "state=%s" % c.get("state"))
+    ok(d.get("pct") == "30", "数据源恢复后跟上", "pct=%s" % d.get("pct"))
+    ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
+
+
 # ============================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -428,6 +652,7 @@ def main():
         test_window_state()
         if not args.no_dom:
             test_dom(port)
+            test_resilience(port)
     finally:
         try:
             srv.terminate()
