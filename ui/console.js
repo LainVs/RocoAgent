@@ -137,8 +137,12 @@ async function refreshHealth() {
   }
 
   // 2. 状态推送新鲜度
-  if (!b || b.state_age == null) {
-    items.push(healthItem('状态推送', '无数据', b && b.running ? 'bad' : ''));
+  // 机器人没跑时不该报"过期"—— 那是噪音，不是故障
+  const running = b && b.running;
+  if (!running) {
+    items.push(healthItem('状态推送', '—', ''));
+  } else if (b.state_age == null) {
+    items.push(healthItem('状态推送', '无数据', 'bad'));
   } else if (b.state_age < 3) {
     items.push(healthItem('状态推送', `${b.state_age.toFixed(1)}s 前`, 'ok'));
   } else {
@@ -148,7 +152,7 @@ async function refreshHealth() {
   // 3. 感知耗时
   const ms = st && st.system ? st.system.fps_ms : null;
   if (ms == null) {
-    items.push(healthItem('感知耗时', '无数据', ''));
+    items.push(healthItem('感知耗时', '—', ''));
   } else {
     const lv = ms > 200 ? 'bad' : ms > 50 ? 'warn' : 'ok';
     items.push(healthItem('感知耗时', `${ms.toFixed(0)} ms`, lv));
@@ -162,13 +166,22 @@ async function refreshHealth() {
     countdown: '倒计时',
   };
   Object.keys(DET_LABEL).forEach((k) => {
+    // 没数据时不要报红 —— 那是"不知道"，不是"坏了"
+    if (!st) {
+      items.push(healthItem(DET_LABEL[k], '—', ''));
+      return;
+    }
     const on = !!dets[k];
     items.push(healthItem(DET_LABEL[k], on ? '正常' : '读不到', on ? 'ok' : 'bad'));
   });
 
   // 7. 决策门（被拦住时显示原因，这是排查卡住的关键）
   const gate = st && st.system ? st.system.gate : null;
-  items.push(healthItem('决策门', gate || '畅通', gate ? 'warn' : 'ok'));
+  if (!st) {
+    items.push(healthItem('决策门', '—', ''));
+  } else {
+    items.push(healthItem('决策门', gate || '畅通', gate ? 'warn' : 'ok'));
+  }
 
   grid.innerHTML = items.join('');
 
