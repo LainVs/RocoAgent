@@ -1139,28 +1139,39 @@ class Bot:
         # 高达 27.6**（动画/受击闪烁/光效），于是每帧都判成"换人"，
         # 日志被 "FOE -> new bust (switch?)" 刷屏，foe_name 反复被清空。
         #
-        # 新判据（名字优先，指纹只做兜底）：
-        #   1. HUD 认出的名字变了 -> 确定换人
-        #   2. 名字都读不到时，指纹距离 > 32（远高于实测最大 27.6）才算
+        # 第二版改成"名字优先"，但实测（2026-11-21 05:17）又出问题：
+        # 低置信度的名字（0.60~0.64）在 鸭吉吉/炽心勇狮/雪影冰灵 之间
+        # 反复跳，日志刷屏 123 秒。模板匹配在 0.6 这一档并不可靠。
+        #
+        # 第三版（当前）：名字变化要同时满足
+        #   · 置信度 >= 0.75（低于这个数不算数）
+        #   · 连续 2 帧都是同一个新名字（单帧抖动不算）
         sig = _bust_sig(img)
         hud_name = self._portrait_species(name, "foe") if name else None
+        hud_ok = bool(hud_name) and sc >= 0.75
         if self.foe_sig is None:
             self.foe_sig = sig
             self.foe_sig_at = now
-            self._foe_name_seen = hud_name
-        elif hud_name and self._foe_name_seen and hud_name != self._foe_name_seen:
-            log("FOE -> new bust (name %s -> %s)"
-                % (self._foe_name_seen, hud_name))
-            self.foe_sig = sig
-            self.foe_sig_at = now
-            self._foe_name_seen = hud_name
-            self.foe_name = None
-            self.foe_types = None
-            self.foe_species_id = None
-            self.foe_bust = None
-            self._foe_sig_streak = 0
-        elif not hud_name and _sig_dist(sig, self.foe_sig) > 32.0:
-            # 名字读不到时才看指纹，且阈值远高于实测噪声上限
+            self._foe_name_seen = hud_name if hud_ok else None
+        elif (hud_ok and self._foe_name_seen
+                and hud_name != self._foe_name_seen):
+            # 新名字要连续 2 帧一致才算换人
+            if hud_name == getattr(self, "_foe_name_pending", None):
+                log("FOE -> new bust (name %s -> %s, %.2f)"
+                    % (self._foe_name_seen, hud_name, sc))
+                self.foe_sig = sig
+                self.foe_sig_at = now
+                self._foe_name_seen = hud_name
+                self._foe_name_pending = None
+                self.foe_name = None
+                self.foe_types = None
+                self.foe_species_id = None
+                self.foe_bust = None
+                self._foe_sig_streak = 0
+            else:
+                self._foe_name_pending = hud_name
+        elif not hud_ok and _sig_dist(sig, self.foe_sig) > 32.0:
+            # 名字读不到/不可靠时才看指纹，且阈值远高于实测噪声上限
             self._foe_sig_streak = getattr(self, "_foe_sig_streak", 0) + 1
             if self._foe_sig_streak >= 3:
                 log("FOE -> new bust (sig only, dist=%.0f)"
@@ -2124,6 +2135,18 @@ class Bot:
         # be absent, so it cannot fire during a normal decision window.
         fainted = (st["my_pct"] is not None and st["my_pct"] <= 0.5
                    and (st.get("my_ui") or self.faint_at is not None))
+        # 血量读成 0 但**底板不在场**（my_ui=False）时，大概率是读取失败
+        # 而不是真倒下。实测（2026-11-21 05:18）：me=0.0% 持续 50 秒，
+        # 期间反复 "FAINT -> recovered (hp 100%)"，白耗时间。
+        # 要求连续 3 次读到 0 才认定为真倒下。
+        if (st["my_pct"] is not None and st["my_pct"] <= 0.5
+                and not st.get("my_ui")):
+            self._zero_hp_streak = getattr(self, "_zero_hp_streak", 0) + 1
+            if self._zero_hp_streak < 3:
+                return
+            fainted = True
+        else:
+            self._zero_hp_streak = 0
         forced_panel = False
         if not fainted and not st["bar"]:
             # The skill bar is already known to be absent, so pass that in and
