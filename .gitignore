@@ -24,20 +24,32 @@ logs/digits/glyphs/
 .venv/
 *.npz.tmp
 
-# ͷ��ģ����ʶ���ʲ���������⣨����� *.png �ǵ��Խ�ͼ��
+# ͷ��ģ����ʶ���ʲ���������⣨����� *.png �ǵ��Խ�ͼ��
 !assets/portraits/*.png
 
-# δ��ע��ͷ�������ÿ 10 ��һ�ţ�ֻ�ڱ�עǰ���ã�
+# δ��ע��ͷ�������ÿ 10 ��һ�ţ�ֻ�ڱ�עǰ���ã�
 assets/portraits/_unknown_*
 
-# ��λ���ݿ������������ݣ����� logs/*.jsonl �ؽ�
+# ��λ���ݿ������������ݣ����� logs/*.jsonl �ؽ�
 logs/roco.db*
 
-# ���ݿⱸ�ݲ����
+# ���ݿⱸ�ݲ����
 data/*.bak*
 
-# ����·�����ò����
+# ����·�����ò����
 config/paths.local.json
 
-# ���ӵ�ַ���棨������
+# ���ӵ�ַ���棨������
 board.json
+
+# ------------------------------------------------------------------ 外部资产（roco-cal）
+# 识别模型 + S5 精灵/特性数据。是固定资产，必须入库（否则换机器就没了）。
+!data/external/roco-cal/models/*.onnx
+!data/external/roco-cal/models/*.json
+!data/external/roco-cal/models/*.txt
+!data/external/roco-cal/pets/*.json
+!data/external/roco-cal/traits/**/*.json
+!data/external/roco-cal/skills/*.json
+
+# 对面头像模板：之前被 *.png 规则误排除，导致 71 张模板从未入库
+!assets/portraits_foe/*.png
