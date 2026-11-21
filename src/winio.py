@@ -281,7 +281,10 @@ class Screen:
         self.client_off = (pt.x - x, pt.y - y)
         new_size = (r.right, r.bottom)
         old_size = getattr(self, "client_size", None)
-        if old_size and old_size != new_size:
+        # 注意排除 (0,0)：`__init__` 里把 client_size 初始化成 (0,0) 了，
+        # 而 Python 里非空元组恒为真，所以不加这个判断就会每次构造 Screen
+        # 都打一条 "WINDOW client 0x0 -> 2048x1536"（实测每秒刷一次）。
+        if old_size and old_size != (0, 0) and old_size != new_size:
             # 分辨率：窗口大小变了：所有固定框会自动等比缩放，这里留一条记录，
             # 方便回看"某次识别异常是不是因为中途换了分辨率"。
             try:
