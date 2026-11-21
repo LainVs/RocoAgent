@@ -1,0 +1,146 @@
+[
+ {
+  "file": "type_bug.png",
+  "code": "bug",
+  "name_cn": "虫",
+  "w": 198,
+  "h": 198,
+  "kb": 8.8
+ },
+ {
+  "file": "type_cute.png",
+  "code": "cute",
+  "name_cn": "萌",
+  "w": 198,
+  "h": 198,
+  "kb": 8.0
+ },
+ {
+  "file": "type_dark.png",
+  "code": "dark",
+  "name_cn": "恶",
+  "w": 198,
+  "h": 198,
+  "kb": 7.8
+ },
+ {
+  "file": "type_dragon.png",
+  "code": "dragon",
+  "name_cn": "龙",
+  "w": 198,
+  "h": 198,
+  "kb": 5.5
+ },
+ {
+  "file": "type_electric.png",
+  "code": "electric",
+  "name_cn": "电",
+  "w": 198,
+  "h": 198,
+  "kb": 7.7
+ },
+ {
+  "file": "type_fighting.png",
+  "code": "fighting",
+  "name_cn": "武",
+  "w": 198,
+  "h": 198,
+  "kb": 7.8
+ },
+ {
+  "file": "type_fire.png",
+  "code": "fire",
+  "name_cn": "火",
+  "w": 198,
+  "h": 198,
+  "kb": 8.5
+ },
+ {
+  "file": "type_ghost.png",
+  "code": "ghost",
+  "name_cn": "幽",
+  "w": 198,
+  "h": 198,
+  "kb": 7.5
+ },
+ {
+  "file": "type_grass.png",
+  "code": "grass",
+  "name_cn": "草",
+  "w": 198,
+  "h": 198,
+  "kb": 8.4
+ },
+ {
+  "file": "type_ground.png",
+  "code": "ground",
+  "name_cn": "地",
+  "w": 198,
+  "h": 198,
+  "kb": 8.1
+ },
+ {
+  "file": "type_ice.png",
+  "code": "ice",
+  "name_cn": "冰",
+  "w": 198,
+  "h": 198,
+  "kb": 7.9
+ },
+ {
+  "file": "type_illusion.png",
+  "code": "illusion",
+  "name_cn": "幻",
+  "w": 198,
+  "h": 198,
+  "kb": 9.3
+ },
+ {
+  "file": "type_light.png",
+  "code": "light",
+  "name_cn": "光",
+  "w": 198,
+  "h": 198,
+  "kb": 8.2
+ },
+ {
+  "file": "type_machine.png",
+  "code": "machine",
+  "name_cn": "机械",
+  "w": 198,
+  "h": 198,
+  "kb": 8.4
+ },
+ {
+  "file": "type_normal.png",
+  "code": "normal",
+  "name_cn": "普通",
+  "w": 198,
+  "h": 198,
+  "kb": 7.6
+ },
+ {
+  "file": "type_poison.png",
+  "code": "poison",
+  "name_cn": "毒",
+  "w": 198,
+  "h": 198,
+  "kb": 7.7
+ },
+ {
+  "file": "type_water.png",
+  "code": "water",
+  "name_cn": "水",
+  "w": 198,
+  "h": 198,
+  "kb": 7.7
+ },
+ {
+  "file": "type_wing.png",
+  "code": "wing",
+  "name_cn": "翼",
+  "w": 198,
+  "h": 198,
+  "kb": 8.1
+ }
+]

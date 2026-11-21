@@ -80,20 +80,26 @@ _ident = {
 def identify(now=None, foe_hp_pct=None):
     """识别双方身份。带节流和换人检测。返回 dict（永不抛异常）。
 
-    为什么不能每帧跑：立绘 ONNX 一次 80~120ms，10Hz 会占满 CPU。
-    而且身份在**一回合内不会变**，没必要重复认。
+    三条通道（2026-11-21 重构）
+    --------------------------
+    原来只有立绘 ONNX 一条，实测静止画面 conf 1.3e-07（等于瞎猜），
+    所以计算器一打开就显示"未知"。现在改成：
+
+        1. `foe_ident.identify()`  —— 四通道融合，**属性图标做硬否决**
+           属性是玩家改名也改不掉的，龙+幽只有 4 只，幽+恶只有 2 只。
+        2. 名字只当**昵称**用（排位有大量改名精灵），先查 nickname_map。
+        3. 立绘 ONNX 作为补充，且必须落在属性过滤后的候选集内。
+
+    我方身份不需要识别 —— 队伍是 `my_team` 表里已知的 5 只，
+    头像模板只有 4/5 只覆盖。所以优先按头像模板匹配，命中就是确定答案。
+
+    为什么不能每帧跑：立绘 ONNX 一次 80~120ms + OCR 一次 1~2 秒，
+    10Hz 会占满 CPU。而且身份在**一回合内不会变**，没必要重复认。
     """
     now = now or time.time()
     if now - _ident["at"] < ID_INTERVAL:
         return _ident
     _ident["at"] = now
-
-    try:
-        import portrait_onnx as PO
-        if not PO.available():
-            return _ident
-    except Exception:
-        return _ident
 
     # 换人检测：血量突然变高说明对面换了只满血的上场
     prev_hp = _ident.get("foe_hp_at_id")
@@ -102,31 +108,94 @@ def identify(now=None, foe_hp_pct=None):
 
     try:
         _scr, _p = _get()
+    except Exception:
+        return _ident
+
+    # ---- 敌方：四通道融合
+    try:
+        import foe_ident
+        prev = None if changed else _ident.get("foe")
+        res = foe_ident.identify(_scr, prev=prev, side="foe")
         if changed:
             _ident["foe"] = None
             _ident["foe_conf"] = 0.0
-        if _ident["foe"] is None:
-            res = PO.predict_region(_scr, "foe", topk=1)
-            if res:
-                name, conf = res[0]
-                # 置信度门槛：定标实测 conf>=0.90 时准确率 93.2%，
-                # 0.70~0.90 只有 55.6%（等于抛硬币），所以取 0.90。
-                if conf >= 0.90:
-                    _ident["foe"] = name
-                    _ident["foe_conf"] = float(conf)
-                else:
-                    _ident["foe_conf"] = float(conf)
-        if _ident["self"] is None:
-            res = PO.predict_region(_scr, "self", topk=1)
-            if res:
-                name, conf = res[0]
-                if conf >= 0.90:
-                    _ident["self"] = name
-                    _ident["self_conf"] = float(conf)
-        _ident["foe_hp_at_id"] = foe_hp_pct
+            _ident["foe_types"] = []
+            _ident["foe_candidates"] = []
+        if res.get("name"):
+            if res["name"] != _ident.get("foe"):
+                _log("FOE -> %s (%s, %.2f)"
+                     % (res["name"], res.get("source"), res.get("conf") or 0))
+            _ident["foe"] = res["name"]
+            _ident["foe_conf"] = float(res.get("conf") or 0.0)
+        _ident["foe_types"] = res.get("types") or []
+        _ident["foe_candidates"] = res.get("candidates") or []
+        _ident["foe_nickname"] = res.get("nickname")
+        _ident["foe_source"] = res.get("source")
+        _ident["foe_detail"] = res.get("detail") or {}
+    except Exception as e:
+        _log("FOE identify failed: %s: %s" % (type(e).__name__, e))
+
+    # ---- 我方：头像模板优先（队伍已知，只有 4/5 有模板）
+    if _ident.get("self") is None:
+        try:
+            import portraits
+            import portrait_db as P
+            m = portraits.SEARCH_MARGIN
+            box = portraits.box_for(*_scr.client_size, margin=m)
+            img = _scr.grab_client(box)
+            items = portraits.load_library(portraits.LIB_DIR)
+            if img is not None and items:
+                stem, sc = portraits.identify(
+                    img, items, target=(box[2] - 2 * m, box[3] - 2 * m))
+                if stem and sc >= 0.75:
+                    sid = P.species_of(stem + ".png", "self")
+                    nm = P.species_name(sid) if sid else None
+                    if nm:
+                        _ident["self"] = nm
+                        _ident["self_conf"] = float(sc)
+                        _log("SELF -> %s (%.2f)" % (nm, sc))
+        except Exception:
+            pass
+
+    # 我方兜底：立绘 ONNX（必须和 my_team 里某只对得上）
+    if _ident.get("self") is None:
+        try:
+            import portrait_onnx as PO
+            if PO.available():
+                res = PO.predict_region(_scr, "self", topk=3)
+                if res:
+                    name, conf = res[0]
+                    if conf >= 0.90 and _in_my_team(name):
+                        _ident["self"] = name
+                        _ident["self_conf"] = float(conf)
+                        _log("SELF -> %s (onnx %.2f)" % (name, conf))
+        except Exception:
+            pass
+
+    _ident["foe_hp_at_id"] = foe_hp_pct
+    return _ident
+
+
+def _in_my_team(name):
+    """这个名字是否在我们自己的队伍里（用于否决立绘误判）。"""
+    try:
+        import team_db
+        return name in {t.get("name") for t in team_db.dump_team()}
+    except Exception:
+        return False
+
+
+def _log(msg):
+    """独立模式也要有日志，否则出问题无从查起。"""
+    try:
+        import os
+        import time as _t
+        path = os.path.join(ROOT, "logs", "bot_stdout.log")
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write("%s [standalone] %s\n"
+                     % (_t.strftime("%H:%M:%S"), msg))
     except Exception:
         pass
-    return _ident
 
 
 def _get():
@@ -177,10 +246,14 @@ def observe(force=False):
 
     my_name = ident.get("self")
     foe_name = ident.get("foe")
+    foe_types = ident.get("foe_types") or []
+    foe_cands = ident.get("foe_candidates") or []
+    foe_src = ident.get("foe_source") or "none"
+    foe_nick = ident.get("foe_nickname")
 
     # ---- 用身份查库，补齐血量绝对值 / 属性 / 伤害百分比
     my_types, my_max, my_abs = [], None, None
-    foe_types, foe_hp_range, foe_max = [], None, None
+    foe_hp_range, foe_max = None, None
     try:
         import foe_hp as FH
         if my_name:
@@ -189,7 +262,9 @@ def observe(force=False):
             if my_max and raw.get("my_pct") is not None:
                 my_abs = int(round(my_max * raw["my_pct"] / 100.0))
         if foe_name:
-            foe_types = FH.types_of(foe_name) or []
+            # 属性优先用 HUD 直读的（改名改不掉，比查库更可信）
+            if not foe_types:
+                foe_types = FH.types_of(foe_name) or []
             foe_hp_range = FH.hp_band(foe_name)
             foe_max = FH.max_hp(foe_name)
     except Exception:
@@ -245,6 +320,10 @@ def observe(force=False):
             "nature": None,
             "nature_conf": None,
             "known_skills": [],
+            # 属性过滤后的候选（识别没定下来时 UI 显示"候选：A / B"）
+            "candidates": foe_cands,
+            "ident_source": foe_src,
+            "nickname": foe_nick,
         },
         "skills": skills,
         "matchup": None,

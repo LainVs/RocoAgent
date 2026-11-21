@@ -54,6 +54,11 @@ board.json
 # 对面头像模板：之前被 *.png 规则误排除，导致 71 张模板从未入库
 !assets/portraits_foe/*.png
 
+# 18 系别官方图标（HUD 属性徽章识别的基础资源）
+# 来源见 assets/ext/type_icons/SOURCE.md
+# 没有它，独立计算器就认不出对面属性 -> 克制算错 4 倍
+!assets/ext/type_icons/*.png
+
 # ------------------------------------------------------------------ 外部资产（nrc-ai）
 # MIT 许可的效果引擎（技能/特性效果、印记、MCTS）。
 # 见 data/external/nrc-ai/VERSION.md
