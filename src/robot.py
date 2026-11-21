@@ -847,20 +847,25 @@ class Bot:
                     if not ended and getattr(self, "_my_none_since", None) is not None \
                             and now - self._my_none_since > 40.0:
                         ended = "hud gone 40s"
-                    # ---- 画面静止兜底（2026-11-22）
+                    # ---- 画面静止兜底：**已删除**（2026-11-22 深夜）
                     #
-                    # 有些结算/奖励页既没有"开始挑战"也没有"退出"按钮
-                    # （实测：排位结算页只剩「我方战况」+「今日获得」），
-                    # 但它**完全静止**；而对面的回合一定有动画。
-                    # 所以"20 秒不在战斗 + 画面指纹连续 8 秒不变"也算结束。
-                    # 这条是老机器人能自己走出结算页的原因，不能丢。
-                    if not ended:
-                        fp = self._screen_fingerprint()
-                        if fp != getattr(self, "_still_fp", None):
-                            self._still_fp = fp
-                            self._still_at = now
-                        elif now - getattr(self, "_still_at", now) > 8.0:
-                            ended = "static"
+                    # 原来这里写"画面指纹连续 8 秒不变 -> 对局结束"，
+                    # 本意是兜住"既没有开始挑战也没有退出按钮"的结算页。
+                    #
+                    # 但实测它会在**战斗中**触发：
+                    #     06:29:06 state battle=False bar=False me=None foe=100.0
+                    #     06:29:21 state battle=False bar=False me=100.0 foe=100.0
+                    #     06:29:24 match over (static)  -> 28s / 1 action
+                    #
+                    # 对面上回合时画面完全可以静止 8 秒（没有动画、没有
+                    # 技能栏、血条也读不到）。这条兜底制造了 27~44 秒的
+                    # 短局，比它兜住的场景多得多。
+                    #
+                    # 现在由更可靠的正面证据负责：
+                    #   · 大厅"开始挑战"按钮
+                    #   · 结算页"退出"按钮（排除 VS 页）
+                    #   · 技能栏 40 秒没画
+                    # 三者都不成立就什么都不做。
                     if ended:
                         log("match over (%s)" % ended)
                         self._end_match()
@@ -3606,15 +3611,13 @@ class Bot:
             #
             # 技能栏只在对局中、且只在我方回合画出来。15 秒内见过一次，
             # 就说明这一场还没结束 —— 这时候点屏幕只会干扰对局。
+            #
+            # 这里原来还有一个"画面指纹连续 6 秒不变 -> 允许推进"的例外，
+            # **已删除**：对面上回合时画面完全可以静止 6 秒，它和
+            # `match over (static)` 是同一个错误（实测制造了 27~44 秒短局）。
+            # 结算页的推进现在只依赖 `match_ended_at`（由正面证据设置）。
             if now - getattr(self, "_last_bar_at", 0.0) < 15.0:
                 return
-            if not may_advance and self.match_started is not None:
-                fp = self._screen_fingerprint()
-                if fp != getattr(self, "_still_fp", None):
-                    self._still_fp = fp
-                    self._still_at = now
-                elif now - getattr(self, "_still_at", now) > 6.0:
-                    may_advance = True
             if not may_advance:
                 return
             if now - self.advance_at < ADVANCE_COOLDOWN_S:

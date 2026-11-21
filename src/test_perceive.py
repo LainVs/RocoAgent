@@ -200,7 +200,10 @@ def cmp_state(tag, a, b, keys):
             #   2) 技能栏可见 -> 直接判战斗
             # 旧版在 4:3 下 `battle` 恒为 False，这正是要修的 bug，
             # 所以 `battle` 由 False 变 True 不算回归。
-            if k == "battle" and b.get(k) is True and a.get(k) is False:
+            # `myturn` 同理（它 = battle and (countdown or 技能栏)，
+            # battle 修好后自然跟着变 True）。
+            if k in ("battle", "myturn") and b.get(k) is True \
+                    and a.get(k) is False:
                 continue
             bad.append("%s old=%r new=%r" % (k, a.get(k), b.get(k)))
     sa, sb = a.get("skills") or [], b.get("skills") or []
