@@ -282,7 +282,9 @@ foe  = 月牙雪熊    types=[冰]       <- 幻系没读到
 
 ---
 
-## 九、硬件依赖（2026-11-21 记录）
+## 九、硬件与外环境依赖（2026-11-21 记录）
+
+### 9.1 独立计算器不需要 BLE，但需要游戏在前台
 
 独立计算器**不需要 BLE**（纯读屏），但机器人需要。
 
@@ -294,8 +296,78 @@ BLE 扫描          25 个设备，**没有板子 28:84:85:5C:96:21**
 selfcheck --ble   connect 54s 超时
 ```
 
-原因是**板子被物理拔掉**。所以：
+原因是**板子被物理拔掉**。插回板子后 `espfast` 会自动重连。
 
-- 伤害计算器可以照常验证（走 `standalone.py`，不碰 BLE）
-- 机器人启动会卡在 `selfcheck --ble`
-- 插回板子后 `espfast` 会自动重连（它自己每 3 秒扫一次）
+### 9.2 游戏被遮挡时读不到 —— 这是硬约束
+
+`grab_client` 走 mss **屏幕抓取**，抓到的是"屏幕上看得见的东西"，
+不是"窗口里的内容"。实测：
+
+```
+前台窗口: hwnd=657310  '项目深度解读 · OpenCode'
+游戏 hwnd=262818  被压在后面
+抓回来的图 = OpenCode 界面
+```
+
+两条自动解决办法都试过，**都不可行**：
+
+| 办法 | 结果 |
+|---|---|
+| `focus()` / `SetForegroundWindow` | 返回 **False** —— Windows 前台锁拒绝后台进程抢焦点 |
+| `PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT)` | 返回 **0**，整图全黑（字节 0） |
+
+PrintWindow 失败的原因：UE4 用 **DXGI flip swapchain** 渲染，
+PrintWindow 只对 GDI 绘制的窗口有效。
+
+**所以只能由人点一下游戏窗口**（人的点击永远能拿到前台）。
+`standalone.observe()` 检测到遮挡时返回：
+
+```json
+{"error": "游戏窗口被其他窗口遮挡。屏幕抓取看不到被盖住的窗口，
+           请点一下游戏窗口把它切到前台（按 Alt+Tab 也行）。",
+ "covered": true}
+```
+
+### 9.3 分辨率会在 1280x800 和 2560x1600 之间跳
+
+原因是**焦点竞争**，不是我们的 bug：
+
+- 游戏在前台 → 全屏 2560x1600（`GameUserSettings.ini` 里配的）
+- 游戏被压到后面 → 退回窗口 1280x800（窗口矩形 1293x836）
+
+每次切换都会让所有固定像素框（HUD 头像 / 属性图标 / 名字条）错位，
+所以识别结果会突然变差。
+
+另外 `Screen.refresh()` 原来一发现窗口最小化就 `ShowWindow(RESTORE)`，
+这会**主动制造**这种切换。现在读屏路径传 `restore_iconic=False`，
+不碰窗口状态。
+
+### 9.4 有另外两个 AI 会话在同一仓库并行干活
+
+`D:\Tools\oc_prompt_ui\jobs.json`：
+
+```json
+{"title": "项目整体实现计划",  "cwd": "D:\\Projects\\RocoAgent",
+ "prompt": "请继续 请记住每次决策务必做好版本管理和详细计划 精雕细琢",
+ "interval": 30, "auto": true, "enabled": true}
+{"title": "伤害计算器与 UI 规划", "cwd": "D:\\Projects\\RocoAgent",
+ "prompt": "请继续 请记住每次决策务必做好版本管理和详细计划 精雕细琢",
+ "interval": 30, "auto": true, "enabled": true}
+```
+
+计划任务 `OcPromptJobs` 每分钟跑 `dispatcher.py`，按 `interval` 拉起这两个会话。
+
+实测运行记录：
+
+```
+19:19:30  RUN 项目整体实现计划          TIMEOUT 900s
+19:35:01  DISPATCH 项目整体实现计划
+19:35:01  DISPATCH 伤害计算器与 UI 规划
+19:36:28  RUN 项目整体实现计划          code=1
+19:36:35  RUN 伤害计算器与 UI 规划      code=1
+```
+
+**影响**：它们会启停机器人、跑 `stop_all.py`、操作游戏窗口，
+也可能和我们的 git 提交互相覆盖（我已误覆盖过一次 `test_standalone.py`）。
+
+**建议**：干活期间把这两个 job 的 `enabled` 置 false，或临时停用 `OcPromptJobs`。
