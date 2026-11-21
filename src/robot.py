@@ -633,16 +633,19 @@ class Bot:
             #
             # 硬闸：只要"开始挑战"按钮在，就绝对不是战斗。
             # 每秒最多探一次（has_start_button 是一次小区域抓屏）。
-            if (st.get("battle")
-                    and now - getattr(self, "_lobby_probe_at", 0.0) > 1.0):
-                self._lobby_probe_at = now
-                try:
-                    import ui_probe as _UP
-                    if _UP.has_start_button(self.screen):
-                        log("BATTLE false positive on lobby -> cleared")
-                        st["battle"] = False
-                except Exception:
-                    pass
+            if st.get("battle"):
+                # 注意：这里 `now` 还没赋值（它在感知之后才取），
+                # 直接用 time.time()，别再踩 UnboundLocalError。
+                _t = time.time()
+                if _t - getattr(self, "_lobby_probe_at", 0.0) > 1.0:
+                    self._lobby_probe_at = _t
+                    try:
+                        import ui_probe as _UP
+                        if _UP.has_start_button(self.screen):
+                            log("BATTLE false positive on lobby -> cleared")
+                            st["battle"] = False
+                    except Exception:
+                        pass
             # ---- 技能卡读数稳定化
             #
             # 实测（2026-11-21 06:51）：同一只音速犬、同一个对手、血量全程
