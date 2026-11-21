@@ -736,6 +736,7 @@ class Bot:
                         # 新一局：画面静止计时重新开始
                         self._still_fp = None
                         self._still_at = 0.0
+                        self._my_none_since = None
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -776,8 +777,17 @@ class Bot:
                 #   · 大厅的"开始挑战"按钮
                 #   · 结算页的"退出"按钮（排除 VS 准备页，它也有白胶囊）
                 # 两者都没有 = 只是对面的回合，**什么都不做**（也绝不点按钮）。
+                # 我方血条是**我们自己的 HUD**，战斗中一直都在（包括对面的
+                # 回合/出招动画）。它连续消失 = 已经不在对局里（结算页/大厅/
+                # 奖励页）。这比"画面静止"可靠得多 —— 角色有呼吸动画，
+                # 4x3 指纹也会变，实测结算页静止判据 5 分钟都没触发。
+                if st["my_pct"] is None:
+                    if getattr(self, "_my_none_since", None) is None:
+                        self._my_none_since = now
+                else:
+                    self._my_none_since = None
                 if (self.match_started is not None
-                        and now - self.battle_false_since > 20.0
+                        and now - self.battle_false_since > 12.0
                         and now - getattr(self, "_end_probe_at", 0.0) > 1.0):
                     self._end_probe_at = now
                     ended = None
@@ -790,6 +800,10 @@ class Bot:
                             ended = "result"
                     except Exception:
                         ended = None
+                    # ---- HUD 消失兜底（2026-11-22）
+                    if not ended and getattr(self, "_my_none_since", None) is not None \
+                            and now - self._my_none_since > 12.0:
+                        ended = "hud gone"
                     # ---- 画面静止兜底（2026-11-22）
                     #
                     # 有些结算/奖励页既没有"开始挑战"也没有"退出"按钮
