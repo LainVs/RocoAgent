@@ -792,6 +792,60 @@ function bindLabelSide() {
   });
 }
 
+// 批量确认「OCR 精确匹配 + 高置信度」的。
+// 实测 630 张里约 30% 属于这类，几乎不可能错，应该一次提交掉，
+// 把人工精力留给真正模糊的。
+//
+// 两段式：先 dry_run 报告会标哪些，用户确认后才真跑。
+// 为什么不直接跑：这会改动真实文件（改名），不可撤销。
+function bindAuto() {
+  const btn = $('btnAuto');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '统计中…';
+
+    const dry = await post('/api/portrait/auto_confirm',
+      { side: labelSide, min_conf: 0.9, dry_run: true });
+    btn.disabled = false;
+    btn.textContent = '批量确认';
+
+    if (!dry.ok) {
+      alert(dry.msg || '统计失败');
+      return;
+    }
+    if (!dry.n) {
+      alert('没有可批量确认的（需要 OCR 精确匹配且置信度 ≥ 90%）');
+      return;
+    }
+
+    // 列出前 8 个样例，让人知道会发生什么
+    const sample = (dry.candidates || []).slice(0, 8)
+      .map((c) => `  ${c.stem} → ${c.species}  ${Math.round(c.conf * 100)}%`)
+      .join('\n');
+    const more = dry.n > 8 ? `\n  …还有 ${dry.n - 8} 张` : '';
+    const msg = `将标注 ${dry.n} 张（OCR 精确匹配 + 置信度 ≥ 90%）\n\n` +
+                `${sample}${more}\n\n` +
+                `这是改名操作，不可撤销。继续吗？`;
+    if (!confirm(msg)) return;
+
+    btn.disabled = true;
+    btn.textContent = '标注中…';
+    const r = await post('/api/portrait/auto_confirm',
+      { side: labelSide, min_conf: 0.9, dry_run: false });
+    btn.disabled = false;
+    btn.textContent = '批量确认';
+
+    let extra = '';
+    if (r.fails && r.fails.length) {
+      extra = `\n失败 ${r.fails.length} 张：\n` +
+        r.fails.slice(0, 5).map((f) => `  ${f.stem}: ${f.msg}`).join('\n');
+    }
+    alert((r.msg || '完成') + extra);
+    refreshLabel();
+  });
+}
+
 // 批量清理"名字条其实是场景截图"的垃圾。
 // 实测 36% 的待标注是这种（采集时 ROI 抓偏了），留着只是噪声。
 function bindPurge() {
@@ -909,5 +963,6 @@ document.addEventListener('visibilitychange', () => {
 refreshBot();
 setInterval(refreshBot, 3000);
 bindLabelSide();
+bindAuto();
 bindPurge();
 startTimers();

@@ -1032,6 +1032,76 @@ def portrait_label(side, stem, species, variant=""):
             "msg": "已标注为 %s" % os.path.basename(dst)}
 
 
+def portrait_auto_confirm(side="foe", min_conf=0.9, limit=400,
+                          dry_run=False):
+    """批量确认「OCR 精确匹配 + 高置信度」的。
+
+    为什么需要：OCR 预填做完还有 630 次回车。实测 404 条有效 OCR 里
+    有 217 条是「精确匹配 + 置信度>=0.9」—— 这些几乎不可能错，
+    应该一次提交掉，把人工精力留给真正模糊的。
+
+    安全约束（宁可不标，也不要标错）：
+      · 必须是**精确匹配**（ocr 文字 == 库里名字），不是模糊匹配
+        —— 模糊匹配虽然 96% 准，但 4% 标错会污染训练数据
+      · 置信度 >= min_conf
+      · 默认 dry_run=True，先报告会标哪些，确认后再真跑
+
+    返回 {candidates: [...], done: n, fails: [...]}
+    """
+    sub = _PORTRAIT_DIRS.get(side)
+    if not sub:
+        return {"ok": False, "msg": "bad side"}
+    d = os.path.join(ROOT, "assets", sub)
+    try:
+        names = [f for f in os.listdir(d)
+                 if f.startswith("_unknown_") and f.endswith(".png")
+                 and "_name" not in f]
+    except OSError as e:
+        return {"ok": False, "msg": str(e)}
+
+    ocr_map = {}
+    try:
+        p = os.path.join(LOGS, "ocr_names.json")
+        if os.path.exists(p):
+            import io as _io
+            with _io.open(p, encoding="utf-8") as f:
+                ocr_map = json.load(f)
+    except Exception:
+        ocr_map = {}
+
+    cands = []
+    for f in names[:limit]:
+        stem = f[:-4]
+        o = ocr_map.get(stem) or {}
+        txt = o.get("text")
+        conf = o.get("conf") or 0
+        if not txt or conf < min_conf:
+            continue
+        sp = _safe_species(txt)
+        # 只接受精确匹配 —— 模糊匹配不进批量
+        if not sp or sp != txt:
+            continue
+        cands.append({"stem": stem, "species": sp, "conf": round(conf, 3)})
+
+    if dry_run:
+        return {"ok": True, "dry_run": True, "n": len(cands),
+                "candidates": cands[:200],
+                "msg": "会标注 %d 张（精确匹配 + 置信度>=%.2f）"
+                       % (len(cands), min_conf)}
+
+    done = 0
+    fails = []
+    for c in cands:
+        r = portrait_label(side, c["stem"], c["species"])
+        if r.get("ok"):
+            done += 1
+        else:
+            fails.append({"stem": c["stem"], "msg": r.get("msg")})
+    return {"ok": done > 0, "dry_run": False, "n": len(cands),
+            "done": done, "fails": fails,
+            "msg": "批量标注 %d/%d 张" % (done, len(cands))}
+
+
 def portrait_skip(side, stem):
     """跳过这张（删除，不要了）。"""
     sub = _PORTRAIT_DIRS.get(side)
@@ -1216,6 +1286,13 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json(portrait_purge_junk(
                 body.get("side") or "foe",
                 int(body.get("limit") or 400)))
+
+        if path == "/api/portrait/auto_confirm":
+            return self._json(portrait_auto_confirm(
+                body.get("side") or "foe",
+                float(body.get("min_conf") or 0.9),
+                int(body.get("limit") or 400),
+                bool(body.get("dry_run", True))))
 
         return self._json({"error": "not found"}, 404)
 
