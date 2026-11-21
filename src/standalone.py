@@ -299,10 +299,19 @@ def reset_identity():
         实测 mode 已变 idle，但 /api/state 仍返回
         me=银月狼王 / foe=月牙雪熊（上一局的对手）
 
-    所以 UI 一检测到 `battle=False` 就调这个。
+    所以 UI 一检测到「战斗 -> 待机」就调这个。
+
+    ⚠ `at` 设成**现在**而不是 0
+    --------------------------
+    `identify()` 的节流靠 `_ident["at"]`。如果这里把 `at` 清成 0，
+    后台识别线程的下一轮就会立刻跑一遍完整 OCR（5~10 秒）。
+    待机时 `observe()` 每秒被调好几次，等于持续烧 CPU。
+
+    所以清缓存时把 `at` 推到"现在"，让后台线程老老实实等一个 ID_INTERVAL；
+    真正需要立刻识别的是「待机 -> 战斗」那一刻，那里会显式把 `at` 清零。
     """
     _ident.update({
-        "at": 0.0,
+        "at": time.time(),
         "foe": None, "foe_conf": 0.0,
         "self": None, "self_conf": 0.0,
         "foe_hp_at_id": None,
@@ -463,9 +472,15 @@ def _get():
 
     修法：按线程 id 各存一份 Screen/Perc。
 
-    注意：如果外部**显式注入**了 `_perc`（测试会这么做），而 `_thread_state`
-    还是空的，就**直接接管**它而不是重建 —— 否则测试注入会被静默覆盖，
-    所有断言都读到真实屏幕的数据（实测踩过，表现是"期望 78% 得到 None"）。
+    测试注入用 `inject_screen()`，不要直接赋值 `_perc`
+    -------------------------------------------------
+    直接 `standalone._perc = fake` 只能生效一次 —— 第二次注入时
+    `_thread_state["tid"]` 已经有值，`_get()` 会认为"这台线程已经有对象"，
+    把注入静默忽略，断言就全在读真实屏幕（实测表现：
+    "期望 78% 得到 None"、"mode 期望 battle 得到 idle"、
+    "[6] 异常不能抛给调用方" 失败）。
+
+    所以提供一个明确的注入接口，它会同时登记到当前线程。
     """
     global _perc, _screen
     tid = threading.get_ident()
@@ -480,6 +495,16 @@ def _get():
         _perc = P.Perc(_screen)
         _thread_state["tid"] = tid
     return _screen, _perc
+
+
+def inject_screen(screen, perc):
+    """测试用：把 Screen/Perc 绑到**当前线程**。
+
+    可重复调用（每次都会覆盖），不像直接赋值 `_perc` 只有第一次生效。
+    """
+    global _perc, _screen
+    _screen, _perc = screen, perc
+    _thread_state["tid"] = threading.get_ident()
 
 
 def available():
@@ -597,9 +622,26 @@ def observe(force=False):
     #
     # 所以识别全部挪到后台线程（`_ident_worker`），这里只读快照。
     try:
-        # 不在战斗时清空身份缓存，避免下一局沿用上一局的答案
-        if not raw.get("battle"):
+        # 身份缓存的生命周期要跟着「是否在战斗」走。
+        #
+        # 为什么不能每帧都 reset（2026-11-21 实测踩到）
+        # ------------------------------------------
+        # `reset_identity()` 会把 `_ident["at"]` 清成 0，而 `identify()` 的
+        # 节流就是靠 `at`。待机时 `observe()` 每秒被调好几次，
+        # 每次 reset 都把节流清零 -> 后台线程的每次循环都跑一遍**完整 OCR**
+        # （5~10 秒）-> 待机时 CPU 被白白烧掉。
+        #
+        # 所以只在两个**切换点**动缓存：
+        #   battle -> idle : 清缓存，但 at 设成"现在"（不触发重识别）
+        #   idle -> battle : at 清零，让新一局立刻开始识别
+        in_battle = bool(raw.get("battle"))
+        was_battle = bool(_BG.get("in_battle"))
+        if was_battle and not in_battle:
             reset_identity()
+        elif in_battle and not was_battle:
+            _ident["at"] = 0.0
+        _BG["in_battle"] = in_battle
+
         _BG["hp"] = raw.get("foe_pct")
         ensure_ident_worker()
         ident = dict(_ident)

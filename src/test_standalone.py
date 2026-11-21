@@ -92,10 +92,10 @@ def main():
     old = (standalone._perc, standalone._screen, dict(standalone._cache))
     try:
         import perceive
-        standalone._screen = FakeScreen()
-        fake = perceive.Perc(standalone._screen)
+        scr = FakeScreen()
+        fake = perceive.Perc(scr)
         fake.observe = make_fake_observe().__get__(fake, type(fake))
-        standalone._perc = fake
+        standalone.inject_screen(scr, fake)
         standalone._cache = {"at": 0.0, "state": None}
 
         st = standalone.observe(force=True)
@@ -162,8 +162,7 @@ def main():
         class Boom:
             def observe(self):
                 raise RuntimeError("模拟抓屏失败")
-        standalone._perc = Boom()
-        standalone._screen = FakeScreen()
+        standalone.inject_screen(FakeScreen(), Boom())
         standalone._cache = {"at": 0.0, "state": None}
         r = standalone.observe(force=True)
         check(isinstance(r, dict) and "error" in r,
