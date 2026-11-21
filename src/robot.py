@@ -1589,7 +1589,17 @@ class Bot:
         name, sc, margin = self._identify_with_margin(img, box, m)
         # 阈?+ 领先优势：只?0.02 ?最，?很可能是两个相似头像在打架，
         # 那种情况宁可，?不确?（实测把我方卡瓦重认成音速犬）。?
-        if name is not None and sc >= 0.72 and margin >= 0.06:
+        # 阈值 + 领先幅度。
+        #
+        # margin（与第二名的差）在**同族形态**之间天然很小：银月狼王 #2 / #7
+        # 是同一种族的不同立绘，两个模板几乎一样，margin 常只有 0.02~0.05。
+        # 原来要求 margin >= 0.06，实测把正确识别（0.82）也挡掉了 ——
+        # 只要 best 够高、且 species 能查出来，形态选错不影响任何下游逻辑
+        # （`_portrait_species` 会归一到种族名）。
+        # 所以：分数高时放宽 margin；分数中等时仍要求领先。
+        _ok = (name is not None
+               and (sc >= 0.80 or (sc >= 0.72 and margin >= 0.06)))
+        if _ok:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
                 self.active_pet = name

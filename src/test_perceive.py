@@ -195,6 +195,13 @@ def cmp_state(tag, a, b, keys):
     bad = []
     for k in keys:
         if a.get(k) != b.get(k):
+            # 有意差异（2026-11-22）：`battle` 的判据新增了
+            #   1) solid（填充从最左列连续铺开，4:3 下没有灰底板时的等价信号）
+            #   2) 技能栏可见 -> 直接判战斗
+            # 旧版在 4:3 下 `battle` 恒为 False，这正是要修的 bug，
+            # 所以 `battle` 由 False 变 True 不算回归。
+            if k == "battle" and b.get(k) is True and a.get(k) is False:
+                continue
             bad.append("%s old=%r new=%r" % (k, a.get(k), b.get(k)))
     sa, sb = a.get("skills") or [], b.get("skills") or []
     if len(sa) != len(sb):
