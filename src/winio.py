@@ -244,13 +244,27 @@ class Screen:
         抓回来的是 OpenCode 的界面；所有识别都读垃圾，但界面仍显示
         "战斗中 · 未知"，用户完全看不出是被遮挡了。
 
-        判据：取窗口中心点，看那里最上层的顶层窗口是不是游戏自己。
+        判据：在窗口范围内做 3×5 网格采样，看每一点最上层的顶层窗口
+        是不是游戏自己。**任意一点被别的窗口占据就算遮挡。**
+
+        为什么不用单点（2026-11-22 实测）
+        ------------------------------
+        原来只取窗口中心点。但实际遮挡经常是"盖住左半边"——OpenCode
+        窗口压在游戏左侧，技能卡和队伍列表全被替换成聊天界面，中心点
+        却仍然是游戏，`is_covered()` 返回 False，机器人继续拿垃圾帧决策。
         """
         if not self.rect or not self.hwnd:
             return True
         x, y, w, h = self.rect
-        top = _window_at_point(x + w // 2, y + h // 2)
-        return top != self.hwnd
+        if w <= 0 or h <= 0:
+            return True
+        for fx in (0.15, 0.35, 0.5, 0.65, 0.85):
+            for fy in (0.25, 0.5, 0.75):
+                px = x + int(w * fx)
+                py = y + int(h * fy)
+                if _window_at_point(px, py) != self.hwnd:
+                    return True
+        return False
 
     def refresh(self, force=False):
         """探测窗口几何。

@@ -217,6 +217,11 @@ class Bot:
         self.foe_conf = 0.0
         # 结算页脱困计时：None = 在战斗中；float = 从何时起不在战斗
         self._stuck_at = None
+        # 板子离线计时：None = 链路正常；float = 从何时起连不上
+        # 主循环看到它就把整个决策循环冻结，只做后台重连（见 run()）。
+        self._board_offline_since = None
+        self._board_log_at = 0.0
+        self._cover_log_at = 0.0
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -322,15 +327,21 @@ class Bot:
         restarted it four seconds later mid-match. Reconnecting here keeps the
         bot alive across board resets and radio hiccups.
 
-        连续失败会主动退出：实测 00:55 之后板子彻底离线，每次命令都
-        "BLE titlebar failed (board offline)" 重试 2 次，机器人还在原地
-        空转 4 分钟（STUCK 113s/226s）。退出让 supervisor 重新拉起并做
-        完整 BLE 扫描，比原地死等有效。
+        连续失败**不再退出进程**（2026-11-22 改）。
+        ------------------------------------------
+        原逻辑：失败 6 次后 `raise SystemExit(3)`，指望 supervisor 重启并
+        做完整扫描。但实测 00:00:35 板子掉线后，重启也是
+        "BLE waiting for board"，连续 9 分钟连不上 —— 退出并没有换来恢复，
+        只是把正在打的那一场连同内部状态一起丢了。
+
+        现在：两次都失败就标记 `_board_offline_since`，主循环会冻结决策、
+        每秒在后台重连（见 run() 顶部）。链路恢复后自动继续，上下文不丢。
         """
         for attempt in (1, 2):
             try:
                 r = self.loop.run_until_complete(coro_factory())
                 self._ble_fail = 0
+                self._board_offline_since = None
                 return r
             except Exception as e:
                 log("BLE %s failed (%s), attempt %d" % (what, e, attempt))
@@ -347,14 +358,13 @@ class Bot:
                     ok = False
                 if ok:
                     self._ble_fail = 0
+                    self._board_offline_since = None
                     continue
                 self._ble_fail = getattr(self, "_ble_fail", 0) + 1
-                if self._ble_fail >= 6:
-                    log("BLE offline x%d -> exiting so the supervisor "
-                        "restarts with a full scan" % self._ble_fail)
-                    raise SystemExit(3)
-                time.sleep(0.5)
+                time.sleep(0.3)
                 continue
+        if getattr(self, "_board_offline_since", None) is None:
+            self._board_offline_since = time.time()
         return None
 
     def _click_to_focus(self):
@@ -532,6 +542,54 @@ class Bot:
         while True:
             # 主循环心跳：看门狗线程用它判断是否还活着
             self._heartbeat = time.time()
+
+            # ---- 板子离线：冻结决策，后台重连（2026-11-22）
+            #
+            # 掉线期间继续跑决策毫无意义，还会让内部状态错位
+            # （以为点了、其实没点），所以这里直接冻结循环。
+            # 详见 _ble() 的 docstring。
+            if getattr(self, "_board_offline_since", None) is not None:
+                _off = time.time() - self._board_offline_since
+                if time.time() - getattr(self, "_board_log_at", 0.0) > 15.0:
+                    self._board_log_at = time.time()
+                    log("BOARD OFFLINE %.0fs -> waiting for reconnect" % _off)
+                ok = False
+                try:
+                    # 超过 20 秒还连不上就允许扫描：USB 拔插/固件重启后
+                    # 地址可能变了，只试旧地址会永远失败。
+                    ok = self.loop.run_until_complete(
+                        self.ble.connect(allow_discover=_off > 20.0))
+                except Exception:
+                    ok = False
+                if not ok:
+                    time.sleep(1.0)
+                    continue
+                log("BOARD back online after %.0fs" % _off)
+                self._board_offline_since = None
+                self._ble_fail = 0
+
+            # ---- 窗口被遮挡：抓屏抓到的是别的窗口（2026-11-22）
+            #
+            # grab_client 走 mss 屏幕抓取，抓的是"屏幕上看得见的像素"。
+            # 实测 OpenCode 窗口压在游戏左半边时，技能卡/队伍列表全被换成
+            # 聊天界面，识别读到垃圾但界面仍显示"战斗中·未知"。
+            # `is_covered()` 早就写好了（standalone 在用），但机器人主循环
+            # 一直没接 —— 这就是"系统有 UI 却没接"。
+            #
+            # 处理：先抬到最前；抬不起来就等，**绝不拿遮挡的帧做决策**。
+            try:
+                if self.screen.is_covered():
+                    if time.time() - getattr(self, "_cover_log_at", 0.0) > 10.0:
+                        self._cover_log_at = time.time()
+                        log("WINDOW COVERED by another window -> raise game")
+                    _raise_topmost(self.screen.hwnd)
+                    time.sleep(0.4)
+                    if self.screen.is_covered():
+                        time.sleep(1.0)
+                        continue
+            except Exception:
+                pass
+
             if self.deadline and time.time() > self.deadline:
                 log("deadline reached, exiting")
                 # 干净地断一个BLE：直接退进程会让板子只看到链路突然消失，
@@ -759,7 +817,14 @@ class Bot:
                     and now - (getattr(self, "_stuck_at", 0.0) or 0.0) > 10.0):
                 try:
                     import ui_probe as _UP
-                    if _UP.has_exit_button(self.screen):
+                    # ⚠ VS 准备页底部也有一个白色胶囊按钮（"取消准备"），
+                    # 位置和结算页的"退出"完全一样，落在同一个 RESULT_BTN
+                    # band 里。实测 2026-11-22 00:00:04 就是这样把一场匹配
+                    # 取消掉的：
+                    #   stuck_000004.png = VS 页，white=13824 -> has_exit_button=True
+                    # 所以必须先排除 VS 页，否则"脱困"等于"取消对局"。
+                    if (not _UP.has_vs_screen(self.screen)
+                            and _UP.has_exit_button(self.screen)):
                         log("STUCK on result screen (battle=False, "
                             "turn=%s) -> click 退出" % self.turn)
                         # 存一帧证据：事后能确认到底是真结算页还是误判
@@ -3020,6 +3085,29 @@ class Bot:
                         except Exception:
                             pass
                         log("RESULT %s (%dW/%dL)" % (verdict, cur[0], cur[1]))
+                    elif prev and tuple(prev) != tuple(cur):
+                        # 两个计数都变了：中间跨了多局（掉线/崩溃期间没读到）。
+                        # 不猜胜负（错记比不记更糟），但把"丢了几局"落盘，
+                        # 方便事后审计数据完整性。
+                        dw = cur[0] - prev[0]
+                        dl = cur[1] - prev[1]
+                        log("record multi-match gap: +%dW +%dL -> attribution "
+                            "skipped" % (dw, dl))
+                        try:
+                            with open(os.path.join(LOG_DIR, "results.jsonl"),
+                                      "a", encoding="utf-8") as f:
+                                f.write(json.dumps({
+                                    "mid": getattr(self, "last_match_mid", None),
+                                    "ts": time.strftime("%H:%M:%S"),
+                                    "before": prev[0], "after": cur[0],
+                                    "before_losses": prev[1],
+                                    "after_losses": cur[1],
+                                    "total": cur[0] + cur[1],
+                                    "delta": 0, "result": "multi",
+                                    "gap_wins": dw, "gap_losses": dl,
+                                }, ensure_ascii=False) + "\n")
+                        except Exception:
+                            pass
                     elif prev is None:
                         log("record baseline set to %dW/%dL (first run)" % cur)
                     self._rec_prev = cur
@@ -3308,7 +3396,12 @@ class Bot:
         self.match_ended_at = ended
         self.last_progress_at = ended
         self.advance_count = 0
-        dur = ended - started
+        # started 可能已经是 None（脱困路径在"比赛还没登记"时就会调到这里）。
+        # 原来直接 `ended - started` 抛
+        #   TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
+        # 被 STUCK 的 except 吞掉，于是脱困日志只有 "recovery failed"，
+        # 后面的 _end_match 状态清理全没执行（2026-11-22 00:00:05 实测）。
+        dur = (ended - started) if started else 0.0
         # Win/loss: the ladder badge is the only reliable result signal. It is
         # read in the lobby, so at this point we only know the value captured
         # when the match began; the delta is resolved on the next lobby visit by
