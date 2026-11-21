@@ -706,36 +706,72 @@ async function pollLog() {
   } catch (e) {
     return;
   }
-  if (d.reset) {
-    $('logbox').innerHTML = '';
-  }
+  if (d.reset) logBuf = [];
   logOffset = d.offset;
 
-  if (d.lines && d.lines.length) {
-    const box = $('logbox');
-    const frag = document.createDocumentFragment();
-    d.lines.forEach((ln) => {
-      const el = document.createElement('span');
-      el.className = 'ln ' + classifyLine(ln);
-      // 时间戳单独着色
-      const m = ln.match(/^(\d{2}:\d{2}:\d{2})\s(.*)$/);
-      if (m) {
-        el.innerHTML = `<span class="t">${m[1]}</span> ${esc(m[2])}`;
-      } else {
-        el.textContent = ln;
-      }
-      frag.appendChild(el);
-    });
-    box.appendChild(frag);
-
-    // 上限：超过 1200 行就砍掉前半
-    while (box.childElementCount > 1200) {
-      box.removeChild(box.firstElementChild);
+  if ((d.lines && d.lines.length) || d.reset) {
+    if (d.lines && d.lines.length) {
+      logBuf = logBuf.concat(d.lines);
+      // 上限 1200 行：再多既看不清也拖慢渲染
+      if (logBuf.length > 1200) logBuf = logBuf.slice(-1200);
     }
-    if (logFollow) box.scrollTop = box.scrollHeight;
+    renderLog();
   }
   $('logSub').textContent =
     `bot_stdout.log · ${(d.size / 1024).toFixed(0)} KB`;
+}
+
+/* ---------------------------------------------------------------- 日志筛选
+   classifyLine() 早就把 GATE/BLE/FOCUS LOST/ERROR 分了类，但界面上没有
+   筛选器，排障时 90% 的时间在肉眼找这几类行。这里加三个 chip，
+   计数直接从缓冲区算（1200 行，代价可忽略）。 */
+let logBuf = [];
+let logFilter = 'all';
+
+function logMatch(ln, f) {
+  if (f === 'decision') {
+    return /\bT\d+\s+(SKILL|ENERGY|SWITCH)\b/.test(ln)
+      || /GATE|FAINT|FORCED SWITCH|=== MATCH/.test(ln);
+  }
+  if (f === 'trouble') {
+    return classifyLine(ln) !== ''
+      || /\bBLE\b|FOCUS LOST|STUCK|offline|PANEL/.test(ln);
+  }
+  return true;
+}
+
+function renderLog() {
+  const box = $('logbox');
+  if (!box) return;
+  const counts = { all: logBuf.length, decision: 0, trouble: 0 };
+  logBuf.forEach((ln) => {
+    if (logMatch(ln, 'decision')) counts.decision += 1;
+    if (logMatch(ln, 'trouble')) counts.trouble += 1;
+  });
+
+  const frag = document.createDocumentFragment();
+  logBuf.forEach((ln) => {
+    if (!logMatch(ln, logFilter)) return;
+    const el = document.createElement('span');
+    el.className = 'ln ' + classifyLine(ln);
+    // 时间戳单独着色
+    const m = ln.match(/^(\d{2}:\d{2}:\d{2})\s(.*)$/);
+    if (m) el.innerHTML = `<span class="t">${m[1]}</span> ${esc(m[2])}`;
+    else el.textContent = ln;
+    frag.appendChild(el);
+  });
+  box.innerHTML = '';
+  box.appendChild(frag);
+  if (logFollow) box.scrollTop = box.scrollHeight;
+
+  const bar = $('logFilter');
+  if (bar) {
+    const BASE = { all: '全部', decision: '决策', trouble: '异常' };
+    bar.querySelectorAll('button').forEach((b) => {
+      const f = b.dataset.f;
+      b.textContent = BASE[f] + (counts[f] ? ' ' + counts[f] : '');
+    });
+  }
 }
 
 /* ================================================================
@@ -1281,7 +1317,19 @@ const _drawerClose = $('drawerClose');
 if (_drawerClose) _drawerClose.addEventListener('click', closeMatch);
 
 $('btnLogClear').addEventListener('click', () => {
-  $('logbox').innerHTML = '';
+  // 只清视图，不动 offset —— 否则下一次轮询会把旧行重新拉回来
+  logBuf = [];
+  renderLog();
+});
+
+document.querySelectorAll('#logFilter button').forEach((b) => {
+  b.addEventListener('click', () => {
+    logFilter = b.dataset.f;
+    document.querySelectorAll('#logFilter button').forEach((x) => {
+      x.classList.toggle('active', x === b);
+    });
+    renderLog();
+  });
 });
 
 $('dexSearch').addEventListener('input', (e) => {
