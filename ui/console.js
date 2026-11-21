@@ -583,7 +583,7 @@ async function refreshMatches() {
     if (r.legacy) notes.push('老记录(无 id)');
     if (r.blind) notes.push(`盲打 ${r.blind}`);
     if (r.unreadable) notes.push(`无数字 ${r.unreadable}`);
-    return `<tr>
+    return `<tr class="clickable" data-mid="${esc(r.mid)}" title="点击查看这一场的回合明细">
       <td class="num" title="${esc(r.mid)}">${esc(r.short)}</td>
       <td class="num muted">${esc(r.start || '—')}</td>
       <td class="num">${r.seconds != null ? Math.round(r.seconds) + 's' : '—'}</td>
@@ -595,6 +595,97 @@ async function refreshMatches() {
       <td class="muted">${esc(notes.join(' · ') || '—')}</td>
     </tr>`;
   }).join('');
+
+  tb.querySelectorAll('tr[data-mid]').forEach((tr) => {
+    tr.addEventListener('click', () => openMatch(tr.dataset.mid));
+  });
+}
+
+/* ================================================================
+   对局详情（/api/match）
+   ----------------------------------------------------------------
+   这个接口 2026-11-21 就实现了，但前端一直没调用 —— 战绩页只有
+   一张只读表，用户最想知道的"这场为什么输"没有入口。
+   ================================================================ */
+const MATCH_RES = {
+  win: ['胜', 'win'], loss: ['负', 'lose'],
+  flat: ['平', 'flat'], unknown: ['—', 'muted'],
+};
+
+function closeMatch() {
+  const box = $('matchDrawer');
+  if (box) box.hidden = true;
+}
+
+async function openMatch(mid) {
+  const box = $('matchDrawer');
+  const body = $('drawerBody');
+  if (!box || !body) return;
+  box.hidden = false;
+  $('drawerTitle').textContent = '对局 ' + String(mid || '').replace(/^.*-/, '');
+  body.innerHTML = '<div class="empty"><b>加载中…</b></div>';
+
+  let d;
+  try {
+    d = await get('/api/match?mid=' + encodeURIComponent(mid));
+  } catch (e) {
+    body.innerHTML = `<div class="empty"><b>读取失败</b>
+      <span>${esc(e.message || '')}</span></div>`;
+    return;
+  }
+  if (!d || d.ok === false) {
+    body.innerHTML = `<div class="empty"><b>没有这一场</b>
+      <span>${esc((d && d.msg) || mid || '')}</span></div>`;
+    return;
+  }
+
+  const r = d.round || {};
+  const st = d.stats || {};
+  const turns = d.turns || [];
+  const res = (d.result && d.result.result) || r.result || null;
+  const [rtxt, rcls] = MATCH_RES[res] || MATCH_RES.unknown;
+  const legacy = String(mid || '').startsWith('legacy-');
+  const readPct = st.slots
+    ? Math.round(100 * (st.slots - st.slots_bad) / st.slots)
+    : null;
+
+  const rows = turns.map((t) => {
+    const cards = (t.skills || [])
+      .map((s) => (s && s.v != null ? s.v : '—')).join('/');
+    return `<tr>
+      <td class="num muted">${esc(t.ts || '')}</td>
+      <td class="num">${t.turn != null ? t.turn : '—'}</td>
+      <td class="num">${fmtPct(t.my_pct)}</td>
+      <td class="num">${fmtPct(t.foe_pct)}</td>
+      <td>${esc(fmtAction(t.action))}</td>
+      <td class="num muted">${esc(cards)}</td>
+      <td class="muted">${esc(t.why || '')}</td>
+    </tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="dsec">
+      <span class="res ${rcls}">${rtxt}</span>
+      <span class="muted">${esc(r.start || '—')}${
+        r.seconds != null ? ' · ' + Math.round(r.seconds) + 's' : ''}${
+        r.actions != null ? ' · ' + r.actions + ' 手' : ''}</span>
+    </div>
+    <div class="dgrid">
+      <div><em>决策</em><b>${st.decisions != null ? st.decisions : '—'}</b></div>
+      <div><em>盲打</em><b>${st.blind || 0}</b></div>
+      <div><em>无数字</em><b>${st.unreadable || 0}</b></div>
+      <div><em>读数</em><b>${readPct == null ? '—' : readPct + '%'}</b></div>
+    </div>
+    ${legacy ? `<div class="empty"><b>老记录没有场次 id</b>
+      <span>回合日志无法确认归属，只能看时长和手数</span></div>` : `
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>时间</th><th>回合</th><th>我方</th><th>敌方</th>
+          <th>动作</th><th>卡面</th><th>理由</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="7" class="muted">这场没有回合记录</td></tr>'}</tbody>
+      </table>
+    </div>`}
+  `;
 }
 
 /* ================================================================
@@ -1186,6 +1277,9 @@ $('btnLogFollow').addEventListener('click', () => {
   $('btnLogFollow').textContent = logFollow ? '跟随中' : '已暂停';
 });
 
+const _drawerClose = $('drawerClose');
+if (_drawerClose) _drawerClose.addEventListener('click', closeMatch);
+
 $('btnLogClear').addEventListener('click', () => {
   $('logbox').innerHTML = '';
 });
@@ -1210,6 +1304,8 @@ document.addEventListener('keydown', (e) => {
   const typing = !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
     || t.isContentEditable));
   if (e.key === 'Escape') {
+    const box = $('matchDrawer');
+    if (box && !box.hidden) { closeMatch(); return; }
     if (typing) t.blur();
     return;
   }

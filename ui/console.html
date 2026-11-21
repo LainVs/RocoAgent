@@ -279,6 +279,16 @@
   </div>
 </div>
 
+<!-- 对局详情抽屉：/api/match 早就实现了，但前端一直没接。
+     "这场为什么输"必须能点开看，否则战绩页只是一张只读表。 -->
+<aside class="drawer" id="matchDrawer" hidden>
+  <div class="drawer-head">
+    <span class="drawer-title" id="drawerTitle">对局详情</span>
+    <button class="btn" id="drawerClose">关闭</button>
+  </div>
+  <div class="drawer-body" id="drawerBody"></div>
+</aside>
+
 <!-- 操作反馈：替代 alert()。异步操作（启动/停止/标注）必须有"已生效"的证据，
      原生 alert 会阻塞渲染，且弹窗消失后页面还是旧数据。 -->
 <div class="toasts" id="toasts" aria-live="polite"></div>
