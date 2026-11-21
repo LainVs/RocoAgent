@@ -363,13 +363,31 @@ class Screen:
         return self.grab((ox + x, oy + y, w, h))
 
     def _fit(self, img, box):
-        """把缩放后抓到的图还原成基准尺寸，保证阈值/模板不用改。"""
+        """把缩放后抓到的图还原成基准尺寸，保证阈值/模板不用改。
+
+        ⚠ 2026-11-22 实测：不能直接把物理像素图 resize 到 (w, h)。
+        2048x1536 下 sx=0.8 / sy=0.96，头像框 76x80 的物理尺寸是
+        61x77（取整），直接拉到 76x80 会把 61 拉成 76（×1.25），
+        横向拉伸把图像糊掉 —— 我方头像识别率只有 16%，最好分数
+        才 0.35~0.41（阈值 0.72）。
+
+        正确做法：先把**整块客户区**按 sx/sy 缩回基准坐标系，再按
+        box 裁剪。这样每个像素只被缩放一次，且纵横比一致。
+        """
         if img is None or img.size == 0:
             return img
         sx, sy = self.scale()
         if abs(sx - 1.0) < 0.004 and abs(sy - 1.0) < 0.004:
             return img
         w, h = box[2], box[3]
+        # 物理尺寸 -> 基准尺寸：按 sx/sy 反向缩放
+        tw = max(1, int(round(img.shape[1] / max(sx, 1e-6))))
+        th = max(1, int(round(img.shape[0] / max(sy, 1e-6))))
+        # 目标尺寸取"按比例还原后的尺寸"，但最终要交给调用方约定的 w×h。
+        # 只有当还原尺寸与 w×h 相差在 1px 内才直接用，否则退回 w×h
+        # （说明这个 box 不是按基准比例抓的，见 grab_s）。
+        if abs(tw - w) <= 1 and abs(th - h) <= 1:
+            return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
         return cv2.resize(img, (max(1, int(w)), max(1, int(h))),
                           interpolation=cv2.INTER_AREA)
 
