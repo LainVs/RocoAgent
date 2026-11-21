@@ -57,8 +57,23 @@ board.json
 # ------------------------------------------------------------------ 外部资产（nrc-ai）
 # MIT 许可的效果引擎（技能/特性效果、印记、MCTS）。
 # 见 data/external/nrc-ai/VERSION.md
-!data/external/nrc-ai/**
+#
+# 注意：白名单 `**` 会连带把 __pycache__ / *.db-wal 也放行，
+# 所以下面用更精确的模式，并且显式排除编译产物。
+!data/external/nrc-ai/*.md
+!data/external/nrc-ai/*.txt
+!data/external/nrc-ai/data/*.csv
+!data/external/nrc-ai/data/*.xlsx
 !data/external/nrc-ai/data/*.db
+!data/external/nrc-ai/docs/**
+!data/external/nrc-ai/scripts/**
+!data/external/nrc-ai/src/**
+!data/external/nrc-ai/tests/**
+# 重新排除（上面的 src/** 会放行 __pycache__）
+data/external/nrc-ai/**/__pycache__/
+data/external/nrc-ai/**/*.pyc
+data/external/nrc-ai/**/*.db-wal
+data/external/nrc-ai/**/*.db-shm
 
 # ------------------------------------------------------------------ 外部资产（rocom-helper）
 # 只留 data/game 的解包数据（buff/innate/special_move 是我们缺的维度）。
