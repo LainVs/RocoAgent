@@ -331,6 +331,20 @@ button, input, select {
 }
 .spark i.w { background: var(--win); opacity: .9; }
 .spark i.l { background: var(--lose); opacity: .9; }
+.spark-off {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 3px;
+  font-size: 11px;
+  color: var(--warn);
+  line-height: 1.5;
+}
+.spark-off em {
+  font-style: normal;
+  font-size: 10.5px;
+  color: var(--ink-3);
+}
 
 /* ── 日志 ───────────────────────────────────────────── */
 .logbox {

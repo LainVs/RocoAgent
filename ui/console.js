@@ -594,11 +594,22 @@ async function refreshStats() {
       stuck ? '本文档内统计（不可信）' : `${s.last20.length} 场`, '');
 
   // 走势
+  //
+  // ★ 段位卡读数卡死时不能画 —— 那 100 条 flat 是读数卡在 2/3，不是平局。
+  // 画成柱子等于把"读坏了"伪装成"这些局都没分胜负"，和绿灯骗人是同一类问题。
   const seq = s.last20 || [];
-  $('spark').innerHTML = seq.length
-    ? seq.map((v) => `<i class="${v === 1 ? 'w' : v === -1 ? 'l' : ''}"
-        style="height:${v === 0 ? 18 : 100}%"></i>`).join('')
-    : `<span style="color:var(--ink-3);font-size:11px">还没有已判定的对局</span>`;
+  const spark = $('spark');
+  if (stuck) {
+    spark.innerHTML = `<span class="spark-off">段位卡读数卡死，走势不可用
+      <em>改用「今日 / 近 20 局增量」</em></span>`;
+  } else if (!seq.length) {
+    spark.innerHTML = `<span class="spark-off">还没有已判定的对局</span>`;
+  } else {
+    spark.innerHTML = seq.map((v) => `<i class="${v === 1 ? 'w'
+      : v === -1 ? 'l' : ''}" title="${v === 1 ? '胜'
+      : v === -1 ? '负' : '未判定'}"
+        style="height:${v === 0 ? 18 : 100}%"></i>`).join('');
+  }
 
   // 战绩页
   if ($('statsSub')) $('statsSub').textContent = sub;
