@@ -434,6 +434,22 @@ def test_label(port):
     except Exception as e:
         ok(False, "OCR 结果文件", str(e)[:60])
 
+    # 批量确认：只接受精确匹配 + 高置信度
+    try:
+        import ui_server as _U
+        r = _U.portrait_auto_confirm("foe", min_conf=0.9, dry_run=True)
+        ok(r.get("dry_run") is True, "批量确认 dry_run 模式")
+        ok("n" in r, "批量确认返回候选数", "n=%s" % r.get("n"))
+        # 所有候选必须是精确匹配（模糊匹配不进批量）
+        cands = r.get("candidates") or []
+        bad = [c for c in cands
+               if _U._safe_species(c["species"]) != c["species"]]
+        ok(not bad, "候选全是精确匹配", str(bad[:2]) if bad else "")
+        ok(all(c["conf"] >= 0.9 for c in cands),
+           "候选置信度都 >= 0.9")
+    except Exception as e:
+        ok(False, "批量确认", str(e)[:60])
+
     # 垃圾检测：场景截图判 False，名字条判 True
     try:
         import tempfile
