@@ -1222,6 +1222,10 @@ def test_phase_infer():
 
     # 游戏窗口：只读 HWND/rect。这里验证的是"算得对"，不是"能找到窗口"——
     # 测试机可能没开游戏，所以两种情况都要能通过。
+    #
+    # 还要验证 **DPI 声明**：未声明时 Win32 返回逻辑坐标，同一台机器上
+    # 会读到 1037x804（真实 2074x1607 的一半）。这个差异会让分辨率告警
+    # 报出错误的数字，用户照着改会改错。所以断言"读到的是物理像素"。
     try:
         g = U.game_status()
         ok(isinstance(g, dict) and "found" in g, "game_status 结构",
@@ -1231,6 +1235,11 @@ def test_phase_infer():
                "%.3f" % (g.get("aspect") or 0))
             ok(isinstance(g.get("scale_ok"), bool), "scale_ok 是布尔",
                str(g.get("scale_ok")))
+            # DPI：物理像素下的窗口宽度不该是 1000 出头（那是 200% 缩放
+            # 下的逻辑值）。放宽到 >1200 只挡"明显读成逻辑坐标"这一种错。
+            ok(int(g.get("w") or 0) > 1200 or int(g.get("h") or 0) > 900,
+               "读到的是物理像素（DPI 已声明）",
+               "%sx%s" % (g.get("w"), g.get("h")))
             if g.get("scale_ok") is False:
                 ok(bool(g.get("note")), "比例不一致时给出说明",
                    str(g.get("note"))[:40])

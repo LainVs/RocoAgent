@@ -528,6 +528,41 @@ def _find_game_window():
     return hits[0] if hits else None
 
 
+def _ensure_dpi_aware():
+    """声明 DPI 感知，且必须在**任何**窗口坐标读取之前完成。
+
+    为什么这个顺序是硬约束（2026-11-21 实测）
+    ----------------------------------------
+    本机 200% 缩放。进程未声明 DPI 感知时，Win32 返回**逻辑坐标**，
+    而 mss 抓屏用**物理像素**，差 2 倍：
+
+        未声明   GetWindowRect -> (1037x804)      ← 逻辑，物理的一半
+        声明后   GetWindowRect -> (2074x1607)     ← 物理
+
+    `winio` 在模块级调用了 `_declare_dpi_aware()`，所以 import 它的进程
+    自动带上。但 `ui_server` **不 import winio**（它只读日志和数据库），
+    于是 `game_status()` 读到的是逻辑坐标 —— 同一台机器上，
+    `test_ui`（先 import 了 overlay→winio）报 2074x1607，
+    而真实服务报 1037x804。
+
+    这个差异会让 U24 的分辨率告警**报错数字**：1.29 vs 1.60 确实不一致，
+    但真实是 2074x1607 而不是 1037x804，用户照着改会改错。
+
+    所以这里自己做一次，不依赖 import 顺序。重复调用无害。
+    """
+    try:
+        import ctypes
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+_ensure_dpi_aware()
+
+
 def game_status():
     """游戏窗口 + 分辨率是否和标定基准匹配。
 
