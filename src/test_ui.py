@@ -1303,7 +1303,9 @@ def test_overlay_contrast():
     # --kill-text 是文字用途，门槛 4.5。
     CHECKS = (
         ("ink-0", 4.5), ("ink-2", 4.5), ("ink-3", 4.5),
-        ("accent", 4.5), ("win", 4.5), ("warn", 4.5),
+        # 注意：--accent 现在是 `var(--accent-strong)`，不是 hex，
+        # 由下面的「accent 三态 × 两主题」单独校验六个具体 token。
+        ("win", 4.5), ("warn", 4.5),
         ("kill", 3.0), ("kill-text", 4.5),
     )
 
@@ -1317,6 +1319,29 @@ def test_overlay_contrast():
                 continue
             w = worst_ratio(toks[name], bg)
             ok(w >= need, "%s --%s >= %.1f" % (theme_name, name, need),
+               "最坏 %.2f" % w)
+
+    # ---- accent 三态 × 两主题（2026-11-21）
+    #
+    # 背景：`setAccent()` 原来把色值**硬编码在 JS 里**，通过内联样式
+    # `root.style.setProperty('--accent', '#FF6B4A')` 覆盖。
+    # 内联样式优先级高于任何 CSS 规则，所以 style.css 里的 token 永远不生效。
+    #
+    # 实测：两个主题的 --accent 都是 #FF6B4A，而它在浅色底上只有 2.23:1；
+    # `even` 的 #7FD3E8 更是 1.47 —— 而"互不克制"是最常见的对局状态。
+    #
+    # 现在色值回到 CSS（两主题 × 三态 = 六个 token），JS 只切 data-accent。
+    for theme_name, toks, bgkey in (
+            ("深色", dark, (31, 30, 29)),
+            ("浅色", light, (250, 249, 245))):
+        bg = toks.get("bg") or bgkey
+        for state in ("strong", "even", "weak"):
+            key = "accent-" + state
+            if key not in toks:
+                ok(False, "%s --%s 存在" % (theme_name, key))
+                continue
+            w = worst_ratio(toks[key], bg)
+            ok(w >= 4.5, "%s --%s >= 4.5" % (theme_name, key),
                "最坏 %.2f" % w)
 
     # 语义检查：--kill 必须只用于 background（图形），不能用于 color（文字）

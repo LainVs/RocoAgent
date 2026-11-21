@@ -24,11 +24,47 @@ const TYPE_COLOR = {
 };
 
 // 克制倍率 → 强调色。面板整体色调本身就是情报。
-const ACCENT = {
-  strong: '#FF6B4A',
-  even:   '#7FD3E8',
-  weak:   '#5B7FD4',
+/* 强调色三态（2026-11-21 重构）
+ *
+ * 以前这里是硬编码色值 + 内联样式：
+ *
+ *     const ACCENT = { strong: '#FF6B4A', even: '#7FD3E8', weak: '#5B7FD4' };
+ *     function setAccent(kind) {
+ *       root.style.setProperty('--accent', ACCENT[kind]);   // 内联，优先级最高
+ *     }
+ *
+ * 内联样式会**覆盖 style.css 里 body.theme-dark 的 token**，
+ * 导致主题切换对强调色完全无效。实测两个主题的 --accent 都是 #FF6B4A，
+ * 而它在浅色底上只有 2.23:1（需 4.5）。`even` 的 #7FD3E8 更是 1.47 ——
+ * 而"互不克制"是最常见的对局状态。
+ *
+ * 现在只切 `data-accent` 属性，色值全在 CSS 里（每主题一套，都校验过 4.5）。
+ *
+ * 兜底：万一 CSS 没加载（预览页旧版），退回到按主题写内联值。
+ * 兜底值同样按「整窗 alpha 0.78 × 三种游戏底色」校验过。
+ */
+const ACCENT_FALLBACK = {
+  light: { strong: '#884027', even: '#225B69', weak: '#375287' },
+  dark:  { strong: '#E2987F', even: '#7FD3E8', weak: '#90A9E8' },
 };
+
+function setAccent(kind) {
+  const k = (kind === 'strong' || kind === 'even' || kind === 'weak')
+    ? kind : 'even';
+  root.dataset.accent = k;
+
+  // 兜底：只有在 CSS token 读不到时才写内联
+  // （正常路径下 CSS 一定生效，这段不会跑）
+  const probe = getComputedStyle(root)
+    .getPropertyValue('--accent-' + k).trim();
+  if (probe) return;
+
+  const isDark = document.body.classList.contains('theme-dark');
+  const c = (ACCENT_FALLBACK[isDark ? 'dark' : 'light'])[k];
+  root.style.setProperty('--accent', c);
+  root.style.setProperty('--accent-soft', hexA(c, 0.55));
+  root.style.setProperty('--accent-dim', hexA(c, isDark ? 0.14 : 0.12));
+}
 
 const $ = (id) => document.getElementById(id);
 const root = document.documentElement;
@@ -42,13 +78,6 @@ let polling = false;
 function hexA(hex, a) {
   const n = parseInt(hex.slice(1), 16);
   return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
-}
-
-function setAccent(kind) {
-  const c = ACCENT[kind] || ACCENT.even;
-  root.style.setProperty('--accent', c);
-  root.style.setProperty('--accent-soft', hexA(c, 0.55));
-  root.style.setProperty('--accent-dim', hexA(c, 0.16));
 }
 
 function hpLevel(p) {

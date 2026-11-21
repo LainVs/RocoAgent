@@ -62,8 +62,28 @@
   --ink-2: #55524C;               /* 次：绝对值 / 区间 */
   --ink-3: #55524D;               /* 弱：单位 / 序号 */
 
-  /* 唯一强调色：Claude 暖珊瑚 */
-  --accent:      #884027;
+  /* 唯一强调色：Claude 暖珊瑚
+   *
+   * ★ 三态 × 两主题（2026-11-21 重构）
+   * ---------------------------------
+   * 强调色由「克制关系」推导：克制=暖红 / 中性=青 / 被压=蓝。
+   *
+   * 以前这三个值是**硬编码在 ui/app.js 的 ACCENT 里**，通过内联样式
+   * `root.style.setProperty('--accent', '#FF6B4A')` 覆盖 ——
+   * 内联样式优先级高于任何 CSS 规则，所以这里写的 token 永远不生效。
+   *
+   * 实测后果（DOM 测量）：两个主题的 `--accent` 都是 `#FF6B4A`，
+   * 而它在浅色底上只有 **2.23:1**（需 4.5）。`even` 的 `#7FD3E8`
+   * 更是只有 1.47 —— 而"互不克制"是最常见的对局状态。
+   *
+   * 现在色值回到 CSS，JS 只负责切换 `data-accent` 属性。
+   * 六个值都按「整窗 alpha 0.78 × 三种游戏底色」校验过 >= 4.5。
+   */
+  --accent-strong: #884027;       /* 克制：砖红 */
+  --accent-even:   #225B69;       /* 中性：深青 */
+  --accent-weak:   #375287;       /* 被压：深蓝 */
+
+  --accent:      var(--accent-strong);
   --accent-soft: rgba(136, 64, 39, 0.55);
   --accent-dim:  rgba(136, 64, 39, 0.12);
 
@@ -119,7 +139,11 @@ body.theme-dark {
   --ink-2: #B8B5AD;
   --ink-3: #ABA9A2;
 
-  --accent:      #E2987F;
+  --accent-strong: #E2987F;       /* 克制：暖珊瑚 */
+  --accent-even:   #7FD3E8;       /* 中性：亮青 */
+  --accent-weak:   #90A9E8;       /* 被压：亮蓝 */
+
+  --accent:      var(--accent-strong);
   --accent-soft: rgba(226, 152, 127, 0.55);
   --accent-dim:  rgba(226, 152, 127, 0.14);
 
@@ -139,6 +163,38 @@ body.theme-dark {
   --halo:        0 1px 2px rgba(0, 0, 0, 0.55);
   --halo-strong: 0 1px 3px rgba(0, 0, 0, 0.7),
                  0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+/* ── 强调色三态（2026-11-21）
+ *
+ * JS 只设 `root.dataset.accent = 'strong' | 'even' | 'weak'`，
+ * 具体色值由这里的 token 决定。
+ *
+ * 为什么不直接用内联样式：内联样式优先级高于 CSS，
+ * 会让 `body.theme-dark` 里的 token 完全失效（踩过，见 --accent 注释）。
+ *
+ * 为什么不用 `--accent: var(--accent-strong)` 这种单行覆盖：
+ * `--accent-soft` / `--accent-dim` 也要跟着变（它们是 --accent 的
+ * 半透明版本，用在边框和淡底上）。
+ */
+:root[data-accent="even"] {
+  --accent: var(--accent-even);
+  --accent-soft: rgba(34, 91, 105, 0.55);
+  --accent-dim:  rgba(34, 91, 105, 0.12);
+}
+:root[data-accent="weak"] {
+  --accent: var(--accent-weak);
+  --accent-soft: rgba(55, 82, 135, 0.55);
+  --accent-dim:  rgba(55, 82, 135, 0.12);
+}
+
+body.theme-dark[data-accent="even"] {
+  --accent-soft: rgba(127, 211, 232, 0.55);
+  --accent-dim:  rgba(127, 211, 232, 0.14);
+}
+body.theme-dark[data-accent="weak"] {
+  --accent-soft: rgba(144, 169, 232, 0.55);
+  --accent-dim:  rgba(144, 169, 232, 0.14);
 }
 
 * { box-sizing: border-box; }
