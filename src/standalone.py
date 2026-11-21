@@ -60,11 +60,13 @@ _cache = {"at": 0.0, "state": None}
 
 # 状态缓存时间（秒）。
 #
-# 前端轮询是 10Hz（100ms），但一局战斗的关键变化（血量/回合）是秒级，
-# 10Hz 毫无必要。缓存 0.35 秒后，实际抓屏降到约 3 次/秒：
-#   · CPU 从 ~100% 降到 ~25%（一次 observe 约 100ms）
-#   · 前端 10Hz 轮询仍然每个请求都拿到数据（只是同一份）
-MIN_INTERVAL = 0.35
+# 实测（2026-11-21）：`perceive.observe()` 单次约 0.9 秒
+# （find_pills ~107ms + 四张卡的数字识别），所以缓存太短等于白抓。
+#
+# 一局战斗的血量/回合是**秒级**变化，1 秒缓存完全够用，
+# 而前端 10Hz 轮询每个请求都会拿到数据（只是同一份）。
+# 缓存 1.0 秒后实际抓屏降到 ~1 次/秒。
+MIN_INTERVAL = 1.0
 
 # ---- 身份识别（可选，有代价）
 #
@@ -239,12 +241,21 @@ def identify(now=None, foe_hp_pct=None):
 
     _ident["foe_hp_at_id"] = foe_hp_pct
 
-    # 识别失败（两边都没定下来）时不锁 20 秒窗口，让下次请求继续重试。
-    # 实测：刚开局 HUD 还没画出来，第一次必然失败；如果锁住 at，
-    # 就要等 20 秒才能再试，UI 一直显示"未知"。
-    if not _ident.get("foe") and not _ident.get("self"):
-        _ident["at"] = 0.0
-
+    # 识别失败时**不要**清 at。
+    #
+    # 为什么要删掉"失败就立刻重试"（2026-11-21 实测）
+    # ---------------------------------------------
+    # 原来这里写的是：
+    #     if not _ident.get("foe") and not _ident.get("self"):
+    #         _ident["at"] = 0.0
+    # 本意是"别锁 20 秒窗口，开局 HUD 还没画出来时要能重试"。
+    #
+    # 但识别已经挪到后台线程后，重试节奏由线程自己负责（每 0.5 秒一轮，
+    # 由 identify 内部的 at 节流控制真实 OCR 频率）。这里再把 at 清零，
+    # 等于**每帧都无条件重跑完整 OCR**。
+    #
+    # 实测代价：待机时（永远识别不出身份）CPU 稳定烧到 154%~176% 单核，
+    # 而且 bot_stdout.log 里每 8~15 秒一条 ONNX 识别日志。
     return _ident
 
 
@@ -626,21 +637,30 @@ def observe(force=False):
         #
         # 为什么不能每帧都 reset（2026-11-21 实测踩到）
         # ------------------------------------------
-        # `reset_identity()` 会把 `_ident["at"]` 清成 0，而 `identify()` 的
+        # `reset_identity()` 会把 `_ident["at"]` 清掉，而 `identify()` 的
         # 节流就是靠 `at`。待机时 `observe()` 每秒被调好几次，
         # 每次 reset 都把节流清零 -> 后台线程的每次循环都跑一遍**完整 OCR**
         # （5~10 秒）-> 待机时 CPU 被白白烧掉。
         #
-        # 所以只在两个**切换点**动缓存：
-        #   battle -> idle : 清缓存，但 at 设成"现在"（不触发重识别）
-        #   idle -> battle : at 清零，让新一局立刻开始识别
-        in_battle = bool(raw.get("battle"))
-        was_battle = bool(_BG.get("in_battle"))
-        if was_battle and not in_battle:
-            reset_identity()
-        elif in_battle and not was_battle:
-            _ident["at"] = 0.0
-        _BG["in_battle"] = in_battle
+        # 还要**去抖**：游戏窗口在 1024x768 <-> 2048x1536 之间缩放时，
+        # `perceive.observe()` 会间歇性读不到血条，battle 就在 True/False
+        # 之间跳。如果每次跳都算"切换"，就会不停触发重识别。
+        # 所以要求同一个状态连续出现 3 帧（约 1 秒）才算真的切换。
+        raw_battle = bool(raw.get("battle"))
+        if raw_battle == _BG.get("last_battle"):
+            _BG["battle_streak"] = _BG.get("battle_streak", 0) + 1
+        else:
+            _BG["last_battle"] = raw_battle
+            _BG["battle_streak"] = 1
+        in_battle = bool(_BG.get("in_battle"))
+        if _BG["battle_streak"] >= 3 and raw_battle != in_battle:
+            in_battle = raw_battle
+            if in_battle:
+                _ident["at"] = 0.0      # 新一局：立刻开始识别
+            else:
+                reset_identity()        # 结算：清掉上一局的答案
+            _BG["in_battle"] = in_battle
+        _ident["in_battle"] = in_battle
 
         _BG["hp"] = raw.get("foe_pct")
         ensure_ident_worker()
