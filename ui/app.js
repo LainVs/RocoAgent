@@ -1308,7 +1308,34 @@ function bindDrag() {
      Esc     关设置抽屉
    ================================================================ */
 function bindHotkeys() {
-  const ALPHAS = [100, 78, 55, 35, 20];
+  /* 透明度档位（2026-11-21 修）
+   *
+   * ★ 原来的 bug
+   * -------------
+   * 这里写的是 `[100, 78, 55, 35, 20]`（百分比），但 `<input type="range">`
+   * 的 `min` 是 `ALPHA_MIN = 180`（ui-m67 定的下限，有实测依据：
+   * 180/255 = 71%，再低浅色背景下文字就糊了）。
+   *
+   * 浏览器会把 `slider.value = 20` 夹到 180，于是：
+   *   · 按 Alt+A 想降到 78% -> 被夹到 71%
+   *   · 再按 -> cur=180，循环找不到比 180 小的档 -> 回退 ALPHAS[0]=100
+   *     -> 又被夹到 180
+   *   · **永远停在 71%，热键完全失效**
+   *
+   * 实测（alpha_test.py）：连按 6 次，每次都 "想设 100 / 实际 180"。
+   *
+   * ★ 为什么用 0~255 而不是百分比
+   * -----------------------------
+   * 180/255 = 70.588...%，写成 71 会有 1 的误差，四舍五入后可能被夹。
+   * 直接用 alpha 值（和 slider 的 value 同口径）没有换算问题。
+   */
+  const ALPHA_STEPS = [255, 230, 200, ALPHA_MIN];   // 100/90/78/71%
+
+  // 运行时断言：以后有人加档位时立刻发现（比注释可靠）
+  if (ALPHA_STEPS.some((v) => v < ALPHA_MIN)) {
+    console.error('[hotkey] ALPHA_STEPS 有低于下限的档位',
+      ALPHA_STEPS, 'min =', ALPHA_MIN);
+  }
 
   document.addEventListener('keydown', (e) => {
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
@@ -1322,12 +1349,10 @@ function bindHotkeys() {
         e.preventDefault();
         const slider = $('alpha');
         const cur = +slider.value;
-        // 找下一个更小的档，到底就回到 100
-        let next = ALPHAS[0];
-        for (const v of ALPHAS) {
-          if (v < cur) { next = v; break; }
-        }
-        slider.value = next;
+        // 显式降序 + find，不依赖"ALPHA_STEPS 必须预先排好序"这个隐含前提
+        const steps = ALPHA_STEPS.slice().sort((a, b) => b - a);
+        const next = steps.find((v) => v < cur);
+        slider.value = String(next == null ? steps[0] : next);
         slider.dispatchEvent(new Event('input'));
         return;
       }
