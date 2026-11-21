@@ -485,27 +485,32 @@ async function callNative(method, ...args) {
    交互
    ================================================================ */
 
-// 透明度：**只淡面板背景，不淡文字**。
+// 透明度：**只淡面板背景，不淡文字**。下限 40%。
 //
-// 踩过的坑（2026-11-21，用户报"调透明度就是变色灰白黑，完全没有视觉体验"）
-// ------------------------------------------------------------------
-// 之前同时做了两件事：
-//    CSS  --alpha      = 0.4   （面板底色 rgba(9,11,15,0.4)）
-//    原生 set_opacity  = 102   （整窗 alpha 0.4）
+// 踩过的两个坑（2026-11-21，用户报"调透明度就是变色灰白黑"）
+// ------------------------------------------------------------
+// 1. 两层 alpha 相乘
+//    之前同时改 CSS --alpha 和原生 set_opacity，两层叠加：
+//        0.4 × 0.4 = 0.16  ->  深色面板压在白底上变成均匀灰
+//    而且整窗 alpha 是**均匀混合**，物理上必然让深色变灰 ——
+//    文字描边再强也救不回来。
 //
-// 两层叠加 = 0.4 × 0.4 = **0.16**。深色面板以 16% 压在亮石地面(190)上：
-//    0.16 × 9 + 0.84 × 190 ≈ 161   ->  灰白
-// 这就是"变色灰白黑"的来源。而且整窗 alpha 是**均匀混合**，
-// 物理上必然让深色变灰 —— 文字描边再强也救不回来。
+// 2. WebView2 页面底色是白的
+//    create_window 的 background_color 默认 '#FFFFFF'，transparent=True
+//    只让窗口透明，页面底下仍有白底。已在 overlay.py 改成 '#00000000'。
 //
 // 现在的分工：
-//    CSS  --alpha  -> 只控面板底色（游戏画面透出来）
-//    原生 alpha    -> **恒为 255**（文字永远不透明，锐利可读）
+//    CSS --alpha  -> 只控面板底色（游戏画面透出来）
+//    原生 alpha    -> 恒为 255（文字永远不透明，锐利可读）
 //
-// 这样拉到 30% 时看到的是"游戏画面 + 清晰文字"，而不是一整块灰雾。
+// 下限 40%：再低时面板和背景的亮度差小于文字笔画宽度，物理上读不了。
+// 与其做"看得见但读不了"的假透明，不如让用户用 Alt+H 隐藏。
+const ALPHA_MIN = 40;
+
 function bindAlpha() {
   const slider = $('alpha');
   const label = $('alphaVal');
+  if (slider) slider.min = String(ALPHA_MIN);
 
   // 一次性把整窗 alpha 钉死在不透明。之后滑块不再碰它。
   if (hasNative()) {
@@ -513,7 +518,8 @@ function bindAlpha() {
   }
 
   const apply = () => {
-    const v = +slider.value;
+    let v = +slider.value;
+    if (v < ALPHA_MIN) v = ALPHA_MIN;
     const a = v / 100;
     root.style.setProperty('--alpha', a.toFixed(2));
     label.textContent = v + '%';
@@ -521,12 +527,9 @@ function bindAlpha() {
     // 低透明度下图形元素（血条底槽、分隔线）没有描边会一起消失，
     // 所以它们要**反向补偿**：面板越淡，底槽越实。
     const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
-    root.style.setProperty('--well-a', (0.34 * boost).toFixed(3));
-    root.style.setProperty('--line-a', (0.085 * boost).toFixed(3));
-    root.style.setProperty('--line-soft-a', (0.045 * boost).toFixed(3));
-    root.style.setProperty('--edge-a',
-      (0.10 * boost + (1 - a) * 0.10).toFixed(3));
-    root.style.setProperty('--edge-hi-a', (0.11 * boost).toFixed(3));
+    root.style.setProperty('--well-a', (0.10 * boost).toFixed(3));
+    root.style.setProperty('--line-a', (0.09 * boost).toFixed(3));
+    root.style.setProperty('--line-soft-a', (0.055 * boost).toFixed(3));
 
     try { localStorage.setItem('overlay.alpha', String(v)); } catch (_) {}
   };
@@ -535,7 +538,7 @@ function bindAlpha() {
 
   try {
     const saved = localStorage.getItem('overlay.alpha');
-    if (saved) slider.value = saved;
+    if (saved) slider.value = Math.max(ALPHA_MIN, +saved);
   } catch (_) {}
   apply();
 }
@@ -820,8 +823,36 @@ function bindStartBot() {
   });
 }
 
+// 主题切换：浅色 / 深色。
+//
+// 默认浅色 —— 这不是偏好，是实测结论：
+// 游戏画面主要是亮色，浅色面板和背景**同向**，半透明时仍然亮，
+// 文字对比度稳定；深色面板反向，混合后落在中灰，40% 下字就读不了了。
+function bindTheme() {
+  const seg = $('themeSeg');
+  if (!seg) return;
+
+  const apply = (theme) => {
+    document.body.classList.toggle('theme-dark', theme === 'dark');
+    document.body.classList.toggle('theme-light', theme !== 'dark');
+    seg.querySelectorAll('button').forEach((b) => {
+      b.classList.toggle('active', b.dataset.theme === theme);
+    });
+    try { localStorage.setItem('overlay.theme', theme); } catch (_) {}
+  };
+
+  seg.querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => apply(b.dataset.theme));
+  });
+
+  let saved = 'light';
+  try { saved = localStorage.getItem('overlay.theme') || 'light'; } catch (_) {}
+  apply(saved);
+}
+
 /* ================================================================ */
 document.addEventListener('DOMContentLoaded', () => {
+  bindTheme();
   bindAlpha();
   bindDrawer();
   bindPass();

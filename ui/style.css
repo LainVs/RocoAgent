@@ -1,19 +1,32 @@
 /* ============================================================
    RocoAgent 对战悬浮窗
    ------------------------------------------------------------
-   设计依据（都是实测，不是感觉）：
+   风格：Claude 式极简（2026-11-21 重做）
+   ------------------------------------------------------------
+   旧版的问题（用户反馈"没有美感，有点丑"）：
+     · 3 个强调色 + 5 档字号 + 噪点 + 内高光 + 大投影 + 刻度线 + 呼吸动画
+     · 冷白字 + 冷黑底，压抑
+   新版：1 个强调色 + 3 档字号 + 一条边框。装饰全砍，只留信息。
 
-   1. 悬浮窗背后是真实游戏画面 —— 浅灰石地面亮度约 190，橙红建筑、
-      绿色植物、蓝天。半透明深色面板压上去会**变亮**，白字对比度
-      断崖式下降（alpha=0.20 时只有 1.59:1，完全不可读）。
+   ★ 为什么默认浅色（这是实测，不是偏好）
+   --------------------------------------
+   悬浮窗背后是真实游戏画面，主要是亮色（石地约 190、天空更亮）。
+   面板半透明时和背景混合，混合结果决定文字对比度：
 
-   2. 解法是给所有文字加 1px 暗色描边。实测同样 alpha=0.20 下，
-      主信息对比度从 1.59 拉到 10.65。这是唯一能让「低透明度」和
-      「看得清」同时成立的手段，不是装饰。
+       深色 rgba(12,11,10,0.4) 压 190  ->  119（中灰）
+         白字 245 在 119 上：对比度 ≈ 2.0   勉强
+       浅色 rgba(245,244,238,0.4) 压 190 -> 217（浅）
+         深字 31 在 217 上：对比度 ≈ 6.2   很好
 
-   3. 不能只用 backdrop-filter：悬浮窗是独立合成层，采不到背后像素。
-      写了 blur 只会模糊空气。所以用「实心半透明 + 噪点 + 顶部高光」
-      做出玻璃质感，零性能成本。
+   原因：浅色面板和亮背景**同向**，混合后仍亮；深色面板和亮背景
+   **反向**，混合后落在中灰 —— 而中灰是最差的文字背景（黑白都不够）。
+
+   实测 40% 透明度截图：深色主题次要文字几乎消失，浅色全部清晰。
+
+   ★ 透明度下限 40%
+   -----------------
+   再低时面板和背景的亮度差小于文字笔画宽度，物理上读不了。
+   与其做"看得见但读不了"的假透明，不如让用户用 Alt+H 隐藏。
 
    验证脚本：python ui/compose_test.py
    ============================================================ */
@@ -25,46 +38,89 @@
 @property --foe-g  { syntax: '<number>'; inherits: false; initial-value: 0.45; }
 
 :root {
-  /* 面板底色 alpha —— 滑杆只改这一个值 */
-  --alpha: 0.84;
+  /* ── 面板底色 alpha —— 滑杆只改这一个值 ──────────── */
+  --alpha: 0.92;
 
-  /* 衍生透明度：由 JS 按 --alpha 算出，带下限。
-     为什么需要：滑杆拉到 20% 时面板几乎消失，文字靠描边还能读，
-     但血条底槽、分隔线这些**图形元素没有描边**会一起消失。
-     所以它们必须有不透明度下限。 */
-  --well:   rgba(0, 0, 0, 0.34);
-  --well-a: 0.34;
-  --line-a: 0.085;
-  --line-soft-a: 0.045;
+  /* ── 主题：浅色（默认） ───────────────────────────
+     body.theme-dark 会覆写下面这组变量。 */
+  --bg-rgb: 250, 249, 245;        /* #FAF9F5 暖白 */
 
-  /* 文字层级：对比度按真实游戏背景实测标定，见 ui/compose_test.py */
-  --ink-0: rgba(247, 249, 252, 1.00);    /* 精灵名 / 百分比 / 伤害 */
-  --ink-1: rgba(240, 244, 250, 0.80);    /* 技能名 */
-  --ink-2: rgba(232, 238, 247, 0.58);    /* 绝对值 / 推测区间 */
-  --ink-3: rgba(226, 233, 244, 0.38);    /* 序号 / 单位 */
+  /* 文字：三级，暖调（冷白在暖底上会发蓝） */
+  --ink-0: #1F1E1D;               /* 主：名字 / 伤害 / 百分比 */
+  --ink-1: #1F1E1D;
+  --ink-2: #5C5852;               /* 次：绝对值 / 区间 */
+  --ink-3: #8E8A82;               /* 弱：单位 / 序号 */
 
-  /* 描边：低透明度下的救命符。用 text-shadow 而不是 -webkit-text-stroke，
-     因为后者会吃掉字形内部的细笔画（中文尤其明显）。 */
-  --halo: 0 1px 2px rgba(0, 0, 0, 0.92), 0 0 1px rgba(0, 0, 0, 0.75);
-  --halo-strong: 0 1px 3px rgba(0, 0, 0, 0.96), 0 0 2px rgba(0, 0, 0, 0.85);
+  /* 唯一强调色：Claude 暖珊瑚 */
+  --accent:      #C96442;
+  --accent-soft: rgba(201, 100, 66, 0.55);
+  --accent-dim:  rgba(201, 100, 66, 0.12);
 
-  --line:      rgba(255, 255, 255, var(--line-a));
-  --line-soft: rgba(255, 255, 255, var(--line-soft-a));
-  --well:      rgba(0, 0, 0, var(--well-a));   /* 凹陷底槽，比白线更有体积感 */
+  /* 语义色：只在血条和"击杀"上用，不做装饰 */
+  --win:  #3F8F5F;
+  --warn: #B8860B;
+  --kill: #B5453A;
 
-  /* 强调色：JS 按克制关系覆写 */
-  --accent:      #7FD3E8;
-  --accent-soft: rgba(127, 211, 232, 0.55);
-  --accent-dim:  rgba(127, 211, 232, 0.16);
+  /* 分隔线 / 底槽 */
+  --line:      rgba(31, 30, 29, 0.09);
+  --line-soft: rgba(31, 30, 29, 0.055);
+  --well-a:    0.10;
+  --line-a:    0.09;
+  --line-soft-a: 0.055;
+  --edge-a:    0.10;
+  --edge-hi-a: 0.00;              /* 内高光取消 */
 
-  --warn: #E8A33D;
-  --kill: #FF7A52;
+  --well: rgba(31, 30, 29, var(--well-a));
 
-  --r: 14px;
+  /* 交互元素的"淡底"：浅色主题下必须是**深色**淡底，
+     深色主题下才是白色淡底。旧版硬编码 rgba(255,255,255,.05)
+     在白底上完全看不见。 */
+  --soft-1: rgba(31, 30, 29, 0.05);     /* 最淡：按钮 hover */
+  --soft-2: rgba(31, 30, 29, 0.08);     /* 次淡：头像底、输入框 */
+  --soft-3: rgba(31, 30, 29, 0.14);     /* 稍实：边框、分隔 */
 
-  --font-cn: "HarmonyOS Sans SC", "Microsoft YaHei UI", "Microsoft YaHei",
-             system-ui, sans-serif;
-  --font-num: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+  /* 描边：低透明度下的可读性保障。
+     浅色主题用**白**描边（把字从深色背景里"提"出来）；
+     旧版用 0.92 的黑色描边，在浅底上会像"烧焦"。 */
+  --halo:        0 1px 2px rgba(255, 255, 255, 0.62);
+  --halo-strong: 0 1px 3px rgba(255, 255, 255, 0.78),
+                 0 0 1px rgba(255, 255, 255, 0.5);
+
+  --r: 12px;
+
+  --font-cn: "Inter", "HarmonyOS Sans SC", "Microsoft YaHei UI",
+             "Microsoft YaHei", system-ui, sans-serif;
+  --font-num: "Cascadia Mono", "Cascadia Code", Consolas, ui-monospace,
+              monospace;
+}
+
+/* ── 深色主题 ─────────────────────────────────────────── */
+body.theme-dark {
+  --bg-rgb: 31, 30, 29;           /* #1F1E1D 暖调黑，不是纯黑 */
+  --ink-0: #F5F4EE;
+  --ink-1: #F5F4EE;
+  --ink-2: #B8B5AD;
+  --ink-3: #7A776F;
+
+  --accent:      #D97757;
+  --accent-soft: rgba(217, 119, 87, 0.55);
+  --accent-dim:  rgba(217, 119, 87, 0.14);
+
+  --win:  #4E9F6E;
+  --warn: #C79A3E;
+  --kill: #C4553F;
+
+  --line:      rgba(245, 244, 238, 0.10);
+  --line-soft: rgba(245, 244, 238, 0.055);
+  --well: rgba(245, 244, 238, var(--well-a));
+
+  --soft-1: rgba(245, 244, 238, 0.06);
+  --soft-2: rgba(245, 244, 238, 0.10);
+  --soft-3: rgba(245, 244, 238, 0.16);
+
+  --halo:        0 1px 2px rgba(0, 0, 0, 0.55);
+  --halo-strong: 0 1px 3px rgba(0, 0, 0, 0.7),
+                 0 0 1px rgba(0, 0, 0, 0.5);
 }
 
 * { box-sizing: border-box; }
@@ -132,7 +188,7 @@ body.embedded .stage { display: none; }
   cursor: pointer;
   text-shadow: var(--halo);
 }
-.demo-scen button:hover { color: var(--ink-0); background: rgba(255,255,255,.06); }
+.demo-scen button:hover { color: var(--ink-0); background: var(--soft-1); }
 .demo-scen button.active {
   color: #0b0e13;
   background: var(--accent);
@@ -211,40 +267,33 @@ body.embedded .overlay .panel {
   position: relative;
   border-radius: var(--r);
   overflow: hidden;
-  background: rgba(9, 11, 15, var(--alpha));
-  border: 1px solid rgba(255, 255, 255, var(--edge-a, 0.085));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, var(--edge-hi-a, 0.11)),
-    0 16px 38px -14px rgba(0, 0, 0, 0.78);
+  /* 底色由 --bg-rgb + --alpha 组合。浅色主题下和亮游戏背景同向，
+     半透明时仍然亮 —— 这是文字可读性的根本保障（见文件头注释）。 */
+  background: rgba(var(--bg-rgb), var(--alpha));
+  border: 1px solid var(--line);
+  /* 只有一层极轻的投影。旧版是 inset 内高光 + 38px 大投影，
+     在游戏画面上会显得"油"。 */
+  box-shadow: 0 8px 24px -14px rgba(0, 0, 0, 0.45);
 
   /* ★ 不要给 background-color 加 transition
      ----------------------------------------------------------------
-     踩过的坑（2026-11-21）：写了 `transition: background-color .18s linear`
-     之后，改 --alpha **完全不生效** —— computed background 永远是初始的
-     rgba(9,11,15,0.84)。
+     踩过的坑（2026-11-21，用户报"调透明度其实没有透明"）：
+     写了 `transition: background-color .18s linear` 之后，改 --alpha
+     **完全不生效** —— computed background 永远是初始值。
 
      原因：transition 让 background-color 变成可插值属性，Chromium 会在
      过渡期间缓存起始值，而 `var(--alpha)` 的变化不会重新触发求值
-     （变量本身不是可动画属性）。表现就是"拉滑块毫无反应"。
+     （变量本身不是可动画属性）。
 
-     透明度变化是即时的，本来也不需要过渡 —— 用户拖滑块时期望立刻看到
-     反馈，0.18s 的延迟反而是坏事。 */
+     实测：设 --alpha=0.25 后 computed --alpha 是 0.25，
+           但 computed background-color 仍是 rgba(...,0.84)。
+
+     透明度变化本来就该是即时的 —— 拖滑块时 0.18s 延迟反而是坏事。 */
 }
 
-/* 噪点叠层：消除「一块纯色塑料」的感觉，同时不干扰文字 */
-.panel::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  opacity: 0.028;
-  background-image: url("data:image/svg+xml;utf8,\
-<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'>\
-<filter id='p'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter>\
-<rect width='120' height='120' filter='url(%23p)'/></svg>");
-  z-index: 0;
-}
-.panel > * { position: relative; z-index: 1; }
+/* 旧版这里有一层噪点纹理（.panel::before）。砍掉：
+   在 40% 透明度下噪点会和游戏画面的细节混在一起，显得脏。 */
+
 
 /* ── 系统栏 ─────────────────────────────────────────── */
 .hdr {
@@ -327,7 +376,7 @@ body.embedded .overlay .panel {
 .dets i {
   width: 3px; height: 9px;
   border-radius: 1px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--soft-3);
 }
 .dets i.on { background: var(--accent-soft); }
 
@@ -355,8 +404,8 @@ body.embedded .overlay .panel {
   cursor: pointer;
   transition: background-color .15s, color .15s;
 }
-.ibtn:hover { background: rgba(255, 255, 255, 0.08); color: var(--ink-0); }
-.ibtn[aria-expanded="true"] { background: rgba(255, 255, 255, 0.10); color: var(--ink-0); }
+.ibtn:hover { background: var(--soft-2); color: var(--ink-0); }
+.ibtn[aria-expanded="true"] { background: var(--soft-2); color: var(--ink-0); }
 
 /* ── 设置抽屉 ───────────────────────────────────────── */
 /* grid 的 0fr/1fr 只对「唯一子元素」生效；多行并排时第二行会按 auto
@@ -383,6 +432,29 @@ body.embedded .overlay .panel {
 .drawer-row:first-child { padding-top: 9px; height: 38px; }
 .drawer-btns { padding-bottom: 6px; height: 36px; }
 
+/* 主题切换：分段控件。两段小按钮，选中态用强调色底。 */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.seg button {
+  font: inherit;
+  font-size: 10px;
+  padding: 3px 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  text-shadow: var(--halo);
+}
+.seg button:hover { color: var(--ink-1); }
+.seg button.active {
+  color: var(--accent);
+  background: var(--accent-dim);
+}
+
 /* 快捷键提示：一行小字，不抢视觉但让人知道有这些键 */
 .drawer-row.keys {
   height: 22px;
@@ -397,8 +469,8 @@ body.embedded .overlay .panel {
   font-size: 9px;
   padding: 0 3px;
   border-radius: 2px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--soft-3);
+  background: var(--soft-1);
   color: var(--ink-2);
   line-height: 1.5;
 }
@@ -425,7 +497,7 @@ input[type="range"] {
 input[type="range"]::-webkit-slider-runnable-track {
   height: 2px;
   border-radius: 1px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--soft-3);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
@@ -443,7 +515,7 @@ input[type="range"]::-webkit-slider-thumb {
   font: inherit;
   font-size: 11px;
   color: var(--ink-1);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--soft-1);
   border: 1px solid var(--line-soft);
   border-radius: 6px;
   padding: 4px 9px;
@@ -451,7 +523,7 @@ input[type="range"]::-webkit-slider-thumb {
   text-shadow: var(--halo);
   transition: background-color .15s, color .15s, border-color .15s;
 }
-.tbtn:hover { background: rgba(255, 255, 255, 0.09); color: var(--ink-0); }
+.tbtn:hover { background: var(--soft-2); color: var(--ink-0); }
 .tbtn[aria-pressed="true"] {
   color: var(--accent);
   border-color: var(--accent-soft);
@@ -477,13 +549,13 @@ input[type="range"]::-webkit-slider-thumb {
   width: 26px; height: 26px;
   border-radius: 7px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.10);
+  background: var(--soft-1);
+  border: 1px solid var(--soft-3);
   display: grid;
   place-items: center;
   font-size: 11px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.82);
+  color: var(--ink-2);
   text-shadow: var(--halo);
   position: relative;
 }
@@ -521,9 +593,9 @@ input[type="range"]::-webkit-slider-thumb {
   line-height: 1;
   padding: 2px 5px;
   border-radius: 4px;
-  color: var(--tc-text, rgba(255,255,255,.86));
-  background: var(--tc-bg, rgba(255,255,255,.10));
-  border: 1px solid var(--tc-bd, rgba(255,255,255,.14));
+  color: var(--tc-text, var(--ink-1));
+  background: var(--tc-bg, var(--soft-2));
+  border: 1px solid var(--tc-bd, var(--soft-3));
   text-shadow: none;
   white-space: nowrap;
   font-weight: 500;
@@ -548,56 +620,36 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 /* ── 血条 ───────────────────────────────────────────── */
+/* 旧版：8px 高 + 25% 刻度线 + 3 套渐变 + 右侧亮边。
+   新版：5px 纯色。数字已经写了 45%，不需要再数格子。 */
 .bar {
   position: relative;
-  height: 8px;
-  border-radius: 2px;
+  height: 5px;
+  border-radius: 3px;
   background: var(--well);
   overflow: hidden;
-  isolation: isolate;
-}
-/* 25% 分节刻度：让血量可以「数格子」，比纯长度好判断 */
-.bar::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background: repeating-linear-gradient(
-    90deg,
-    transparent 0,
-    transparent calc(25% - 1px),
-    rgba(0, 0, 0, 0.30) calc(25% - 1px),
-    rgba(0, 0, 0, 0.30) 25%
-  );
-  z-index: 3;
 }
 .bar i {
   position: absolute;
   inset: 0;
   transform-origin: left center;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 .bar .ghost {
-  background: rgba(255, 255, 255, 0.20);
+  background: rgba(31, 30, 29, 0.14);
   transform: scaleX(var(--me-g));
   transition: transform .48s cubic-bezier(.3, .9, .3, 1) .1s;
 }
 .bar .fill {
   transform: scaleX(var(--me-p));
-  transition: transform .18s cubic-bezier(.2, .8, .2, 1), background-color .3s;
+  transition: transform .22s cubic-bezier(.2, .8, .2, 1), background-color .3s;
   z-index: 2;
 }
-.bar .fill::after {
-  content: "";
-  position: absolute;
-  top: 0; right: 0; bottom: 0;
-  width: 1px;
-  background: rgba(255, 255, 255, 0.42);
-}
+/* 旧版这里有一条 1px 白色亮边（模拟"液面"）。砍掉 —— 纯色更干净。 */
 
-.bar[data-lvl="ok"]  .fill { background: linear-gradient(90deg, #2E8F5E, #55CC86); }
-.bar[data-lvl="mid"] .fill { background: linear-gradient(90deg, #A87A24, #EDB84E); }
-.bar[data-lvl="low"] .fill { background: linear-gradient(90deg, #A83A2A, #EC6249); }
+.bar[data-lvl="ok"]  .fill { background: var(--win); }
+.bar[data-lvl="mid"] .fill { background: var(--warn); }
+.bar[data-lvl="low"] .fill { background: var(--kill); }
 
 .side.foe .bar .ghost { transform: scaleX(var(--foe-g)); }
 .side.foe .bar .fill  { transform: scaleX(var(--foe-p)); }
@@ -623,7 +675,7 @@ input[type="range"]::-webkit-slider-thumb {
 .energy i {
   width: 3px; height: 9px;
   border-radius: 1px;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--soft-3);
 }
 .energy i.on { background: var(--accent-soft); }
 .energy i.now { background: var(--accent); }
@@ -701,24 +753,24 @@ input[type="range"]::-webkit-slider-thumb {
 .dots i {
   width: 4px; height: 4px;
   border-radius: 50%;
-  background: rgba(255, 255, 255, 0.20);
+  background: var(--soft-3);
   transition: background-color .3s;
 }
 .dots i.on { background: var(--accent); }
 
 /* ── 克制关系条 ─────────────────────────────────────── */
 /* 打架时最需要一眼看到的就是「我打它多少倍、它打我多少倍」。
-   放在双方之间，横跨整块面板，是全场第二重要的信息。 */
+   旧版有背景色块 + 标签 pill + 边框，三层装饰。
+   新版纯文字 + 间距 —— 数字本身够醒目，不需要框。 */
 .matchup {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 14px;
   padding: 7px 12px;
   border-bottom: 1px solid var(--line-soft);
-  background: rgba(255, 255, 255, 0.016);
-  text-shadow: var(--halo);
   font-size: 10.5px;
-  color: var(--ink-2);
+  color: var(--ink-3);
+  text-shadow: var(--halo);
 }
 .mu-side { display: inline-flex; align-items: baseline; gap: 5px; }
 .mu-side em {
@@ -744,40 +796,30 @@ input[type="range"]::-webkit-slider-thumb {
   letter-spacing: .06em;
 }
 
+/* 旧版是带边框和底色的 pill。新版只是右对齐的弱文字。 */
 .mu-tag {
   font-size: 9.5px;
-  color: var(--ink-2);
-  border: 1px solid var(--line);
-  border-radius: 4px;
-  padding: 1px 6px;
+  color: var(--ink-3);
   white-space: nowrap;
 }
-.mu-tag.good {
-  color: var(--accent);
-  border-color: var(--accent-dim);
-  background: var(--accent-dim);
-}
-.mu-tag.bad {
-  color: var(--kill);
-  border-color: rgba(255, 122, 82, .24);
-  background: rgba(255, 122, 82, .13);
-}
+.mu-tag.good { color: var(--accent); }
+.mu-tag.bad  { color: var(--kill); }
 
-/* ── 技能行：整块面板的主角 ─────────────────────────── */
-/* 两行式：名字/伤害一行，伤害条吃满全宽。
-   原来是 5 列单行，bar 只剩 86px，视觉权重完全不够。 */
-.skills { padding: 4px 12px 6px; }
+/* ── 技能行 ─────────────────────────────────────────── */
+/* 旧版是两行（名字/伤害 + 全宽伤害条 + 呼吸动画 + 斩杀箭头）。
+   新版单行：序号 / 名字 / 伤害 / 百分比。
+   伤害大小已经由数字本身表达，不需要再画一条 bar —— 那是重复编码。 */
+.skills { padding: 2px 12px 4px; }
 
 .skill {
   position: relative;
   display: grid;
-  grid-template-columns: 12px minmax(0, 1fr) auto auto;
+  grid-template-columns: 13px minmax(0, 1fr) auto auto;
   align-items: center;
-  gap: 6px;
-  padding: 6px 0 5px 7px;
-  border-bottom: 1px solid var(--line-soft);
+  gap: 8px;
+  padding: 6px 0 6px 7px;
 }
-.skill:last-child { border-bottom: 0; }
+.skill + .skill { border-top: 1px solid var(--line-soft); }
 
 .sk-idx {
   font-family: var(--font-num);
@@ -788,12 +830,11 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .sk-name {
-  font-size: 13px;
-  color: var(--ink-1);
+  font-size: 12.5px;
+  color: var(--ink-2);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  letter-spacing: .01em;
   text-shadow: var(--halo);
   display: flex;
   align-items: baseline;
@@ -803,10 +844,9 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* 名字未知时用"卡 N"占位，视觉上弱一档，不假装是技能名 */
 .sk-name.unnamed {
-  color: var(--ink-2);
+  color: var(--ink-3);
   font-family: var(--font-num);
-  font-size: 12px;
-  letter-spacing: .02em;
+  font-size: 11.5px;
 }
 
 /* 技能名后面的属性/消耗小标 */
@@ -820,22 +860,22 @@ input[type="range"]::-webkit-slider-thumb {
 .sk-dmg {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  font-size: 16px;
+  font-size: 14px;
   font-weight: 500;
   text-align: right;
   color: var(--ink-0);
   text-shadow: var(--halo-strong);
   letter-spacing: -.01em;
 }
-.skill.na .sk-dmg { color: var(--ink-3); font-size: 13px; font-weight: 400; }
+.skill.na .sk-dmg { color: var(--ink-3); font-size: 12px; font-weight: 400; }
 
 .sk-pct {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;
-  font-size: 11px;
+  font-size: 10px;
   text-align: right;
-  color: var(--ink-2);
-  min-width: 34px;
+  color: var(--ink-3);
+  min-width: 30px;
   text-shadow: var(--halo);
 }
 .skill.kill .sk-pct { color: var(--kill); font-weight: 500; }
@@ -845,78 +885,44 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--ink-3);
 }
 
-/* 全宽伤害条：占满第二行 */
-.sk-bar {
-  grid-column: 1 / -1;
-  position: relative;
-  height: 6px;
-  margin-top: 4px;
-  border-radius: 1px;
-  background: var(--well);
-  overflow: hidden;
-}
-.sk-bar i {
-  position: absolute;
-  inset: 0;
-  transform-origin: left center;
-  transform: scaleX(var(--w, 0));
-  border-radius: 1px;
-  background: var(--accent);
-  opacity: .52;
-  transition: transform .34s cubic-bezier(.2, .8, .2, 1),
-              opacity .2s, background-color .2s;
-}
-.skill.mid  .sk-bar i { opacity: .70; }
-.skill.high .sk-bar i { opacity: .90; }
-.skill.kill .sk-bar i { opacity: 1; background: var(--kill); }
-.skill.na   .sk-bar i { transform: scaleX(0); }
-
-/* 最佳技能：左侧 2px 竖线 + 呼吸。整块面板唯一允许的动效 */
+/* 最佳技能：唯一允许的强调 —— 左侧一条珊瑚色竖线。
+   旧版是 2px 竖线 + 呼吸动画 + 伤害条变亮，三重强调太重。 */
 .skill.hot::before {
   content: "";
   position: absolute;
   left: 0;
   top: 50%;
   width: 2px;
-  height: 20px;
+  height: 15px;
   transform: translateY(-50%);
-  border-radius: 1px;
+  border-radius: 0 1px 1px 0;
   background: var(--accent);
 }
-.skill.hot .sk-bar i { animation: breathe 2.6s ease-in-out infinite; }
-@keyframes breathe {
-  0%, 100% { opacity: .88; }
-  50%      { opacity: 1; }
-}
+.skill.hot .sk-pct { color: var(--accent); }
 
-/* 斩杀标记 */
-.skill.kill .sk-dmg::before {
-  content: "▸";
-  font-size: 10px;
-  margin-right: 3px;
-  color: var(--kill);
-}
+/* 点不亮（能量不够）：整行压暗 */
+.skill.na .sk-name,
+.skill.na .sk-idx { opacity: .6; }
 
 /* ── 结论 ───────────────────────────────────────────── */
 .verdict {
   display: flex;
   align-items: center;
   gap: 7px;
-  height: 33px;
+  height: 30px;
   padding: 0 12px;
   border-top: 1px solid var(--line-soft);
   font-size: 10.5px;
-  color: var(--ink-2);
-  background: rgba(255, 255, 255, 0.015);
+  color: var(--ink-3);
   text-shadow: var(--halo);
 }
 .verdict b {
   font-family: var(--font-num);
   font-weight: 500;
   font-variant-numeric: tabular-nums;
-  color: var(--ink-0);
+  color: var(--ink-1);
 }
-.verdict .sep { color: var(--ink-3); }
+.verdict .sep { color: var(--ink-3); opacity: .55; }
 .verdict .good { color: var(--accent); }
 .verdict .bad  { color: var(--kill); }
 
@@ -970,6 +976,9 @@ input[type="range"]::-webkit-slider-thumb {
   border-top: 1px solid var(--line-soft);
   min-height: 0;
   flex-wrap: wrap;
+  /* ★ 不能让它撑破面板：6 个替补 + 计数在 340px 宽下会溢出。
+     wrap 只是换行，但如果子项有 min-width 或 nowrap 就会顶出去。 */
+  overflow: hidden;
 }
 .bench:empty { display: none; }
 
@@ -979,12 +988,18 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 4px;
   padding: 2px 6px 2px 3px;
   border-radius: 5px;
-  background: rgba(255, 255, 255, 0.045);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  /* 浅色主题：用深色淡底（旧版是 rgba(255,255,255,.045)，
+     在白底上几乎看不见） */
+  background: rgba(31, 30, 29, 0.05);
+  border: 1px solid var(--line);
   font-size: 9.5px;
   color: var(--ink-2);
   text-shadow: var(--halo);
   white-space: nowrap;
+  /* 名字太长时省略，而不是把整行撑宽 */
+  max-width: 86px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .bench-item .bi-av {
   width: 15px; height: 15px;
@@ -995,8 +1010,8 @@ input[type="range"]::-webkit-slider-thumb {
   place-items: center;
   font-size: 8px;
   font-weight: 600;
-  color: rgba(255, 255, 255, 0.85);
-  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink-2);
+  background: var(--soft-2);
 }
 .bench-item .bi-av img { width: 100%; height: 100%; object-fit: cover; }
 .bench-item.dead {
@@ -1004,10 +1019,12 @@ input[type="range"]::-webkit-slider-thumb {
   text-decoration: line-through;
 }
 .bench-count {
-  margin-left: auto;
+  /* 旧版是 margin-left:auto 推到最右 —— 在窄面板上会和最后一项挤在一起
+     然后溢出。改成跟着流走。 */
   font-family: var(--font-num);
   font-size: 9.5px;
   color: var(--ink-3);
+  white-space: nowrap;
 }
 
 /* ── 空状态 ─────────────────────────────────────────── */

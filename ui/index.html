@@ -43,9 +43,16 @@
         <div class="drawer-inner">
           <div class="drawer-row">
             <span class="dlabel">透明度</span>
-            <input type="range" id="alpha" min="20" max="100" value="84" step="1"
+            <input type="range" id="alpha" min="40" max="100" value="92" step="1"
                    aria-label="面板透明度">
-            <span class="dval" id="alphaVal">84%</span>
+            <span class="dval" id="alphaVal">92%</span>
+          </div>
+          <div class="drawer-row">
+            <span class="dlabel">主题</span>
+            <div class="seg" id="themeSeg">
+              <button data-theme="light" class="active">浅色</button>
+              <button data-theme="dark">深色</button>
+            </div>
           </div>
           <div class="drawer-row drawer-btns">
             <button class="tbtn" id="btnPass" aria-pressed="false">

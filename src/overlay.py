@@ -74,7 +74,7 @@ DETACHED = 0x00000008
 #     width=340, DPI=192 -> 窗口 680 物理px, 但 innerWidth 只有 327 CSS px
 # 结果面板（设计宽 320 CSS px）几乎撑满，边距全没了。
 # 正确做法：传物理像素 = 逻辑 × 缩放，这样 innerWidth 才等于设计尺寸。
-DEFAULT_W = 340
+DEFAULT_W = 360
 DEFAULT_H = 620
 
 
@@ -1024,17 +1024,19 @@ def _run(args):
         focus=False,         # 不抢焦点 —— 否则会打断游戏
         easy_drag=False,     # 拖拽自己实现（只有标题栏可拖）
         js_api=api,          # 前端可调 window.pywebview.api.*
-        # ★ background_color 默认是 '#FFFFFF'
+        # ★ background_color 必须是 6 位 hex triplet
         #
-        # 踩过的坑（2026-11-21，用户报"调透明度其实没有透明"）：
-        # transparent=True 只让**窗口**透明，但 WebView2 的**页面底色**
-        # 仍然是白色。于是面板 rgba(9,11,15,0.62) 压在白底上：
-        #     0.62 × 9 + 0.38 × 255 ≈ 105   -> 均匀中灰
-        # 用户看到的就是"一整块灰，拉滑块也不变"。
+        # 踩过的坑（2026-11-21）：
+        #   1. 默认值是 '#FFFFFF' —— WebView2 在页面下面画白底。
+        #      面板 rgba(9,11,15,0.62) 压在白底上变成均匀中灰
+        #      （0.62×9 + 0.38×255 ≈ 105），用户看到的就是"一整块灰"。
+        #   2. 想写 8 位带 alpha 的 '#00000000' -> pywebview 直接抛
+        #      ValueError: not a valid hex triplet。
         #
-        # 实测：body/html 的 computed background 都是 rgba(0,0,0,0)，
-        # 说明 CSS 没问题 —— 是 WebView2 自己在下面画了白底。
-        background_color="#00000000",
+        # 所以只能用 6 位。用纯黑而不是白色：黑色作为"透明层"的底色，
+        # 即使有极少量不透明像素残留也不会显眼（白色会变成一圈白边）。
+        # 真正的透明靠 transparent=True + CSS 的 rgba 背景。
+        background_color="#000000",
     )
 
     # 注册给拖动逻辑用（见 set_drag_pos）

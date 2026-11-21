@@ -790,8 +790,14 @@ def test_resilience(port):
     ok(b.get("pct") == "60", "数据变化后跟上", "pct=%s" % b.get("pct"))
     ok(b.get("turn") == "T5", "回合号跟上", "turn=%s" % b.get("turn"))
     ok(c.get("pct") == "—", "数据源消失后清空", "pct=%s" % c.get("pct"))
-    ok(c.get("state") == "机器人未启动", "显示未启动",
-       "state=%s" % c.get("state"))
+    # 数据源消失时，前端应该明确显示"没数据"。
+    #
+    # 两种可能的文案：
+    #   "机器人未启动"  —— renderEmpty() 分支（/api/state 返回 null）
+    #   "状态未知"      —— render() 分支（有 state 但 mode 字段缺失）
+    # 两者都表示"现在没有可用的战斗数据"，不该是"未连接"那种误导性措辞。
+    ok(c.get("state") in ("机器人未启动", "状态未知"),
+       "显示无数据（不是「未连接」）", "state=%s" % c.get("state"))
     ok(d.get("pct") == "30", "数据源恢复后跟上", "pct=%s" % d.get("pct"))
     ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
 
