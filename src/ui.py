@@ -108,7 +108,13 @@ def main():
     ap.add_argument("--serve-only", action="store_true", help="只起服务，不开窗口")
     args = ap.parse_args()
 
-    port = pick_port(args.port)
+    # 先看**指定端口**上是不是已经有我们的服务在跑。
+    #
+    # 踩过的坑：原来直接 pick_port(args.port)，而它只判断"端口是否空闲"。
+    # 桌面快捷方式连点两次时，第一次已经起了 8770，第二次发现 8770 被占
+    # 就去开 8771 —— 于是同时跑着两个 ui_server（一个根本没人用）。
+    # 正确做法是先探一次 /api/health，是自己的服务就复用。
+    port = args.port if alive(args.port) else pick_port(args.port)
     print("RocoAgent 前端")
     print()
 
