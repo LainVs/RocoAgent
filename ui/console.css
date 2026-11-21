@@ -946,6 +946,23 @@ button, input, select {
   color: var(--warn);
 }
 
+/* ── 头像标注分页 ───────────────────────────────────────── */
+.label-pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.label-pager[hidden] { display: none; }
+.pager-info {
+  font-size: 11px;
+  color: var(--ink-2);
+  font-family: var(--font-num);
+}
+
 /* ── 机器人这一手 ───────────────────────────────────────── */
 .dec-main {
   display: flex;

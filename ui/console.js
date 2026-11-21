@@ -1107,19 +1107,31 @@ async function refreshTurns() {
    ================================================================ */
 let labelSide = 'foe';
 let labelBusy = false;
+let labelOffset = 0;
 
-async function refreshLabel() {
+// 一页 60 张。我方待标注有 561 张（实测），只显示前 60 张等于永远标不完 ——
+// 又没有翻页入口。这里加分页，并把 offset 记在模块变量里。
+const LABEL_PAGE = 60;
+
+async function refreshLabel(keepOffset) {
+  if (!keepOffset) labelOffset = 0;
   let d;
   try {
-    d = await get('/api/portraits?side=' + labelSide + '&limit=60');
+    d = await get('/api/portraits?side=' + labelSide + '&limit=' + LABEL_PAGE
+      + '&offset=' + labelOffset);
   } catch (e) {
     return;
   }
   const items = d.items || [];
   const groups = d.groups || {};
+  const total = d.total || 0;
+  const from = total ? labelOffset + 1 : 0;
+  const to = labelOffset + items.length;
   $('labelSub').textContent =
-    `${items.length} / ${d.total || 0} 张待标注` +
+    `${from}–${to} / ${total} 张待标注` +
     (d.dup_count ? `（${d.dup_count} 组同款）` : '');
+
+  renderLabelPager(total, items.length);
 
   const grid = $('labelGrid');
   if (!items.length) {
@@ -1259,6 +1271,35 @@ async function refreshLabel() {
   if (first) first.focus();
 }
 
+// 分页器：只在总页数 > 1 时出现。
+// 我方待标注实测 561 张，不分页就是"永远标不完"。
+function renderLabelPager(total, shown) {
+  const host = $('labelPager');
+  if (!host) return;
+  const pages = Math.max(1, Math.ceil(total / LABEL_PAGE));
+  if (pages <= 1) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const cur = Math.floor(labelOffset / LABEL_PAGE) + 1;
+  host.innerHTML = `
+    <button class="btn" id="labelPrev" ${cur <= 1 ? 'disabled' : ''}>上一页</button>
+    <span class="pager-info">第 ${cur} / ${pages} 页</span>
+    <button class="btn" id="labelNext" ${cur >= pages ? 'disabled' : ''}>下一页</button>`;
+  const prev = $('labelPrev');
+  const next = $('labelNext');
+  if (prev) prev.addEventListener('click', () => {
+    labelOffset = Math.max(0, labelOffset - LABEL_PAGE);
+    refreshLabel(true);
+  });
+  if (next) next.addEventListener('click', () => {
+    if (shown < LABEL_PAGE) return;      // 最后一页没有下一页
+    labelOffset += LABEL_PAGE;
+    refreshLabel(true);
+  });
+}
+
 async function refreshLabelCount() {
   try {
     const d = await get('/api/portraits?side=' + labelSide + '&limit=1');
@@ -1273,6 +1314,7 @@ function bindLabelSide() {
         .forEach((x) => x.classList.remove('active'));
       b.classList.add('active');
       labelSide = b.dataset.side;
+      labelOffset = 0;
       refreshLabel();
     });
   });
