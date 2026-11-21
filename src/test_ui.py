@@ -434,6 +434,37 @@ def test_label(port):
     except Exception as e:
         ok(False, "OCR 结果文件", str(e)[:60])
 
+    # 垃圾检测：场景截图判 False，名字条判 True
+    try:
+        import tempfile
+        import cv2
+        import numpy as np
+        import ui_server as _U
+
+        tmpd = tempfile.mkdtemp()
+        # 场景渐变（无文字）-> 应判 False
+        junk = np.zeros((55, 210, 3), dtype=np.uint8)
+        for y in range(55):
+            junk[y, :] = (120 + y, 130 + y, 140 + y)
+        jp = os.path.join(tmpd, "junk.png")
+        cv2.imwrite(jp, junk)
+        ok(_U._looks_like_nameplate(jp) is False, "场景截图被判为垃圾")
+
+        # 白字黑底 -> 应判 True
+        keep = np.zeros((55, 210, 3), dtype=np.uint8)
+        keep[:, :] = (20, 20, 25)
+        cv2.putText(keep, "AB", (20, 42), cv2.FONT_HERSHEY_SIMPLEX, 1.2,
+                    (250, 250, 250), 3)
+        kp = os.path.join(tmpd, "keep.png")
+        cv2.imwrite(kp, keep)
+        ok(_U._looks_like_nameplate(kp) is True, "名字条不被判为垃圾")
+
+        # 清理临时目录
+        import shutil
+        shutil.rmtree(tmpd, ignore_errors=True)
+    except Exception as e:
+        ok(False, "垃圾检测", str(e)[:60])
+
 
 # ============================================================ 5. 窗口状态
 def test_window_state():
