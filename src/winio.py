@@ -21,6 +21,41 @@ from config import (  # noqa: F401
 # ------------------------------------------------------------------ window
 _UD = ctypes.windll.user32
 
+# ------------------------------------------------------------------ DPI
+#
+# 必须在**任何窗口/坐标操作之前**声明 DPI 感知（2026-11-21 实盘定位）
+# ----------------------------------------------------------------------
+# 本机是 200% 缩放（`GetScaleFactorForDevice = 200`，游戏窗口 DPI=192）。
+#
+# 进程**未声明 DPI 感知**时，Win32 返回的是**逻辑坐标**：
+#     GetWindowRect  -> (539,  8, 1037x804)
+# 而 `mss` 抓屏用的是**物理像素**：
+#     SetProcessDPIAware 之后 GetWindowRect -> (1077, 15, 2074x1607)
+#
+# 两者差 2 倍 —— 抓到的区域完全不对，名字/属性图标/血条全都读不到，
+# 表现为"伤害计算器一直显示未知"。
+#
+# `robot.py` 早就有 `SetProcessDpiAwareness(2)`，所以机器人能正常打；
+# 而 `standalone` / `ui_server` 没有，所以计算器一直瞎。
+#
+# 放在 winio 模块级，任何 import 它的进程（ui_server / standalone / 脚本）
+# 都自动带上，不用各自记得加。重复调用无害（第一次生效）。
+def _declare_dpi_aware():
+    try:
+        import ctypes
+        # 2 = PROCESS_PER_MONITOR_DPI_AWARE
+        ctypes.windll.shcore.SetProcessDpiAwareness(2)
+    except Exception:
+        try:
+            import ctypes
+            ctypes.windll.user32.SetProcessDPIAware()
+        except Exception:
+            pass
+
+
+_declare_dpi_aware()
+
+
 # 窗口几何缓存（rect / hwnd / client_size / client_off）。
 #
 # 为什么需要：`standalone` 在 HTTP 服务里按线程各建一个 Screen，
