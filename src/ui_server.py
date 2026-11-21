@@ -1583,20 +1583,30 @@ def portrait_purge_junk(side, limit=400):
 
 
 # ============================================================ 场次对齐
-def matches_summary(limit=40):
+def matches_summary(limit=40, offset=0):
     """每场一行：rounds / turns / results 三份日志按 mid 拼起来。
 
     以前三份日志没有共同标识，3168 条回合里只有 45.6% 能唯一归属到
     某一场（时间戳只有时分秒，没有日期）。老记录没有 mid，这里**不猜**
     归属，只标 legacy。
+
+    `offset` 是 2026-11-21 补的：实测 517 场记录，前端只取最近 40 场且
+    没有翻页 —— "对局记录"实际只能回看最近一小段，和头像标注是同一类
+    问题（能看见的永远是最前面那页）。
     """
     try:
         import matches as M
-        items = M.summarize(int(limit))
-        return {"items": items, "total": len(M.summarize())}
+        # 只跑一遍 summarize：原来 summarize(limit) + summarize() 跑两次，
+        # 每次都要把三份日志全量过一遍。
+        items = M.summarize()
+        total = len(items)
+        off = max(0, int(offset or 0))
+        lim = int(limit or 0)
+        page = items[off:off + lim] if lim else items[off:]
+        return {"items": page, "total": total, "offset": off}
     except Exception as e:
-        return {"items": [], "total": 0, "error": "%s: %s"
-                % (type(e).__name__, e)}
+        return {"items": [], "total": 0, "offset": 0,
+                "error": "%s: %s" % (type(e).__name__, e)}
 
 
 def match_detail(mid):
@@ -1696,7 +1706,8 @@ class Handler(SimpleHTTPRequestHandler):
             return self._json({"items": rounds(int(q.get("limit") or 50))})
 
         if path == "/api/matches":
-            return self._json(matches_summary(int(q.get("limit") or 40)))
+            return self._json(matches_summary(int(q.get("limit") or 40),
+                                             int(q.get("offset") or 0)))
 
         if path == "/api/match":
             return self._json(match_detail(q.get("mid") or ""))

@@ -93,7 +93,7 @@ def test_api(port):
         ("/api/bot", ("running", "phase", "activity", "board")),
         ("/api/stats", ("wins", "losses", "decided",
                         "season", "badge_stuck", "primary")),
-        ("/api/matches?limit=3", ("items", "total")),
+        ("/api/matches?limit=3", ("items", "total", "offset")),
         ("/api/team", ("slots",)),
         ("/api/turns?limit=2", ("items",)),
         ("/api/decision", ()),
@@ -109,6 +109,20 @@ def test_api(port):
             ok(not missing, path, "缺字段 %s" % missing if missing else "")
         except Exception as e:
             ok(False, path, str(e)[:60])
+
+    # /api/matches 分页：offset 必须真的切片，不能忽略
+    try:
+        a = get(port, "/api/matches?limit=3&offset=0")
+        b = get(port, "/api/matches?limit=3&offset=3")
+        ok(a.get("total") == b.get("total"), "分页 total 一致",
+           "%s vs %s" % (a.get("total"), b.get("total")))
+        ia = [x.get("mid") for x in (a.get("items") or [])]
+        ib = [x.get("mid") for x in (b.get("items") or [])]
+        ok(not (set(ia) & set(ib)), "offset=3 与 offset=0 不重叠",
+           "%s / %s" % (ia[:2], ib[:2]))
+        ok(b.get("offset") == 3, "offset 回显", str(b.get("offset")))
+    except Exception as e:
+        ok(False, "/api/matches 分页", str(e)[:60])
 
     # /api/team 必须把 moves 展开成技能（名字/属性/威力/耗能）。
     # 配置过期是最隐蔽的 bug（docs/AGENTS.md），UI 不露出来就没法人工核对。
@@ -715,6 +729,11 @@ def worker():
               system: { detectors: { bar: false, skillbar: false,
                                      countdown: false } },
             })),
+            // 服务端报错（遮挡）-> 一定是空帧，且文案要用它的原因
+            errCovered: isEmptyFrame({
+              error: '游戏窗口被其他窗口遮挡。请点一下游戏窗口把它切到前台',
+              covered: true, standalone: true,
+            }),
           };
 
           // 空帧渲染
@@ -751,6 +770,17 @@ def worker():
             ? getComputedStyle(selfSec).display !== 'none' : null;
           judge.nameAfter = document.getElementById('meName').textContent;
           judge.pctAfter = document.getElementById('mePct').textContent;
+
+          // 最后测遮挡：服务端报错 -> 文案要说清楚，不能满屏破折号
+          render({
+            error: '游戏窗口被其他窗口遮挡。请点一下游戏窗口把它切到前台',
+            covered: true, standalone: true,
+          });
+          judge.coveredFlag = panel.dataset.empty || '';
+          judge.coveredBox = (document.getElementById('noDataBox') || {})
+            .textContent || '';
+          judge.coveredState =
+            document.getElementById('sysState').textContent;
 
           // ★ skills 里是 null 时不能炸（2026-11-21 实机）
           //   服务端"还没识别到技能栏"会返回 [null,null,null,null]，
@@ -957,6 +987,8 @@ def test_resilience(port):
     ok(e.get("foeHp") is False, "对面有血条 -> 不算空帧")
     ok(e.get("hpNoise") is True,
        "detectors.bar=false 时 hp_pct 是噪声 -> 算空帧")
+    ok(e.get("errCovered") is True,
+       "服务端 error -> 算空帧（不然满屏未知）")
 
     ok(e.get("emptyFlag") == "1", "空帧时 panel 打上 data-empty",
        str(e.get("emptyFlag")))
@@ -965,6 +997,13 @@ def test_resilience(port):
        "空态文案说清原因", box[:40])
     ok(e.get("selfHidden") is True, "我方区块被折叠",
        str(e.get("selfHidden")))
+
+    ok(e.get("coveredFlag") == "1", "遮挡时 panel 打上 data-empty",
+       str(e.get("coveredFlag")))
+    cbox = e.get("coveredBox") or ""
+    ok("遮挡" in cbox, "遮挡文案说清原因", cbox[:40])
+    ok(e.get("coveredState") == "读取失败", "状态栏显示「读取失败」",
+       str(e.get("coveredState")))
     ok(e.get("stateText") not in ("状态未知",),
        "状态栏不是「状态未知」", str(e.get("stateText")))
 

@@ -627,22 +627,30 @@ async function refreshStats() {
       stuck ? '疑似假平局' : '未判定胜负');
 }
 
-async function refreshMatches() {
+let matchOffset = 0;
+const MATCH_PAGE = 40;
+
+async function refreshMatches(keepOffset) {
+  if (!keepOffset) matchOffset = 0;
   let d;
   try {
-    d = await get('/api/matches?limit=40');
+    d = await get('/api/matches?limit=' + MATCH_PAGE + '&offset=' + matchOffset);
   } catch (e) {
     return;
   }
   const rows = d.items || [];
+  const total = d.total || 0;
   const tb = $('matchesTbl').querySelector('tbody');
   const sub = $('matchesSub');
   if (sub) {
     const linked = rows.filter((r) => !r.legacy).length;
+    const from = total ? matchOffset + 1 : 0;
+    const to = matchOffset + rows.length;
     sub.textContent = rows.length
-      ? `${rows.length} 场，其中 ${linked} 场可按 id 对齐（其余是没有场次 id 的老记录）`
+      ? `${from}–${to} / ${total} 场，其中 ${linked} 场可按 id 对齐`
       : '还没有对局记录';
   }
+  renderMatchPager(total, rows.length);
   if (!rows.length) {
     tb.innerHTML = `<tr><td colspan="8" class="muted">还没有对局记录</td></tr>`;
     return;
@@ -675,6 +683,34 @@ async function refreshMatches() {
 
   tb.querySelectorAll('tr[data-mid]').forEach((tr) => {
     tr.addEventListener('click', () => openMatch(tr.dataset.mid));
+  });
+}
+
+// 对局记录分页。517 场记录只给最近 40 场且没有翻页 = 只能回看一小段。
+function renderMatchPager(total, shown) {
+  const host = $('matchPager');
+  if (!host) return;
+  const pages = Math.max(1, Math.ceil(total / MATCH_PAGE));
+  if (pages <= 1) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  const cur = Math.floor(matchOffset / MATCH_PAGE) + 1;
+  host.innerHTML = `
+    <button class="btn" id="matchPrev" ${cur <= 1 ? 'disabled' : ''}>上一页</button>
+    <span class="pager-info">第 ${cur} / ${pages} 页</span>
+    <button class="btn" id="matchNext" ${cur >= pages ? 'disabled' : ''}>下一页</button>`;
+  const prev = $('matchPrev');
+  const next = $('matchNext');
+  if (prev) prev.addEventListener('click', () => {
+    matchOffset = Math.max(0, matchOffset - MATCH_PAGE);
+    refreshMatches(true);
+  });
+  if (next) next.addEventListener('click', () => {
+    if (shown < MATCH_PAGE) return;
+    matchOffset += MATCH_PAGE;
+    refreshMatches(true);
   });
 }
 

@@ -946,7 +946,8 @@ button, input, select {
   color: var(--warn);
 }
 
-/* ── 头像标注分页 ───────────────────────────────────────── */
+/* ── 分页器（头像标注 / 对局记录共用）──────────────────── */
+.pager,
 .label-pager {
   display: flex;
   align-items: center;
@@ -956,6 +957,7 @@ button, input, select {
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
+.pager[hidden],
 .label-pager[hidden] { display: none; }
 .pager-info {
   font-size: 11px;
