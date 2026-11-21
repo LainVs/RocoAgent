@@ -222,6 +222,88 @@ def set_topmost(hwnd):
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
 
 
+def enable_blur_behind(hwnd):
+    """给窗口加 DWM 模糊背景（毛玻璃）。
+
+    ★ 为什么走这条路（2026-11-21 彻查后的结论）
+    -----------------------------------------
+    WebView2 的透明链路在 pywebview 6.x + 本机环境下**不可靠**，
+    实测三种组合全失败：
+
+        DefaultBackgroundColor = Transparent
+            -> 整个网页画布被挖空，窗口只剩桌面，内容全消失
+        DefaultBackgroundColor = 不透明黑
+            -> 内容同样不显示
+        不设
+            -> 透出 Form 的浅灰底 #F0F0F0，看起来就是"纯白不透明"
+
+    DWM blur-behind 是 Windows 原生能力，不依赖 WebView2：
+      · 窗口背后区域被模糊后作为背景
+      · 窗口内容（HTML）正常绘制，**文字完全不透明**
+      · 视觉上就是"毛玻璃"，比清晰透出更像成品
+
+    实现要点：
+      1. DWM_BLURBEHIND 结构体，dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION
+      2. hRgnBlur 传 NULL（全窗口模糊），而不是 CreateRectRgn(-1,-1,0,0)
+         —— 后者是"只模糊边缘"的老写法，Win10 之后语义变了
+      3. 必须配合 WS_EX_LAYERED（pywebview 已加）
+      4. Win11 可以进一步用 DWMWA_SYSTEMBACKDROP_TYPE = 3 (Acrylic)，
+         但兼容性不如 blur-behind，先只用后者
+
+    返回是否成功。
+    """
+    try:
+        dwm = ctypes.windll.dwmapi
+        wt = ctypes.wintypes
+
+        class DWM_BLURBEHIND(ctypes.Structure):
+            _fields_ = [
+                ("dwFlags", wt.DWORD),
+                ("fEnable", wt.BOOL),
+                ("hRgnBlur", wt.HANDLE),
+                ("fTransitionOnMaximized", wt.BOOL),
+            ]
+
+        DWM_BB_ENABLE = 0x1
+        DWM_BB_BLURREGION = 0x2
+
+        bb = DWM_BLURBEHIND()
+        bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION
+        bb.fEnable = True
+        bb.hRgnBlur = None          # NULL = 整个窗口
+        bb.fTransitionOnMaximized = False
+
+        hr = dwm.DwmEnableBlurBehindWindow(hwnd, ctypes.byref(bb))
+        ok = (hr == 0)
+        _log("enable_blur_behind: hr=0x%08x %s" % (hr, "OK" if ok else "FAIL"))
+        return ok
+    except Exception as e:
+        _log("enable_blur_behind 失败: %s: %s" % (type(e).__name__, e))
+        return False
+
+
+def set_acrylic(hwnd):
+    """Win11 亚克力（acrylic）。失败返回 False，不抛异常。
+
+    DWMWA_SYSTEMBACKDROP_TYPE = 38
+    取值：0=Auto 1=None 2=Mica 3=Acrylic 4=Tabbed
+
+    Win10 不支持这个属性，会返回非 0，调用方忽略即可。
+    """
+    try:
+        dwm = ctypes.windll.dwmapi
+        DWMWA_SYSTEMBACKDROP_TYPE = 38
+        val = ctypes.c_int(3)      # Acrylic
+        hr = dwm.DwmSetWindowAttribute(hwnd, DWMWA_SYSTEMBACKDROP_TYPE,
+                                       ctypes.byref(val), 4)
+        ok = (hr == 0)
+        _log("set_acrylic: hr=0x%08x %s" % (hr, "OK" if ok else "FAIL"))
+        return ok
+    except Exception as e:
+        _log("set_acrylic 失败: %s: %s" % (type(e).__name__, e))
+        return False
+
+
 def make_form_transparent(win):
     """把 WinForms Form 和 WebView2 控件的底色设成透明，让 CSS 的 rgba 生效。
 
@@ -269,7 +351,20 @@ def make_form_transparent(win):
             pass
         form.BackColor = Color.Transparent
 
-        # 2. WebView2：BackColor 透明 + DefaultBackgroundColor 不透明
+        # 2. 只设 BackColor（不碰 DefaultBackgroundColor）
+        #
+        # ★ 为什么不用 DefaultBackgroundColor（2026-11-21 实测）
+        # -----------------------------------------------------
+        # 它是 CoreWebView2Controller 的属性，**只能在 UI 线程访问**。
+        # 从后台线程调用会：
+        #   1. 抛 InvalidOperationException（UI 线程检查）
+        #   2. 或者在 pythonnet 的 COM 编组里**死锁**
+        #      （实测日志停在调用之后，page_ready 永不返回）
+        #
+        # 而设成 Transparent 会把整个网页画布挖空（内容全消失），
+        # 设成不透明又覆盖页面 —— 两头都不对。
+        #
+        # 所以完全放弃这条路，改用 DWM blur-behind（见 enable_blur_behind）。
         touched = False
         try:
             n = form.Controls.Count
@@ -277,21 +372,13 @@ def make_form_transparent(win):
                 c = form.Controls[i]
                 try:
                     c.BackColor = Color.Transparent
+                    touched = True
                 except Exception:
                     pass
-                if "WebView" in c.GetType().Name:
-                    try:
-                        c.DefaultBackgroundColor = Color.FromArgb(255, 0, 0, 0)
-                        touched = True
-                    except Exception as e:
-                        # UI 线程限制 —— 调用方应该从 loaded 事件里调
-                        _log("make_form_transparent: DefaultBackgroundColor "
-                             "设置失败（可能不在 UI 线程）: %s"
-                             % type(e).__name__)
         except Exception:
             pass
 
-        _log("make_form_transparent: Form 透明=%s  WebView2 不透明底=%s"
+        _log("make_form_transparent: Form 透明=%s  WebView2.BackColor=%s"
              % (True, touched))
         return touched
     except Exception as e:
@@ -979,7 +1066,10 @@ def _run(args):
             if not hwnd:
                 return False
             try:
-                a = max(40, min(255, int(alpha)))
+                # 下限 150（约 59%）：再低文字就吃力了。
+                # 实测 alpha=128 时面板亮度 126，正文开始难读；
+                # 150 是"能透出背景 + 文字仍清晰"的平衡点。
+                a = max(150, min(255, int(alpha)))
                 add_layered(hwnd)
                 ok = UD.SetLayeredWindowAttributes(hwnd, 0, a, LWA_ALPHA)
                 state["opacity"] = a
@@ -1283,40 +1373,22 @@ def _run(args):
         # 第一次重绘已经用浅灰底画过一遍了（实测会残留白底）。
         make_form_transparent(win)
 
-        # ★ Form/WebView2 的透明必须在**UI 线程**设
+        # ★ Form/WebView2 的 BackColor 不在这里设
         #
-        # DefaultBackgroundColor 只能在 UI 线程访问，后台线程会抛
-        # "CoreWebView2Controller members can only be accessed from the UI thread"。
-        # pywebview 的 loaded 事件就在 UI 线程触发，所以挂在那里。
-        def _on_loaded():
-            try:
-                make_form_transparent(win)
-                # ★ 设完 DefaultBackgroundColor 后，WebView2 会重建窗口样式，
-                # 把 WS_EX_LAYERED 冲掉（实测 layered=False）。
-                # 必须重新加上，否则窗口变成完全不透明/全透明。
-                time.sleep(0.3)
-                add_layered(hwnd)
-                _log("loaded 后重新 add_layered 完成")
-            except Exception as e:
-                _log("loaded 事件设透明失败: %s: %s"
-                     % (type(e).__name__, e))
-
-        try:
-            win.events.loaded += _on_loaded
-            _log("已注册 loaded 事件（UI 线程设透明）")
-        except Exception as e:
-            _log("注册 loaded 事件失败: %s" % e)
+        # 实测（2026-11-21）：从后台线程访问 WinForms 控件属性
+        # （哪怕只是 BackColor）在 pythonnet 下可能死锁 ——
+        # 日志停在调用之后，page_ready 永不返回。
+        #
+        # 完全放弃 WebView2 层的透明，改用 DWM blur-behind：
+        # 窗口内容照常绘制（文字不透明），背景由系统模糊后填充。
 
         # 顺序很重要：先等页面画出来，再修透明
-        #
-        # ★ on_ready 里设 WebView2 的 DefaultBackgroundColor
-        # 现在整个 setup() 跑在 UI 线程（webview.start(setup)），
-        # 所以这里可以安全访问 CoreWebView2Controller。
-        fix_transparent(hwnd, page_ready,
-                        on_ready=lambda: make_form_transparent(win))
+        fix_transparent(hwnd, page_ready)
         add_layered(hwnd)
         hide_from_taskbar(hwnd)
         strip_dwm_frame(hwnd)
+        enable_blur_behind(hwnd)
+        set_acrylic(hwnd)
         set_topmost(hwnd)
 
         # ★ 第三次：等页面真正加载完再设一次
@@ -1389,8 +1461,8 @@ def _run(args):
 
         enter_embedded()
 
-        # 调试：--alpha N 直接应用，绕过滑块。
-        # 排查"透明度没效果"时用：python src\overlay.py --alpha 42
+        # 调试：--alpha N 直接应用整窗透明度（150~255），绕过滑块。
+        # 排查"透明度没效果"时用：python src\overlay.py --alpha 200
         if getattr(args, "alpha", 0):
             try:
                 win.evaluate_js(
@@ -1478,20 +1550,22 @@ def _run(args):
 
     threading.Thread(target=hotkeys, daemon=True).start()
 
-    # ★ setup 必须在 **UI 线程** 跑
+    # ★ setup 必须**在后台线程**跑，不能用 webview.start(setup)
     #
-    # 踩过的坑（2026-11-21）：原来写的是
-    #     threading.Thread(target=setup, daemon=True).start()
-    # 于是 setup 里的 make_form_transparent 无法设置 WebView2 的
-    # DefaultBackgroundColor —— 那个属性**只能在 UI 线程访问**：
-    #     InvalidOperationException: CoreWebView2Controller members
-    #     can only be accessed from the UI thread
+    # 踩过的坑（2026-11-21）：
+    #   一开始是 threading.Thread(target=setup)，能跑但设不了
+    #   WebView2 的 DefaultBackgroundColor（只能在 UI 线程访问）。
     #
-    # 表现：Form 层透明设上了，但 WebView2 控件仍是浅灰 #F0F0F0，
-    # CSS 的 rgba(...,0.42) 透出的是这层灰 -> 看起来纯白、拉滑块没用。
+    #   改成 webview.start(setup) 后，setup 占住了 UI 线程，
+    #   里面的 evaluate_js 需要消息循环 -> **死锁**
+    #   （日志停在 make_form_transparent 之后，page_ready 永不返回）。
     #
-    # webview.start(func) 会在 GUI 线程里执行 func，才是正确的线程。
-    webview.start(setup)
+    # 正确做法：setup 留在后台线程，需要 UI 线程的操作（比如
+    # DefaultBackgroundColor）用 win.events.shown / loaded 回调，
+    # 那些由 pywebview 在 UI 线程触发。
+    threading.Thread(target=setup, daemon=True).start()
+
+    webview.start()
 
 
 if __name__ == "__main__":

@@ -38,8 +38,19 @@
 @property --foe-g  { syntax: '<number>'; inherits: false; initial-value: 0.45; }
 
 :root {
-  /* ── 面板底色 alpha —— 滑杆只改这一个值 ──────────── */
-  --alpha: 0.92;
+  /* ── 面板底色 alpha ───────────────────────────────
+     ★ 固定 1.0，不参与透明度调节
+     ----------------------------------------------------------------
+     透明度由**整窗 alpha**（SetLayeredWindowAttributes）负责，
+     面板本身保持完全不透明 —— 这样文字对比度恒定，不会随透明度变糊。
+
+     实测（2026-11-21）：
+         整窗 alpha=200 + 面板不透明  -> 面板 189，背后内容清晰透出
+         整窗 alpha=128 + 面板不透明  -> 面板 126，文字开始吃力
+         整窗 alpha=200 + 面板 0.55   -> 面板 ~110，两层相乘变灰雾（错）
+
+     所以这里写死 1.0，滑杆只改原生窗口 alpha。 */
+  --alpha: 1;
 
   /* ── 主题：浅色（默认） ───────────────────────────
      body.theme-dark 会覆写下面这组变量。 */
@@ -267,12 +278,17 @@ body.embedded .overlay .panel {
   position: relative;
   border-radius: var(--r);
   overflow: hidden;
-  /* 底色由 --bg-rgb + --alpha 组合。浅色主题下和亮游戏背景同向，
-     半透明时仍然亮 —— 这是文字可读性的根本保障（见文件头注释）。 */
+  /* 底色由 --bg-rgb + --alpha 组合。
+     浅色主题下和亮游戏背景同向，半透明时仍然亮 —— 文字可读性的根本保障。
+     
+     ★ 配合 DWM 毛玻璃（overlay.enable_blur_behind）
+     -----------------------------------------------
+     窗口背景由系统模糊后填充，这里只画"面板"这一层。
+     alpha 越低，越能看出背后的模糊；但太低文字会糊。
+     下限由 app.js 的 ALPHA_MIN=40 保证。 */
   background: rgba(var(--bg-rgb), var(--alpha));
   border: 1px solid var(--line);
-  /* 只有一层极轻的投影。旧版是 inset 内高光 + 38px 大投影，
-     在游戏画面上会显得"油"。 */
+  /* 只有一层极轻的投影 */
   box-shadow: 0 8px 24px -14px rgba(0, 0, 0, 0.45);
 
   /* ★ 不要给 background-color 加 transition
