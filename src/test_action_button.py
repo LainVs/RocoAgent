@@ -73,6 +73,11 @@ def test_abs_point_window_coords():
     if cr is None:
         print("  （找不到窗口，跳过）")
         return
+    # 窗口最小化时 rect=(-32000,-32000,314,50)、client_size=(0,0)，
+    # 这种状态下坐标换算没有意义，直接跳过（实测踩过）
+    if cr[0] <= -10000 or cr[2] <= 0 or cr[3] <= 0:
+        print("  （游戏窗口已最小化，跳过 —— 先还原窗口再测）")
+        return
 
     # 已知：窗口坐标 (BASE_OFF_X, BASE_OFF_Y) 对应客户区 (0, 0)
     pt = s.abs_point((s.BASE_OFF_X, s.BASE_OFF_Y, 100, 100), 0, 0)

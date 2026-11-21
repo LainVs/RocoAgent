@@ -348,38 +348,44 @@ class Screen:
         return (cw / float(self.BASE_CLIENT_W), ch / float(self.BASE_CLIENT_H))
 
     def abs_point(self, box, cx, cy):
-        """box 是**客户区坐标**（基准分辨率），cx/cy 是 box 内的基准像素偏移
+        """box 是**窗口坐标**（基准分辨率），cx/cy 是 box 内的基准像素偏移
         -> 屏幕物理坐标。
 
-        grab_s(box) / grab_client(box) 抓到的图已经缩回基准尺寸，
-        所以图内像素 (cx, cy) 对应的**客户区像素** = box 原点 + (cx, cy)*scale。
+        坐标系对照（务必分清，混用必错）
+        --------------------------------
+            config.*_BAND / *_BOX / *_REL   窗口坐标（含边框偏移 BASE_OFF）
+            grab_s(box)                     窗口坐标 -> 内部走 sbox() 减 BASE_OFF
+            grab_client(box)                客户区坐标
+            abs_point(box, cx, cy)          **窗口坐标**（本函数）
+            click_rel(x, y)                 窗口坐标
+            click_abs(x, y)                 屏幕物理坐标
 
-        踩过的坑（2026-11-21 10:25，用户报"你每次都没移动到正确的坐标"）
-        ------------------------------------------------------------------
-        原实现：
+        换算链：
+            crop 内像素 (cx, cy)
+            -> 客户区 (box[0] - BASE_OFF_X + cx, box[1] - BASE_OFF_Y + cy)
+            -> 屏幕   client_rect_on_screen() + 上面的客户区坐标
 
-            sb = self.sbox(box)                  # 这里已经减过 BASE_OFF (13,58)
-            return (cr[0] + sb[0] + cx*sx,       # cr 是 client_rect_on_screen()
-                    cr[1] + sb[1] + cy*sy)       # 已经是客户区的屏幕位置
+        踩过的坑（2026-11-21，两次，方向相反）
+        ------------------------------------
+        1) 最初写成 cr + sbox(box) + cx：sbox 已经减过 BASE_OFF，
+           而 cr 本身就是客户区屏幕位置 -> 重复减，偏左上 (13,58)。
 
-        `sbox()` 把窗口坐标转成客户区坐标时减了 BASE_OFF，
-        而 `client_rect_on_screen()` 本身就是客户区在屏幕上的位置，
-        两者相加 = **重复减了 (13, 58)**。
+        2) 我为了修自己写的 scripts/click_img.py（它按客户区算），
+           把本函数改成"box 按客户区" -> 反而少了减 BASE_OFF，
+           导致 find_action_button / find_confirm_button 全部偏右下 (13,58)。
+           表现：点结算页「退出」时光标停在按钮下方一点，机器人卡住。
 
-        实测：目标屏幕 (1748, 1445)，函数返回 (1735, 1387)，
-        正好差 (-13, -58)，点击全部偏左上。
-
-        现在直接用 box 原点（不做 sbox 转换），因为调用方传的 box
-        已经是客户区坐标：
-            return (cr[0] + box[0] + cx*sx,
-                    cr[1] + box[1] + cy*sy)
+        结论：**不要为了让调试脚本好写而改库函数语义**。
+        config 里所有 band 都是窗口坐标，这个函数必须跟着它们走。
+        实测：按钮客户区 (1151,1438) 258x73，本函数修复前返回 (1901,1615)，
+        正确值 (1888,1557)，差正好 (13,58)。
         """
         sx, sy = self.scale()
         cr = self.client_rect_on_screen()
         if cr is None:
             return None
-        return (cr[0] + int(round(box[0] + cx * sx)),
-                cr[1] + int(round(box[1] + cy * sy)))
+        return (cr[0] + int(round((box[0] - self.BASE_OFF_X + cx) * sx)),
+                cr[1] + int(round((box[1] - self.BASE_OFF_Y + cy) * sy)))
 
     def client_rect_on_screen(self):
         if self.rect is None:
