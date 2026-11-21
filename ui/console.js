@@ -667,8 +667,15 @@ async function refreshLabel() {
       : (it.ocr_matched
          ? ` · OCR ${Math.round(ocrConf * 100)}%`
          : ` · OCR ${Math.round(ocrConf * 100)}%（库里没有，原文「${it.ocr_raw || ''}」）`);
-    return `<div class="label-card" data-stem="${it.stem}"
+    // 名字条其实是场景截图（采集时 ROI 抓偏了）—— 标出来，
+    // 这种 OCR 永远读不出，人工也标不了，应该批量删掉
+    const junkTag = it.junk
+      ? `<span class="junk-tag" title="名字条区域其实是场景截图">垃圾</span>`
+      : '';
+    return `<div class="label-card${it.junk ? ' junk' : ''}"
+                 data-stem="${it.stem}"
                  data-sig="${it.sig || ''}" data-i="${i}">
+      ${junkTag}
       <div class="label-imgs">
         <img class="av" src="${av}" alt="">
         ${nc ? `<img class="nc" src="${nc}" alt="名字条">` : ''}
@@ -785,6 +792,30 @@ function bindLabelSide() {
   });
 }
 
+// 批量清理"名字条其实是场景截图"的垃圾。
+// 实测 36% 的待标注是这种（采集时 ROI 抓偏了），留着只是噪声。
+function bindPurge() {
+  const btn = $('btnPurge');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const n = document.querySelectorAll('.label-card.junk').length;
+    const msg = n > 0
+      ? `当前页有 ${n} 张标记为「垃圾」（名字条区域其实是场景截图）。\n\n` +
+        `清理会删除这些头像和对应的名字条截图，不可恢复。\n` +
+        `有 OCR 结果的一律不碰。\n\n继续吗？`
+      : `清理会扫描所有待标注，删除「名字条区域其实是场景截图」的那些。\n` +
+        `有 OCR 结果的一律不碰。\n\n继续吗？`;
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    btn.textContent = '清理中…';
+    const r = await post('/api/portrait/purge_junk', { side: labelSide });
+    btn.disabled = false;
+    btn.textContent = '清理垃圾';
+    alert(r.msg || '完成');
+    refreshLabel();
+  });
+}
+
 /* ================================================================
    页面切换 + 定时器管理
    ================================================================ */
@@ -878,4 +909,5 @@ document.addEventListener('visibilitychange', () => {
 refreshBot();
 setInterval(refreshBot, 3000);
 bindLabelSide();
+bindPurge();
 startTimers();

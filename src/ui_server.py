@@ -694,12 +694,55 @@ def stop_bot():
 _PORTRAIT_DIRS = {"self": "portraits", "foe": "portraits_foe"}
 
 
+def _looks_like_nameplate(path):
+    """判断这张 _name.png 到底是不是名字条。
+
+    实测 224 张（占 36%）的 _name.png 是**游戏场景截图**
+    （天空、建筑、地面），因为采集时名字条 ROI 定位失败，
+    抓到了旁边的地方。这些 OCR 永远读不出，人工也没法标。
+
+    判据不能太严：名字条背景是**半透明的**，游戏画面会透出来，
+    所以「深色底」这个条件经常不成立（实测按 dark>=0.15 判，
+    404 条真名字条里误判 116 条）。
+
+    真正可靠的特征是「**有清晰的白色文字**」：
+      · 白色像素占比 3%~45%（太少没字，太多是亮场景）
+      · 亮像素的**局部对比度**高（文字边缘锐利，场景是渐变的）
+    """
+    try:
+        import cv2
+        import numpy as np
+        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        if img is None:
+            return False
+        h, w = img.shape[:2]
+        if h < 20 or w < 60:
+            return False
+        left = img[:, :int(w * 0.72)]
+        px = left.reshape(-1)
+        bright = float((px > 190).mean())
+        if not (0.025 <= bright <= 0.50):
+            return False
+        # 局部对比度：文字边缘有强梯度，场景是平滑渐变。
+        # 阈值 8 是保守值 —— 实测有 OCR 的 404 条里 p10=15.2，
+        # 取 8 保证真名字条几乎不会误判（实测误判 2/404）。
+        # 代价是有一部分"OCR 漏读的真名字条"也会被判成名字条
+        # （实测 224 条无 OCR 里只删掉 90 条，其余 134 条保留）。
+        # 这是**故意偏保守**：宁可多留人工看，也不要删掉真数据。
+        lap = cv2.Laplacian(left, cv2.CV_32F)
+        sharp = float(np.abs(lap).mean())
+        return sharp >= 8.0
+    except Exception:
+        return False
+
+
 def portraits_pending(side="foe", limit=60, offset=0):
     """待标注头像列表。按时间倒序（新的在前，更容易回忆）。
 
     额外返回：
       group : 按名字条感知哈希聚类（同款一起标）
       ocr   : 名字条 OCR 预填结果（人工只需确认）
+      junk  : 名字条区域其实是场景截图（ROI 抓偏了），可直接批量删
     """
     import hashlib
 
@@ -765,6 +808,11 @@ def portraits_pending(side="foe", limit=60, offset=0):
         # 预填用**匹配到库里的名字** —— 这样人工直接回车就对，
         # 不用再改一遍。匹配不上就留原文（标黄让人看一眼）。
         matched = _safe_species(ocr_txt) if ocr_txt else None
+        # 名字条区域其实是场景截图（ROI 抓偏了）-> 可直接批量删
+        is_junk = False
+        if has_nc and not ocr_txt:
+            is_junk = not _looks_like_nameplate(
+                os.path.join(d, namefile))
         items.append({
             "file": f,
             "stem": stem,
@@ -776,6 +824,7 @@ def portraits_pending(side="foe", limit=60, offset=0):
             "ocr_raw": ocr_txt,
             "ocr_conf": o.get("conf"),
             "ocr_matched": bool(matched),
+            "junk": is_junk,
         })
         if sig:
             sigs.append((stem, int(sig, 16)))
@@ -999,6 +1048,56 @@ def portrait_skip(side, stem):
     return {"ok": removed > 0, "msg": "已删除 %d 个文件" % removed}
 
 
+def portrait_purge_junk(side, limit=400):
+    """批量删除"名字条其实是场景截图"的垃圾。
+
+    实测 36% 的待标注是这种（ROI 抓偏了），留着只是噪声。
+    只删 _looks_like_nameplate 判定为 False 且 OCR 没结果的 ——
+    有 OCR 结果的绝不碰（那可能是真名字条，只是没匹配上）。
+    """
+    sub = _PORTRAIT_DIRS.get(side)
+    if not sub:
+        return {"ok": False, "msg": "bad side"}
+    d = os.path.join(ROOT, "assets", sub)
+    try:
+        names = [f for f in os.listdir(d)
+                 if f.startswith("_unknown_") and f.endswith(".png")
+                 and "_name" not in f]
+    except OSError as e:
+        return {"ok": False, "msg": str(e)}
+
+    ocr_map = {}
+    try:
+        p = os.path.join(LOGS, "ocr_names.json")
+        if os.path.exists(p):
+            import io as _io
+            with _io.open(p, encoding="utf-8") as f:
+                ocr_map = json.load(f)
+    except Exception:
+        ocr_map = {}
+
+    removed = 0
+    checked = 0
+    for f in names[:limit]:
+        stem = f[:-4]
+        if (ocr_map.get(stem) or {}).get("text"):
+            continue                    # 有 OCR 结果的不碰
+        namefile = os.path.join(d, stem + "_name.png")
+        if not os.path.exists(namefile):
+            continue
+        checked += 1
+        if _looks_like_nameplate(namefile):
+            continue
+        for x in (f, stem + "_name.png"):
+            try:
+                os.remove(os.path.join(d, x))
+                removed += 1
+            except OSError:
+                pass
+    return {"ok": True, "checked": checked, "removed": removed,
+            "msg": "检查 %d 张，删除 %d 个文件" % (checked, removed)}
+
+
 # ============================================================ HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "RocoUI/1.0"
@@ -1112,6 +1211,11 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/portrait/skip":
             return self._json(portrait_skip(
                 body.get("side") or "foe", body.get("stem") or ""))
+
+        if path == "/api/portrait/purge_junk":
+            return self._json(portrait_purge_junk(
+                body.get("side") or "foe",
+                int(body.get("limit") or 400)))
 
         return self._json({"error": "not found"}, 404)
 

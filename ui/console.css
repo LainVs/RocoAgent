@@ -517,6 +517,26 @@ button, input, select {
 .label-card:hover { border-color: var(--line); }
 .label-card.done { opacity: .35; pointer-events: none; }
 
+/* 垃圾卡片：名字条区域其实是场景截图（采集时 ROI 抓偏了）。
+   视觉上压低存在感，但仍然显示 —— 让人能确认"确实该删"。 */
+.label-card.junk {
+  border-color: rgba(232, 102, 74, .22);
+  background: rgba(232, 102, 74, .045);
+}
+.junk-tag {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  font-size: 9.5px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--lose);
+  background: rgba(28, 12, 9, .85);
+  border: 1px solid rgba(232, 102, 74, .4);
+  line-height: 15px;
+  z-index: 2;
+}
+
 .label-imgs {
   display: grid;
   grid-template-columns: 54px 1fr;
