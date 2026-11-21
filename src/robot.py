@@ -833,20 +833,26 @@ class Bot:
                             ended = "result"
                     except Exception:
                         ended = None
-                    # ---- 技能栏 40 秒没画：主判据（2026-11-22）
+                    # ---- 技能栏 75 秒没画：主判据（2026-11-22）
                     #
-                    # 一局里每个我方回合都会画技能栏。40 秒没画，只可能是
+                    # 一局里每个我方回合都会画技能栏。75 秒没画，只可能
                     # 已经不在对局里（结算页/大厅/奖励页）。
-                    # 25 秒实测偏短：对面思考 + 动画能超过 25 秒，会把
-                    # 一场还在进行的对局判死（01:46:17 "no bar 25s"）。
-                    if not ended and now - getattr(self, "_last_bar_at", now) > 40.0:
-                        ended = "no bar 40s"
+                    #
+                    # 阈值演进：25 秒 -> 40 秒 -> **75 秒**。
+                    # 25 秒偏短（对面思考 + 动画能超过）；
+                    # 40 秒仍会误杀：实测 07:12:13~07:12:49 一局，
+                    # 对面换精灵后我方连续 36 秒没轮到（`battle=False`、
+                    # 血条读不到），40 秒一到就判结束 -> 44 秒 / 1 手。
+                    # 75 秒给"对面连续两三个回合"留足余量；
+                    # 真结算页/大厅有「退出」/「开始挑战」按钮这条快路径。
+                    if not ended and now - getattr(self, "_last_bar_at", now) > 75.0:
+                        ended = "no bar 75s"
                     # ---- HUD 消失兜底（40 秒）
                     # 4:3 下血条会连续读不到，所以只当长兜底，不能当主判据
                     # （12 秒版实测把一场还在进行的对局误判结束了）。
                     if not ended and getattr(self, "_my_none_since", None) is not None \
-                            and now - self._my_none_since > 40.0:
-                        ended = "hud gone 40s"
+                            and now - self._my_none_since > 90.0:
+                        ended = "hud gone 90s"
                     # ---- 画面静止兜底：**已删除**（2026-11-22 深夜）
                     #
                     # 原来这里写"画面指纹连续 8 秒不变 -> 对局结束"，
