@@ -1066,10 +1066,16 @@ def _run(args):
             if not hwnd:
                 return False
             try:
-                # 下限 150（约 59%）：再低文字就吃力了。
-                # 实测 alpha=128 时面板亮度 126，正文开始难读；
-                # 150 是"能透出背景 + 文字仍清晰"的平衡点。
-                a = max(150, min(255, int(alpha)))
+                # 下限 180（约 71%）。
+                #
+                # 实测（2026-11-21，浅色主题压深色背景）：
+                #   alpha=255 -> 面板 246（不透明）
+                #   alpha=200 -> 面板 198（半透明，背后清晰可辨）✓
+                #   alpha=180 -> 面板 181（较透明，文字仍可读）
+                #   alpha=150 -> 面板 154（过度透明，文字糊在背景里）✗
+                #
+                # 150 那张截图里面板几乎消失，所以下限提到 180。
+                a = max(180, min(255, int(alpha)))
                 add_layered(hwnd)
                 ok = UD.SetLayeredWindowAttributes(hwnd, 0, a, LWA_ALPHA)
                 state["opacity"] = a
