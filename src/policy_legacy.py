@@ -184,9 +184,13 @@ def decide(st, ctx):
         return None, "no skill read"
     # 把对面最大血量挂到每张卡上，供下面的合理性过滤用（见 damaged 循环）。
     foe_max = ctx.get("foe_max")
-    if foe_max:
+    foe_now = ctx.get("foe_now")
+    if foe_max or foe_now:
         for s in skills:
-            s.setdefault("_foe_max", foe_max)
+            if foe_max:
+                s.setdefault("_foe_max", foe_max)
+            if foe_now:
+                s.setdefault("_foe_now", foe_now)
     usable = [s for s in skills if s.get("lit", True)]
 
     slot = _heal_slot(st)
@@ -225,13 +229,25 @@ def decide(st, ctx):
         v = _est_value(s)
         if v is None:
             continue
-        # 合理性上限：卡面伤害不可能超过对面最大血量的 1.2 倍。
+        # 合理性上限（三道，逐级放宽）。
         #
-        # 实测 2026-11-22 02:24 / 04:32 两次：对面最大血 ~400，卡面读出
-        # **700**，被当成"必杀"选中，整局白打。
-        # `_decide_v2` 那条链路已经有这道过滤，legacy 这条一直漏着 ——
-        # 而 v2 只覆盖约一半的出招，另一半走的就是这里。
+        # 为什么要三道：实测卡面读出过 660 / 700 / 1000+，都被当成"必杀"
+        # 选中，整局白打。而 `foe_max` 在对面不在数据库时是 None
+        # （实测「幽冥龙」就是），相对判据会直接短路。
+        #
+        # 1) 绝对上限 900：PvP 正常精灵最大血量约 600，最强单体技能
+        #    power 900，打完减伤后不可能超过 900。（PvE 的 BOSS 有
+        #    2 万血，但那些不会出现在排位里。）
+        # 2) 相对上限：超过对面最大血量 1.2 倍。
+        # 3) 用"对面当前血量"兜底：卡面伤害是打完减伤的实际值，
+        #    一击打掉超过对面**当前**血量 1.5 倍必然是误读
+        #    （实测 660 打一个 92% 血、总量约 400 的对手）。
+        if v > 900:
+            continue
         if s.get("_foe_max") and v > s["_foe_max"] * 1.2:
+            continue
+        _foe_now = s.get("_foe_now")
+        if _foe_now and v > _foe_now * 1.5:
             continue
         damaged.append((s, v))
     # 读不全的卡要分两种，不能一刀切：

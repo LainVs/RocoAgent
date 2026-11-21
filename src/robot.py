@@ -1466,9 +1466,26 @@ class Bot:
             # 实测 2026-11-22 02:24：对面雪影冰灵（max≈400）读出 700，
             # policy_v2 把它当"必杀"选中，整局白打。
             # standalone 早就有这道过滤，机器人这条链路一直漏着。
-            if dmg is not None and foe_max and dmg > foe_max * 1.2:
+            #
+            # ⚠ 06:20 又漏了一次：对面「幽冥龙」不在数据库，
+            # `E.max_hp()` 返回 None，`foe_max and ...` 直接短路，
+            # 于是 660 被当成"必杀"。所以再加两条**不依赖对面物种数据**
+            # 的兜底：
+            #   · 绝对上限 900（PvP 最强单体技能 power 900，打完减伤更小）
+            #   · 对面当前血量的 1.5 倍（卡面是打完减伤的实际值）
+            _ABS_MAX_DMG = 900
+            _foe_now = self._foe_now_hp(st)
+            if dmg is not None and dmg > _ABS_MAX_DMG:
+                log("SKILL %d damage %d > absolute max %d -> unreadable"
+                    % (s["index"], dmg, _ABS_MAX_DMG))
+                dmg = None
+            elif dmg is not None and foe_max and dmg > foe_max * 1.2:
                 log("SKILL %d damage %d > foe max %d * 1.2 -> unreadable"
                     % (s["index"], dmg, foe_max))
+                dmg = None
+            elif dmg is not None and _foe_now and dmg > _foe_now * 1.5:
+                log("SKILL %d damage %d > foe current hp %d * 1.5 "
+                    "-> unreadable" % (s["index"], dmg, _foe_now))
                 dmg = None
             # 耗能必须从**我方技能表**查（my_card_costs），不能用技能名查。
             #
@@ -2727,6 +2744,29 @@ class Bot:
         except Exception:
             return None
 
+    def _foe_now_hp(self, st):
+        """对面**当前**血量绝对值。
+
+        对面不在数据库（`max_hp` 为 None）时，用 `hp_band` 的中位当分母，
+        再乘当前百分比 —— 这样即使物种未知也能估出一个量级，
+        用来兜住"卡面读出 660 打 92% 血的对手"这种荒谬读数。
+        """
+        pct = st.get("foe_pct")
+        if pct is None or not self.foe_name:
+            return None
+        base = self._foe_max_hp()
+        if not base:
+            try:
+                import foe_hp as FH
+                band = FH.hp_band(self.foe_name)
+                if band:
+                    base = sum(band) / 2.0
+            except Exception:
+                base = None
+        if not base:
+            return None
+        return base * pct / 100.0
+
     def _shadow_choice(self, st):
         """不动手，只算"如果交给机器人，它会选什么"。"""
         try:
@@ -3092,9 +3132,10 @@ class Bot:
             "switch_slot": self.next_switch_slot(),
             "switch_streak": self.turn - self.last_switch_turn,
             "charge_streak": self.charge_streak,
-            # 对面最大血量：policy_legacy 用它做"卡面伤害不可能超过血量
-            # 1.2 倍"的合理性过滤（实测读出过 700，对面 max≈400）。
+            # 对面最大血量 / 当前血量：policy_legacy 用它们做"卡面伤害不可能
+            # 超过血量"的合理性过滤（实测读出过 660 / 700 / 1000+）。
             "foe_max": self._foe_max_hp(),
+            "foe_now": self._foe_now_hp(st),
             # 注意：这里**故意不传** card_costs。
             #
             # policy_legacy.decide() 里有 "净收益 = 伤害 - λ×耗能" 的算法，
