@@ -48,6 +48,7 @@ import sys
 import threading
 import time
 import webbrowser
+from collections import Counter
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -71,6 +72,7 @@ BOT_LOG = os.path.join(LOGS, "bot_stdout.log")
 TURNS = os.path.join(LOGS, "turns.jsonl")
 ROUNDS = os.path.join(LOGS, "rounds.jsonl")
 RESULTS = os.path.join(LOGS, "results.jsonl")
+SEASON = os.path.join(LOGS, "record_state.json")
 
 DETACHED = 0x00000008
 NEW_GROUP = 0x00000200
@@ -452,6 +454,38 @@ def live_state():
 
 
 # ============================================================ 统计
+def _season_record():
+    """游戏自己记的累计胜负（logs/record_state.json）。
+
+    这是**唯一不依赖推断**的胜负来源。robot 在大厅点开"历史战绩"面板，
+    OCR 读到「胜利 N  失败 M」两个**单调累加**的数字（`record.py`），
+    每场前后各读一次就能确定这一场是赢是输。
+
+    为什么它必须是主口径
+    --------------------
+    以前 UI 只读 results.jsonl 的 delta，但实测 111 条记录里 102 条是
+    flat，其中 100 条的 before/after 都是 2/2、of 都是 3 —— 段位卡的
+    星级读数**卡死在同一个值**，不是平局。拿这些算胜率得到 66.7%，
+    而同一时刻游戏自己记的是 126 胜 / 155 负 = 44.8%。
+
+    返回 None 表示还没读过（机器人没进过大厅）。
+    """
+    try:
+        with open(SEASON, encoding="utf-8") as f:
+            d = json.load(f)
+        w = int(d.get("wins") or 0)
+        l = int(d.get("losses") or 0)
+        if w + l <= 0:
+            return None
+        return {
+            "wins": w, "losses": l, "decided": w + l,
+            "rate": round(100.0 * w / (w + l), 1),
+            "at": d.get("at"),
+        }
+    except Exception:
+        return None
+
+
 def stats():
     """战绩统计。
 
@@ -497,6 +531,20 @@ def stats():
             rank = {"now": r.get("after"), "of": r.get("of")}
             break
 
+    # 段位卡读数是否卡死
+    #
+    # 实测（2026-11-21）：102 条 flat 里有 100 条是 before=2/after=2/of=3。
+    # 星级卡在同一个值，于是每场都被记成"平局"。这不是平局，是读坏了。
+    # 判据：flat 记录里最常见的 (before, after) 组合占据绝大多数。
+    pairs = [(r.get("before"), r.get("after"))
+             for r in rows if r.get("result") == "flat"]
+    badge_stuck = False
+    if len(pairs) >= 10:
+        top_n = Counter(pairs).most_common(1)[0][1]
+        badge_stuck = top_n >= max(10, 0.8 * len(pairs))
+
+    season = _season_record()
+
     return {
         "wins": wins, "losses": losses, "flats": flats,
         "decided": decided,
@@ -507,7 +555,13 @@ def stats():
         "rank": rank,
         "samples": len(rows),
         # 数据量提示：样本太少时前端应该提示"胜率不可信"
-        "reliable": bool(decided >= 20),
+        "reliable": bool(decided >= 20) and not badge_stuck,
+        # 权威口径：游戏自己记的累计胜负（不依赖推断）
+        "season": season,
+        # 段位卡读数卡死时，results.jsonl 推出来的胜率整体不可用
+        "badge_stuck": badge_stuck,
+        # 前端该拿哪个当主指标：有 season 就用 season
+        "primary": "season" if season else "log",
     }
 
 

@@ -91,7 +91,8 @@ def test_api(port):
     endpoints = [
         ("/api/health", ("ok",)),
         ("/api/bot", ("running", "phase")),
-        ("/api/stats", ("wins", "losses", "decided")),
+        ("/api/stats", ("wins", "losses", "decided",
+                        "season", "badge_stuck", "primary")),
         ("/api/team", ("slots",)),
         ("/api/turns?limit=2", ("items",)),
         ("/api/rounds?limit=2", ("items",)),
@@ -106,6 +107,32 @@ def test_api(port):
             ok(not missing, path, "缺字段 %s" % missing if missing else "")
         except Exception as e:
             ok(False, path, str(e)[:60])
+
+    # 战绩口径（2026-11-21）：必须以"游戏内累计战绩"为主。
+    #
+    # 背景：results.jsonl 里 92% 是 flat，其中 100 条是段位卡读数卡死
+    # 在 2/3 造成的假平局。拿它算胜率得到 66.7%，而游戏自己记的是 44.8%。
+    try:
+        d = get(port, "/api/stats")
+        ok(d.get("primary") in ("season", "log"), "/api/stats.primary",
+           str(d.get("primary")))
+        s = d.get("season")
+        if s:
+            want = round(100.0 * s["wins"] / max(1, s["decided"]), 1)
+            ok(s["rate"] == want, "season.rate 自洽",
+               "%d/%d = %.1f%%" % (s["wins"], s["decided"], s["rate"]))
+            ok(s["decided"] == s["wins"] + s["losses"],
+               "season.decided = wins + losses")
+        else:
+            ok(True, "season 未读取（机器人还没进过大厅）")
+        ok(isinstance(d.get("badge_stuck"), bool),
+           "badge_stuck 是布尔", str(d.get("badge_stuck")))
+        # 卡死时不能让前端以为胜率可信
+        if d.get("badge_stuck"):
+            ok(d.get("reliable") is False,
+               "段位卡卡死时 reliable 必须为 False")
+    except Exception as e:
+        ok(False, "/api/stats 口径", str(e)[:60])
 
     # /api/state 允许为 null（机器人没跑）
     try:

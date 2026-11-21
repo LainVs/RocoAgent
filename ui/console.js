@@ -351,20 +351,38 @@ async function refreshStats() {
     return;
   }
 
-  const sub = s.reliable
-    ? `${s.decided} 场已判定`
-    : `样本不足（${s.decided}/20），胜率不可信`;
+  // 主口径：游戏自己记的累计胜负（logs/record_state.json）。
+  // 为什么不用 results.jsonl 的 delta 当主口径：那份文件 92% 是 flat，
+  // 而 flat 里 100 条是段位卡读数卡死在 2/3 造成的假平局。
+  // 拿它算胜率会得出 66.7%，真实是 44.8%。
+  const season = s.season || null;
+  const stuck = !!s.badge_stuck;
+  const rate = season ? season.rate : s.rate;
+  const wins = season ? season.wins : s.wins;
+  const losses = season ? season.losses : s.losses;
+  const decided = season ? season.decided : s.decided;
+
+  let sub;
+  if (season) {
+    sub = `赛季累计 ${decided} 场` + (season.at ? ` · ${season.at} 读取` : '');
+  } else if (s.reliable) {
+    sub = `${s.decided} 场已判定`;
+  } else {
+    sub = `样本不足（${s.decided}/20），胜率不可信`;
+  }
+  if (stuck) sub += ' · 段位卡读数卡死，已改用权威战绩';
 
   // 概览页
   if ($('statSub')) $('statSub').textContent = sub;
-  const rateCls = s.rate == null ? '' : (s.rate >= 55 ? 'win' : s.rate >= 45 ? 'warn' : 'lose');
+  const rateCls = rate == null ? '' : (rate >= 55 ? 'win' : rate >= 45 ? 'warn' : 'lose');
   $('statMetrics').innerHTML =
-    metricHtml('胜率', s.rate == null ? '—' : s.rate, '%',
-      s.rank ? `段位 ${s.rank.now}/${s.rank.of}` : '', rateCls) +
-    metricHtml('胜 / 负', `${s.wins} / ${s.losses}`, '', '已判定对局') +
-    metricHtml('保分 / 未判定', s.flats, '', '不计入胜率') +
+    metricHtml('胜率', rate == null ? '—' : rate, '%',
+      season ? '游戏内累计战绩' : '', rateCls) +
+    metricHtml('胜 / 负', `${wins} / ${losses}`, '', '', '') +
+    metricHtml('段位', s.rank ? `${s.rank.now}/${s.rank.of}` : '—', '',
+      s.rank ? '星 / 本段' : '', '') +
     metricHtml('近 20 场', s.rate20 == null ? '—' : s.rate20, '%',
-      `${s.last20.length} 场`, '');
+      stuck ? '本文档内统计（不可信）' : `${s.last20.length} 场`, '');
 
   // 走势
   const seq = s.last20 || [];
@@ -376,11 +394,15 @@ async function refreshStats() {
   // 战绩页
   if ($('statsSub')) $('statsSub').textContent = sub;
   $('statsMetrics').innerHTML =
-    metricHtml('胜率', s.rate == null ? '—' : s.rate, '%', '', rateCls) +
-    metricHtml('胜', s.wins, '场', '', 'win') +
-    metricHtml('负', s.losses, '场', '', 'lose') +
-    metricHtml('保分', s.flats, '场', '未判定胜负') +
-    metricHtml('总记录', s.samples, '条', 'results.jsonl');
+    metricHtml('赛季胜率', rate == null ? '—' : rate, '%',
+      season ? `${wins} 胜 / ${losses} 负` : '', rateCls) +
+    metricHtml('胜', wins, '场', '', 'win') +
+    metricHtml('负', losses, '场', '', 'lose') +
+    metricHtml('段位卡推断', `${s.wins} / ${s.losses}`, '',
+      stuck ? '读数卡死，不可用' : 'results.jsonl 的已判定项',
+      stuck ? 'warn' : '') +
+    metricHtml('保分记录', s.flats, '条',
+      stuck ? '疑似假平局' : '未判定胜负');
 }
 
 async function refreshRounds() {
