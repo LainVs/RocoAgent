@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>RocoAgent · 极简风格预览</title>
+<style>
+/* ============================================================
+   Claude 风格极简配色 —— 预览版
+   ------------------------------------------------------------
+   设计原则（对照旧版）：
+     旧：3 个强调色 + 5 档字号 + 噪点/高光/投影/刻度线/呼吸动画
+     新：1 个强调色 + 3 档字号 + 一条边框
+
+   底色不用纯黑（压抑），用 Claude 的暖调黑：偏棕的深灰。
+   文字用暖白而不是冷白 —— 冷白在暖底上会发蓝，看着刺眼。
+   ============================================================ */
+
+:root {
+  /* ── 两套配色，用 body.theme-light / body.theme-dark 切换 ──
+     
+     ★ 为什么浅色反而更适合半透明（2026-11-21 实测）
+     --------------------------------------------------
+     游戏画面主要是亮色（石地约 190、天空更亮）。面板半透明时
+     会和背景混合，混合结果决定了文字对比度：
+
+       深色面板 rgba(12,11,10,0.4) 压 190  ->  119（中灰）
+         白字 245 在 119 上：对比度 ≈ 2.0   **勉强**
+       浅色面板 rgba(245,244,238,0.5) 压 190 -> 217（浅）
+         深字 31 在 217 上：对比度 ≈ 6.2   **很好**
+
+     原因：浅色面板和亮背景**同向**，混合后仍然亮；
+     深色面板和亮背景**反向**，混合后落在中间灰 —— 而中灰是最差的
+     文字背景（黑字白字都不够对比）。
+
+     所以透明度拉低时，浅色主题的损失远小于深色主题。
+   */
+
+  --line: rgba(0, 0, 0, 0.10);
+  --halo: 0 1px 2px rgba(255, 255, 255, 0.55);
+
+  --font: "Inter", "HarmonyOS Sans SC", "Microsoft YaHei UI", system-ui, sans-serif;
+  --mono: "Cascadia Mono", Consolas, ui-monospace, monospace;
+}
+
+/* ── 浅色（Claude 默认） ────────────────────────────── */
+body.theme-light {
+  --bg-rgb: 250, 249, 245;      /* #FAF9F5 */
+  --ink-1: #1F1E1D;
+  --ink-2: #5C5852;
+  --ink-3: #8E8A82;
+  --accent: #C96442;
+  --hp-ok: #3F8F5F;
+  --hp-mid: #B8860B;
+  --hp-low: #B5453A;
+  --line: rgba(31, 30, 29, 0.09);
+  --halo: 0 1px 2px rgba(255, 255, 255, 0.6);
+}
+
+/* ── 深色 ───────────────────────────────────────────── */
+body.theme-dark {
+  --bg-rgb: 31, 30, 29;         /* #1F1E1D 暖调黑，不是纯黑 */
+  --ink-1: #F5F4EE;
+  --ink-2: #B8B5AD;
+  --ink-3: #7A776F;
+  --accent: #D97757;
+  --hp-ok: #4E9F6E;
+  --hp-mid: #C79A3E;
+  --hp-low: #C4553F;
+  --line: rgba(245, 244, 238, 0.10);
+  --halo: 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  min-height: 100%;
+  background: transparent;
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  color: var(--ink-1);
+}
+
+/* 预览用的模拟游戏背景（真悬浮窗里不会有这层） */
+.demo-bg {
+  position: fixed;
+  inset: 0;
+  background:
+    linear-gradient(180deg, #8FA8BE 0%, #B9C4C9 35%, #C9C2B4 100%);
+  z-index: 0;
+}
+.demo-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(600px 300px at 30% 75%, rgba(120,110,95,.35), transparent 70%),
+    radial-gradient(400px 200px at 80% 20%, rgba(90,120,160,.3), transparent 70%);
+}
+
+/* ── 面板 ───────────────────────────────────────────── */
+.panel {
+  position: relative;
+  z-index: 1;
+  width: 320px;
+  margin: 40px auto;
+  border-radius: 12px;
+  /* 底色由 JS 按 --bg-rgb + alpha 设置 */
+  background: rgba(var(--bg-rgb), 0.92);
+  border: 1px solid var(--line);
+  /* 只有一层极轻的投影，不要发光不要内高光 */
+  box-shadow: 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+/* ── 顶栏 ───────────────────────────────────────────── */
+.hdr {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  font-size: 11px;
+  color: var(--ink-2);
+  cursor: grab;
+  text-shadow: var(--halo);
+}
+.hdr:active { cursor: grabbing; }
+
+.dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--hp-ok);
+  flex: none;
+}
+.dot.off { background: var(--ink-3); }
+
+.hdr .state { color: var(--ink-1); font-weight: 500; }
+.hdr .grow { flex: 1; }
+.hdr .turn { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.hdr .ms { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.hdr .ms.bad { color: var(--hp-low); }
+
+/* ── 精灵块 ─────────────────────────────────────────── */
+.pet { padding: 12px 14px; }
+.pet + .pet { border-top: 1px solid var(--line); }
+
+.pet-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.pet-name {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink-1);
+  text-shadow: var(--halo);
+}
+.pet-type {
+  font-size: 10px;
+  color: var(--ink-3);
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(245, 244, 238, 0.06);
+}
+.pet-head .grow { flex: 1; }
+.pet-pct {
+  font-family: var(--mono);
+  font-size: 20px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  color: var(--ink-1);
+  text-shadow: var(--halo);
+}
+.pet-pct .unit {
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-left: 1px;
+}
+
+/* 血条：纯色，无渐变无刻度 */
+.hp {
+  height: 5px;
+  border-radius: 3px;
+  background: rgba(245, 244, 238, 0.10);
+  overflow: hidden;
+}
+.hp i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transform-origin: left center;
+  background: var(--hp-ok);
+  transition: transform .22s cubic-bezier(.2,.8,.2,1);
+}
+.hp.mid i { background: var(--hp-mid); }
+.hp.low i { background: var(--hp-low); }
+
+.pet-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--ink-3);
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  text-shadow: var(--halo);
+}
+.pet-foot .grow { flex: 1; }
+
+/* 能量：五个小方块，比圆点更"数据" */
+.energy { display: inline-flex; gap: 2px; }
+.energy i {
+  width: 6px; height: 6px;
+  border-radius: 1.5px;
+  background: rgba(245, 244, 238, 0.12);
+}
+.energy i.on { background: var(--ink-2); }
+
+/* ── 克制关系：纯文字，无背景块 ─────────────────────── */
+.mu {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-3);
+  text-shadow: var(--halo);
+}
+.mu b {
+  font-family: var(--mono);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+  margin-left: 4px;
+}
+.mu .good b { color: var(--accent); }
+.mu .grow { flex: 1; }
+
+/* ── 技能 ───────────────────────────────────────────── */
+.skills { border-top: 1px solid var(--line); }
+
+.sk {
+  position: relative;
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+}
+.sk + .sk { border-top: 1px solid rgba(245, 244, 238, 0.05); }
+
+.sk .idx {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-3);
+}
+.sk .name {
+  color: var(--ink-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: var(--halo);
+}
+.sk .dmg {
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-1);
+  text-shadow: var(--halo);
+}
+.sk .pct {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  min-width: 30px;
+  text-align: right;
+  text-shadow: var(--halo);
+}
+
+/* 最佳技能：唯一允许的强调 —— 左侧一条珊瑚色竖线 */
+.sk.best::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 2px;
+  height: 16px;
+  border-radius: 0 1px 1px 0;
+  background: var(--accent);
+}
+.sk.best .name { color: var(--ink-1); }
+.sk.best .pct { color: var(--accent); }
+
+/* 点不亮：整行压暗 */
+.sk.off .name,
+.sk.off .dmg,
+.sk.off .pct { color: var(--ink-3); opacity: .55; }
+
+/* ── 结论 ───────────────────────────────────────────── */
+.verdict {
+  padding: 9px 14px;
+  border-top: 1px solid var(--line);
+  font-size: 10.5px;
+  color: var(--ink-3);
+  text-shadow: var(--halo);
+}
+.verdict b {
+  font-family: var(--mono);
+  font-weight: 500;
+  color: var(--ink-1);
+}
+.verdict .sep { margin: 0 6px; opacity: .5; }
+
+/* ── 透明度演示条 ───────────────────────────────────── */
+.bar {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: rgba(31, 30, 29, .94);
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  color: var(--ink-2);
+}
+.bar input { flex: 1; max-width: 220px; }
+.bar output {
+  font-family: var(--mono);
+  color: var(--ink-1);
+  min-width: 36px;
+}
+.bar button {
+  font: inherit;
+  padding: 4px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+.bar button:hover { color: var(--ink-1); background: rgba(128,128,128,.12); }
+</style>
+</head>
+<body class="theme-light">
+
+<div class="demo-bg"></div>
+
+<div class="panel" id="panel">
+
+  <header class="hdr">
+    <i class="dot"></i>
+    <span class="state">战斗中</span>
+    <span class="turn">T3</span>
+    <span class="grow"></span>
+    <span class="ms">84ms</span>
+  </header>
+
+  <section class="pet">
+    <div class="pet-head">
+      <span class="pet-name">音速犬</span>
+      <span class="pet-type">火</span>
+      <span class="grow"></span>
+      <span class="pet-pct">78<span class="unit">%</span></span>
+    </div>
+    <div class="hp" style="--p:.78"><i style="transform:scaleX(.78)"></i></div>
+    <div class="pet-foot">
+      <span>382 / 490</span>
+      <span class="grow"></span>
+      <span class="energy"><i class="on"></i><i class="on"></i><i class="on"></i><i></i><i></i></span>
+    </div>
+  </section>
+
+  <div class="mu">
+    <span>我打 <b class="good">×3.0</b></span>
+    <span>打我 <b>×0.5</b></span>
+    <span class="grow"></span>
+    <span>双重克制</span>
+  </div>
+
+  <section class="pet">
+    <div class="pet-head">
+      <span class="pet-name">水灵</span>
+      <span class="pet-type">水</span>
+      <span class="grow"></span>
+      <span class="pet-pct">45<span class="unit">%</span></span>
+    </div>
+    <div class="hp mid"><i style="transform:scaleX(.45)"></i></div>
+    <div class="pet-foot">
+      <span>血量 349~419</span>
+      <span>物防 178~231</span>
+    </div>
+  </section>
+
+  <section class="skills">
+    <div class="sk best">
+      <span class="idx">1</span>
+      <span class="name">吞噬</span>
+      <span class="dmg">175</span>
+      <span class="pct">42%</span>
+    </div>
+    <div class="sk">
+      <span class="idx">2</span>
+      <span class="name">火焰切割</span>
+      <span class="dmg">114</span>
+      <span class="pct">27%</span>
+    </div>
+    <div class="sk">
+      <span class="idx">3</span>
+      <span class="name">蝙蝠</span>
+      <span class="dmg">46</span>
+      <span class="pct">11%</span>
+    </div>
+    <div class="sk off">
+      <span class="idx">4</span>
+      <span class="name">惊吓盒子</span>
+      <span class="dmg">80</span>
+      <span class="pct">19%</span>
+    </div>
+  </section>
+
+  <footer class="verdict">
+    <b>1</b> 回合击杀<span class="sep">·</span><b>4</b> 回合被击杀<span class="sep">·</span>先手
+  </footer>
+
+</div>
+
+<div class="bar">
+  <span>透明度</span>
+  <input type="range" id="a" min="40" max="100" value="92">
+  <output id="av">92%</output>
+  <button data-theme="light">浅色</button>
+  <button data-theme="dark">深色</button>
+  <span style="color:var(--ink-3)">← 40% 是下限</span>
+</div>
+
+<script>
+const p = document.getElementById('panel');
+const s = document.getElementById('a');
+const v = document.getElementById('av');
+
+const apply = () => {
+  const a = (+s.value) / 100;
+  const rgb = getComputedStyle(document.body)
+    .getPropertyValue('--bg-rgb').trim();
+  p.style.background = `rgba(${rgb}, ${a})`;
+  v.textContent = s.value + '%';
+};
+s.addEventListener('input', apply);
+apply();
+
+document.querySelectorAll('[data-theme]').forEach((b) => {
+  b.addEventListener('click', () => {
+    document.body.className = 'theme-' + b.dataset.theme;
+    apply();
+  });
+});
+</script>
+
+</body>
+</html>

@@ -216,7 +216,19 @@ body.embedded .overlay .panel {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, var(--edge-hi-a, 0.11)),
     0 16px 38px -14px rgba(0, 0, 0, 0.78);
-  transition: background-color .18s linear;
+
+  /* ★ 不要给 background-color 加 transition
+     ----------------------------------------------------------------
+     踩过的坑（2026-11-21）：写了 `transition: background-color .18s linear`
+     之后，改 --alpha **完全不生效** —— computed background 永远是初始的
+     rgba(9,11,15,0.84)。
+
+     原因：transition 让 background-color 变成可插值属性，Chromium 会在
+     过渡期间缓存起始值，而 `var(--alpha)` 的变化不会重新触发求值
+     （变量本身不是可动画属性）。表现就是"拉滑块毫无反应"。
+
+     透明度变化是即时的，本来也不需要过渡 —— 用户拖滑块时期望立刻看到
+     反馈，0.18s 的延迟反而是坏事。 */
 }
 
 /* 噪点叠层：消除「一块纯色塑料」的感觉，同时不干扰文字 */

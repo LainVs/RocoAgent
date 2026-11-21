@@ -1024,6 +1024,17 @@ def _run(args):
         focus=False,         # 不抢焦点 —— 否则会打断游戏
         easy_drag=False,     # 拖拽自己实现（只有标题栏可拖）
         js_api=api,          # 前端可调 window.pywebview.api.*
+        # ★ background_color 默认是 '#FFFFFF'
+        #
+        # 踩过的坑（2026-11-21，用户报"调透明度其实没有透明"）：
+        # transparent=True 只让**窗口**透明，但 WebView2 的**页面底色**
+        # 仍然是白色。于是面板 rgba(9,11,15,0.62) 压在白底上：
+        #     0.62 × 9 + 0.38 × 255 ≈ 105   -> 均匀中灰
+        # 用户看到的就是"一整块灰，拉滑块也不变"。
+        #
+        # 实测：body/html 的 computed background 都是 rgba(0,0,0,0)，
+        # 说明 CSS 没问题 —— 是 WebView2 自己在下面画了白底。
+        background_color="#00000000",
     )
 
     # 注册给拖动逻辑用（见 set_drag_pos）

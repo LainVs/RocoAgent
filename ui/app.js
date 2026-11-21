@@ -485,30 +485,41 @@ async function callNative(method, ...args) {
    交互
    ================================================================ */
 
-// 透明度：**整窗** alpha（原生）+ 面板底色（CSS）两条腿。
+// 透明度：**只淡面板背景，不淡文字**。
 //
-// 踩过的坑（2026-11-21，用户报"透明度调节无效，实际上并没有变透明"）：
-// 以前只改 CSS 的 --alpha，而它只作用于 .panel 的 background ——
-// 窗口本身完全不透明，所以滑块拉到 20% 看起来也没变化。
-// 真正让整窗变透明必须走 SetLayeredWindowAttributes（原生侧）。
+// 踩过的坑（2026-11-21，用户报"调透明度就是变色灰白黑，完全没有视觉体验"）
+// ------------------------------------------------------------------
+// 之前同时做了两件事：
+//    CSS  --alpha      = 0.4   （面板底色 rgba(9,11,15,0.4)）
+//    原生 set_opacity  = 102   （整窗 alpha 0.4）
 //
-// 两条腿各管一件事：
-//   原生整窗 alpha  -> 用户拖动滑块时"整体变淡"的直观感受
-//   CSS --alpha     -> 面板底色再压一点，让底下的游戏画面透出来
+// 两层叠加 = 0.4 × 0.4 = **0.16**。深色面板以 16% 压在亮石地面(190)上：
+//    0.16 × 9 + 0.84 × 190 ≈ 161   ->  灰白
+// 这就是"变色灰白黑"的来源。而且整窗 alpha 是**均匀混合**，
+// 物理上必然让深色变灰 —— 文字描边再强也救不回来。
+//
+// 现在的分工：
+//    CSS  --alpha  -> 只控面板底色（游戏画面透出来）
+//    原生 alpha    -> **恒为 255**（文字永远不透明，锐利可读）
+//
+// 这样拉到 30% 时看到的是"游戏画面 + 清晰文字"，而不是一整块灰雾。
 function bindAlpha() {
   const slider = $('alpha');
   const label = $('alphaVal');
+
+  // 一次性把整窗 alpha 钉死在不透明。之后滑块不再碰它。
+  if (hasNative()) {
+    callNative('set_opacity', 255);
+  }
+
   const apply = () => {
     const v = +slider.value;
     const a = v / 100;
     root.style.setProperty('--alpha', a.toFixed(2));
     label.textContent = v + '%';
 
-    // 整窗 alpha：原生侧。真悬浮窗才有，浏览器预览时自动跳过。
-    if (hasNative()) {
-      callNative('set_opacity', Math.round(a * 255));
-    }
-
+    // 低透明度下图形元素（血条底槽、分隔线）没有描边会一起消失，
+    // 所以它们要**反向补偿**：面板越淡，底槽越实。
     const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
     root.style.setProperty('--well-a', (0.34 * boost).toFixed(3));
     root.style.setProperty('--line-a', (0.085 * boost).toFixed(3));
@@ -520,7 +531,6 @@ function bindAlpha() {
     try { localStorage.setItem('overlay.alpha', String(v)); } catch (_) {}
   };
   slider.addEventListener('input', apply);
-  // 松手时再应用一次，防止拖动过程中的高频调用被丢
   slider.addEventListener('change', apply);
 
   try {
