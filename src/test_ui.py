@@ -90,7 +90,7 @@ def test_api(port):
     print("\n[1] ui_server API")
     endpoints = [
         ("/api/health", ("ok",)),
-        ("/api/bot", ("running", "phase")),
+        ("/api/bot", ("running", "phase", "activity", "board")),
         ("/api/stats", ("wins", "losses", "decided",
                         "season", "badge_stuck", "primary")),
         ("/api/matches?limit=3", ("items", "total")),
@@ -805,6 +805,118 @@ def test_resilience(port):
     ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
 
 
+# ============================================================ 3b. 日志尾推断
+def test_phase_infer():
+    """`/api/bot` 的 phase 全部来自日志尾推断，这里用临时日志验证。
+
+    为什么必须测（2026-11-21）：板子掉线时机器人会在
+    "BLE waiting for board …" 里循环 30 分钟，而进程、日志时间都正常。
+    如果 phase 判错，控制台就会一直显示绿色"运行中" —— 这正是当天的
+    故障现场。所以这组断言是防回归的。
+    """
+    print("\n[3b] 日志尾推断（phase / board / progress）")
+    sys.path.insert(0, SRC)
+    try:
+        import ui_server as U
+    except Exception as e:
+        ok(False, "import ui_server", str(e)[:60])
+        return
+
+    import tempfile
+
+    old_bot = U.BOT_LOG
+    fd, bot_path = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    try:
+        U.BOT_LOG = bot_path
+        cases = [
+            ("waiting_board", "20:00:01 BLE waiting for board …\n"),
+            ("ble_failed", "20:00:01 BLE FAILED - 180s 内没等到板子，退出\n"),
+            ("focus_lost", "20:00:01 FOCUS LOST - key 3 dropped (fg=1 game=2)\n"),
+            ("board_offline",
+             "20:00:01 BLE key space failed (board offline), attempt 1\n"),
+            ("running",
+             "20:00:01 state battle=True bar=True me=82.4 foe=33.1\n"),
+        ]
+        for want, line in cases:
+            with open(bot_path, "w", encoding="utf-8") as f:
+                f.write(line)
+            got = U.bot_activity().get("event")
+            ok(got == want, "activity %s" % want, "got=%s" % got)
+
+        # 后面的心跳行必须覆盖前面的等待状态（否则"恢复了"也一直报卡住）
+        with open(bot_path, "w", encoding="utf-8") as f:
+            f.write("20:00:01 BLE waiting for board …\n"
+                    "20:00:20 bot up; rect=(0, 0, 1, 1)\n")
+        got = U.bot_activity().get("event")
+        ok(got == "running", "心跳覆盖旧的等待状态", "got=%s" % got)
+        ok(U.bot_activity().get("counts", {}).get("waiting_board") == 1,
+           "counts 记录最近窗口里的次数",
+           str(U.bot_activity().get("counts")))
+    finally:
+        U.BOT_LOG = old_bot
+        try:
+            os.remove(bot_path)
+        except OSError:
+            pass
+
+    old_esp = U.ESP_LOG
+    fd, esp_path = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    try:
+        U.ESP_LOG = esp_path
+        for want, line in [
+            ("connected", "19:20:13 connected 14:C1:9F:3A:BB:35 (cached)\n"),
+            ("offline", "19:21:13 link down, reconnecting (#1)\n"),
+            ("offline",
+             "19:21:23 cached->14:C1:9F:3A:BB:35 failed: Device with "
+             "address 14:C1:9F:3A:BB:35 was not found.\n"),
+            ("idle", "19:22:13 daemon up (waiting=1)\n"),
+        ]:
+            with open(esp_path, "w", encoding="utf-8") as f:
+                f.write(line)
+            got = U.board_status().get("state")
+            ok(got == want, "board %s" % want, "got=%s" % got)
+    finally:
+        U.ESP_LOG = old_esp
+        try:
+            os.remove(esp_path)
+        except OSError:
+            pass
+
+    # progress：没有快照必须是 None，不能是 0 —— 前端要显示"—"而不是 0%
+    old_snaps = U.SNAPS
+    fd, snap_path = tempfile.mkstemp(suffix=".jsonl")
+    os.close(fd)
+    try:
+        U.SNAPS = snap_path
+        U.CACHE.invalidate()
+        ok(U._progress() is None, "无快照时 progress=None（不是 0）")
+        today = time.strftime("%Y-%m-%d")
+        with open(snap_path, "w", encoding="utf-8") as f:
+            for i, (dw, dl) in enumerate([(1, 0), (0, 1), (1, 0)]):
+                f.write(json.dumps({
+                    "ts": "%s 10:0%d:00" % (today, i),
+                    "wins": 100 + i, "losses": 200 + i,
+                    "dw": dw, "dl": dl,
+                }) + "\n")
+        U.CACHE.invalidate()
+        p = U._progress() or {}
+        t = p.get("today") or {}
+        ok(t.get("wins") == 2 and t.get("losses") == 1,
+           "今日增量 2 胜 1 负", str(t))
+        ok(t.get("rate") == 66.7, "今日胜率 66.7%", str(t.get("rate")))
+        ok((p.get("recent20") or {}).get("decided") == 3, "近 20 局 3 场",
+           str(p.get("recent20")))
+    finally:
+        U.SNAPS = old_snaps
+        U.CACHE.invalidate()
+        try:
+            os.remove(snap_path)
+        except OSError:
+            pass
+
+
 # ============================================================ main
 def main():
     ap = argparse.ArgumentParser()
@@ -839,6 +951,7 @@ def main():
         test_api(port)
         test_static(port)
         test_contract()
+        test_phase_infer()
         test_label(port)
         test_window_state()
         if not args.no_dom:

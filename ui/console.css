@@ -113,6 +113,22 @@ button, input, select {
 .dot.live  { background: var(--win);  box-shadow: 0 0 0 3px rgba(78,201,176,.16); }
 .dot.stale { background: var(--warn); box-shadow: 0 0 0 3px rgba(232,163,61,.16); }
 .dot.off   { background: var(--ink-3); }
+.dot.bad   { background: var(--lose); box-shadow: 0 0 0 3px rgba(232,102,74,.16); }
+
+/* 输入链路小标：顶栏常驻。它决定"能不能出招"，比 PID 重要。 */
+.top-link {
+  font-size: 10.5px;
+  line-height: 1.6;
+  padding: 0 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-3);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+.top-link.ok   { color: var(--win);  border-color: rgba(78,201,176,.30); background: rgba(78,201,176,.10); }
+.top-link.warn { color: var(--warn); border-color: rgba(232,163,61,.30); background: rgba(232,163,61,.10); }
+.top-link.bad  { color: var(--lose); border-color: rgba(232,102,74,.32); background: rgba(232,102,74,.10); }
 
 .top-pid {
   font-family: var(--font-num);

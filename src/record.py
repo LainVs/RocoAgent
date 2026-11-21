@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE = os.path.join(ROOT, "logs", "record_state.json")
+# 逐场快照（append-only）。每判完一场一行，UI 用它算"今日/近 20 局"。
+# 和 STATE 是两件事：STATE 是基线，SNAP 是历史。
+SNAP = os.path.join(ROOT, "logs", "record_snapshots.jsonl")
 
 OPEN_CLICK = (191, 943)          # 客户区：历史战绩按钮
 CLOSE_CLICK = (2012, 422)        # 客户区：面板右上角 X
@@ -134,12 +137,30 @@ def load_state():
 
 
 def save_state(wins, losses):
+    """存基线 + 追加一行逐场快照。
+
+    为什么两份（2026-11-21）：
+    `record_state.json` 只有**当前值**，回答不了"今天打得怎么样"。
+    快照是 append-only 的，每判完一场一行，UI 用它算今日/近 20 局增量。
+    写失败不影响基线 —— 两件事互相独立。
+    """
     import json
+    prev = load_state()
+    ts = time.strftime("%Y-%m-%d %H:%M:%S")
     try:
         with open(STATE, "w", encoding="utf-8") as f:
-            json.dump({"wins": wins, "losses": losses,
-                       "at": time.strftime("%Y-%m-%d %H:%M:%S")}, f)
+            json.dump({"wins": wins, "losses": losses, "at": ts}, f)
     except OSError:
+        pass
+    try:
+        dw = int(wins) - int(prev[0]) if prev else 0
+        dl = int(losses) - int(prev[1]) if prev else 0
+        with open(SNAP, "a", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": ts, "wins": int(wins),
+                                "losses": int(losses),
+                                "dw": dw, "dl": dl},
+                               ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
         pass
 
 

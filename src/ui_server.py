@@ -73,6 +73,11 @@ TURNS = os.path.join(LOGS, "turns.jsonl")
 ROUNDS = os.path.join(LOGS, "rounds.jsonl")
 RESULTS = os.path.join(LOGS, "results.jsonl")
 SEASON = os.path.join(LOGS, "record_state.json")
+# 逐场快照：每判完一场追加一行。season 只有一个当前值，看不出"今天怎么样"。
+SNAPS = os.path.join(LOGS, "record_snapshots.jsonl")
+# 输入链路的两份日志（板子/传输方式）。只读，不碰硬件。
+ESP_LOG = os.path.join(LOGS, "espfast.log")
+BLE_LOG = os.path.join(LOGS, "ble.log")
 
 DETACHED = 0x00000008
 NEW_GROUP = 0x00000200
@@ -398,6 +403,119 @@ def _invalidate_pids():
         _PID_CACHE["at"] = 0.0
 
 
+# ============================================================ 日志尾推断
+#
+# 为什么需要（2026-11-21 16:06 实测）
+# ----------------------------------
+# 机器人启动后如果板子不在，`robot.run()` 会在
+#     while not self.connect(): log("BLE waiting for board …")
+# 里循环最多 30 分钟。这段时间 bot_stdout.log 一直在更新，state_age 正常，
+# 于是 phase 判成 live —— 控制台显示绿色"运行中"，用户完全看不出
+# 它一步都没走。板子和日志都是现成信号，只是没人读。
+
+_TIME_RX = re.compile(r"^(\d{1,2}):(\d{2}):(\d{2})\s")
+
+
+def _line_age(line):
+    """日志行首 `HH:MM:SS` -> 距今秒数（跨天按 24h 回退）。取不到返回 None。"""
+    m = _TIME_RX.match(line)
+    if not m:
+        return None
+    try:
+        h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        lt = time.localtime()
+        t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                         h, mi, s, 0, 0, -1))
+    except (TypeError, ValueError, OverflowError):
+        return None
+    age = time.time() - t
+    if age < -300:                 # 时间戳比现在还晚 -> 昨天的日志
+        age += 86400
+    if age < -300 or age > 7 * 86400:
+        return None
+    return round(age, 1)
+
+
+def _tail_lines(path, max_bytes=16384):
+    """文件尾部若干行。按字节读，不整文件载入（日志会到几十 MB）。"""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > max_bytes:
+                f.seek(size - max_bytes)
+            data = f.read()
+    except OSError:
+        return []
+    return data.decode("utf-8", "replace").splitlines()
+
+
+# 板子链路。**顺序有意义**：从日志尾往前找第一条能定性的行。
+_ESP_CONNECTED = re.compile(r"\bconnected\s+[0-9A-Fa-f:]{11,}")
+_ESP_OFFLINE = re.compile(r"link down|cached->.*failed|scan->.*failed|"
+                          r"was not found|daemon down")
+
+
+def board_status():
+    """ESP32 输入链路状态。只读日志，不碰硬件（不会抢 BLE）。
+
+    取值：connected / offline / idle（守护在、没连板） / None（没日志）。
+    age 是那条日志的年龄 —— 旧日志不能当"现在已连上"。
+    """
+    state, text, age = None, None, None
+    for ln in reversed(_tail_lines(ESP_LOG)):
+        if _ESP_CONNECTED.search(ln):
+            state, text, age = "connected", ln.strip(), _line_age(ln)
+            break
+        if _ESP_OFFLINE.search(ln):
+            state, text, age = "offline", ln.strip(), _line_age(ln)
+            break
+        if "daemon up" in ln:
+            state, text, age = "idle", ln.strip(), _line_age(ln)
+            break
+
+    transport = None
+    for ln in reversed(_tail_lines(BLE_LOG, 8192)):
+        m = re.search(r"transport:\s*(.+?)\s*$", ln)
+        if m:
+            transport = m.group(1)
+            break
+    return {"state": state, "text": text, "age": age,
+            "transport": transport}
+
+
+# 机器人"现在在干嘛"。同样从日志尾往前找第一条能定性的行。
+# `waiting_board` 必须排在 `running` 前面，否则心跳行会把它盖掉。
+_ACTIVITY = (
+    ("waiting_board", re.compile(r"BLE waiting for board")),
+    ("ble_failed",    re.compile(r"BLE FAILED")),
+    ("focus_lost",    re.compile(r"FOCUS LOST")),
+    ("board_offline", re.compile(r"\(board offline\)")),
+    ("match_end",     re.compile(r"=== MATCH .* END")),
+    ("lobby",         re.compile(r"advance splash")),
+    ("running",       re.compile(r"\bstate battle=|bot up|link via")),
+)
+
+
+def bot_activity():
+    """最后一条能定性的日志 + 最近一段里各类事件的出现次数。
+
+    counts 只统计尾部窗口（约 16KB ≈ 200~400 行），够用来回答
+    "这次运行里焦点丢了几次"，又不会读整份日志。
+    """
+    lines = _tail_lines(BOT_LOG)
+    counts = {}
+    for _name, rx in _ACTIVITY:
+        n = sum(1 for ln in lines if rx.search(ln))
+        if n:
+            counts[_name] = n
+    for ln in reversed(lines):
+        for name, rx in _ACTIVITY:
+            if rx.search(ln):
+                return {"event": name, "text": ln.strip()[:160],
+                        "age": _line_age(ln), "counts": counts}
+    return {"event": None, "text": None, "age": None, "counts": counts}
+
+
 def bot_status():
     """机器人 + 守护进程状态。这个接口会被高频轮询，所以做得便宜。"""
     robot, sup = _pids_both()
@@ -418,6 +536,29 @@ def bot_status():
             pass
 
     running = bool(robot)
+    act = bot_activity()
+    board = board_status()
+
+    # phase：在原来的 stopped / stale / live 之外，把"卡在哪一步"也说出来。
+    # 优先级：进程没跑 > 输入/焦点问题 > 数据新鲜度。
+    # 注意 running 事件（心跳）会自然覆盖掉旧的 focus_lost —— 那是"已恢复"，
+    # 真正的次数看 activity.counts。
+    ev = act.get("event")
+    if not running:
+        phase = "stopped"
+    elif ev == "waiting_board":
+        phase = "waiting_board"
+    elif ev == "ble_failed":
+        phase = "ble_failed"
+    elif ev == "focus_lost":
+        phase = "focus_lost"
+    elif ev == "board_offline":
+        phase = "board_offline"
+    elif state_age is not None and state_age <= STALE_S:
+        phase = "live"
+    else:
+        phase = "stale"
+
     return {
         "running": running,
         "robot_pids": robot,
@@ -426,10 +567,11 @@ def bot_status():
         "log_age": log_age,
         "log_at": log_at,
         "state_age": state_age,
-        # 三态：没跑 / 跑着但没数据 / 正常
-        "phase": ("stopped" if not running else
-                  "stale" if (state_age is None or state_age > STALE_S) else
-                  "live"),
+        "phase": phase,
+        # 最后一条能定性的日志（前端拿它显示"等待板子 12s"）
+        "activity": act,
+        # 输入链路（ESP32）。只读日志，不碰硬件。
+        "board": board,
     }
 
 
@@ -504,6 +646,45 @@ def _season_record():
         return None
 
 
+def _progress():
+    """逐场快照的增量统计（今日 / 近 20 局 / 起算点）。
+
+    为什么需要单独一份数据（2026-11-21）：
+    season（游戏内累计战绩）只有一个当前值，44.8% 这种数字一天动不了
+    0.3 个百分点 —— 拿它判断"这次改动有没有用"等于没有反馈。
+    `record.save_state()` 每判完一场写一行快照，这里做差分。
+
+    返回 None 表示还没有快照（机器人没在大厅读到过战绩）。
+    """
+    rows = CACHE.tail_jsonl(SNAPS, 2000)
+    if not rows:
+        return None
+
+    def agg(items):
+        w = sum(1 for r in items if int(r.get("dw") or 0) > 0)
+        l = sum(1 for r in items if int(r.get("dl") or 0) > 0)
+        d = w + l
+        return {
+            "wins": w, "losses": l, "decided": d,
+            "rate": round(100.0 * w / d, 1) if d else None,
+        }
+
+    today = time.strftime("%Y-%m-%d")
+    today_rows = [r for r in rows if str(r.get("ts", "")).startswith(today)]
+    first = rows[0]
+    return {
+        "today": agg(today_rows),
+        "recent20": agg(rows[-20:]),
+        # 起算点：增量数据从哪一次读数开始
+        "since": {
+            "at": first.get("ts"),
+            "wins": first.get("wins"),
+            "losses": first.get("losses"),
+        },
+        "count": len(rows),
+    }
+
+
 def stats():
     """战绩统计。
 
@@ -576,6 +757,8 @@ def stats():
         "reliable": bool(decided >= 20) and not badge_stuck,
         # 权威口径：游戏自己记的累计胜负（不依赖推断）
         "season": season,
+        # 增量口径：今日 / 近 20 局（由逐场快照算，没快照时为 None）
+        "progress": _progress(),
         # 段位卡读数卡死时，results.jsonl 推出来的胜率整体不可用
         "badge_stuck": badge_stuck,
         # 前端该拿哪个当主指标：有 season 就用 season

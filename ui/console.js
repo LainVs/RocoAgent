@@ -70,7 +70,31 @@ const PHASE_TEXT = {
   live: '运行中',
   stale: '运行中（无数据）',
   stopped: '未运行',
+  // 下面四种是"进程活着但卡住了"——不能再用绿灯。
+  waiting_board: '等待板子',
+  ble_failed: '板子连接失败',
+  focus_lost: '焦点丢失',
+  board_offline: '板子离线',
 };
+
+// 状态 -> 指示灯等级。bad 用红色，stale 用琥珀色。
+const PHASE_LEVEL = {
+  live: 'live',
+  stale: 'stale',
+  stopped: 'off',
+  waiting_board: 'stale',
+  ble_failed: 'bad',
+  focus_lost: 'stale',
+  board_offline: 'bad',
+};
+
+// 秒数 -> 人话。状态文案里要带"多久了"，否则用户不知道是新问题还是旧残留。
+function fmtAge(s) {
+  if (s == null) return '';
+  if (s < 90) return Math.round(s) + 's';
+  if (s < 5400) return Math.round(s / 60) + 'min';
+  return Math.round(s / 3600) + 'h';
+}
 
 async function refreshBot() {
   let b;
@@ -86,10 +110,39 @@ async function refreshBot() {
   const text = $('botText');
   const pid = $('botPid');
 
-  dot.className = 'dot ' + (b.phase === 'live' ? 'live'
-    : b.phase === 'stale' ? 'stale' : 'off');
-  text.textContent = PHASE_TEXT[b.phase] || b.phase;
+  // 状态灯 + 文案。新增的四种"卡住"状态必须和 live 区分开 ——
+  // 2026-11-21 16:06 那次板子掉线，界面上一直是绿色"运行中"。
+  const phase = b.phase || 'stopped';
+  dot.className = 'dot ' + (PHASE_LEVEL[phase] || 'off');
+  const act = b.activity || {};
+  let label = PHASE_TEXT[phase] || phase;
+  if (phase !== 'live' && phase !== 'stopped' && act.age != null) {
+    label += ' ' + fmtAge(act.age);
+  }
+  text.textContent = label;
+  text.title = act.text || '';
   pid.textContent = b.pid ? 'PID ' + b.pid : '';
+
+  // 输入链路的小标：这是"能不能打"的第一道门，放在顶栏一眼可见。
+  const link = $('botLink');
+  if (link) {
+    const bd = b.board || {};
+    // "connected" 也可能是很久以前的日志（espfast 停了不会写新行）。
+    // 超过 10 分钟就降级成"最后已连"，不能拿旧记录当现在连上了。
+    const stale = bd.age != null && bd.age > 600;
+    if (!bd.state) {
+      link.hidden = true;
+    } else {
+      link.hidden = false;
+      link.className = 'top-link ' + (bd.state === 'offline' ? 'bad'
+        : bd.state === 'connected' && !stale ? 'ok' : 'warn');
+      link.textContent = bd.state === 'offline' ? '板子离线'
+        : bd.state === 'connected'
+          ? (stale ? `板子 ${fmtAge(bd.age)}前` : '板子已连')
+          : '板子待连';
+      link.title = [bd.transport, bd.text].filter(Boolean).join(' · ');
+    }
+  }
 
   $('btnStart').disabled = b.running;
   $('btnStop').disabled = !b.running;
@@ -127,13 +180,43 @@ async function refreshHealth() {
 
   const items = [];
 
+  // 0. 输入链路（ESP32）—— 能不能打的第一道门。
+  //
+  // 为什么放在第一位：2026-11-21 16:06 机器人挂掉的原因就是板子掉线
+  // （`link down, reconnecting` → `Device not found`），而当时的健康
+  // 面板只关心"血条/技能栏"，看起来一切正常。能不能出招，先看这条。
+  const bd = b && b.board;
+  if (!b) {
+    items.push(healthItem('输入链路', '服务未连接', 'bad'));
+  } else if (!bd || !bd.state) {
+    items.push(healthItem('输入链路', '无日志', ''));
+  } else if (bd.state === 'connected') {
+    const stale = bd.age != null && bd.age > 600;
+    items.push(healthItem('输入链路',
+      `${stale ? '最后已连' : '已连'} <small>${bd.age != null ? fmtAge(bd.age) + '前' : ''}</small>`,
+      stale ? 'warn' : 'ok', 'has-sub'));
+  } else if (bd.state === 'offline') {
+    items.push(healthItem('输入链路',
+      `离线 <small>${bd.age != null ? fmtAge(bd.age) + '前' : '无时间'}</small>`,
+      'bad', 'has-sub'));
+  } else {
+    items.push(healthItem('输入链路', '守护在、未连板', 'warn'));
+  }
+
   // 1. 机器人进程
   if (!b) {
     items.push(healthItem('机器人', '服务未连接', 'bad'));
   } else if (b.phase === 'stopped') {
     items.push(healthItem('机器人', '未运行', ''));
   } else {
-    items.push(healthItem('机器人', `PID ${b.pid}`, 'ok'));
+    // 非 live 时把"卡在哪"写进同一格，避免用户只看绿灯。
+    const act = b.activity || {};
+    const stuck = b.phase !== 'live';
+    const sub = stuck
+      ? ` <small>${PHASE_TEXT[b.phase] || b.phase}${act.age != null ? ' ' + fmtAge(act.age) : ''}</small>`
+      : '';
+    items.push(healthItem('机器人', `PID ${b.pid}${sub}`,
+      stuck ? 'warn' : 'ok', sub ? 'has-sub' : ''));
   }
 
   // 2. 状态推送新鲜度
