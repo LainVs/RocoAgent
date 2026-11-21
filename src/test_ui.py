@@ -110,6 +110,31 @@ def test_api(port):
         except Exception as e:
             ok(False, path, str(e)[:60])
 
+    # /api/team 必须把 moves 展开成技能（名字/属性/威力/耗能）。
+    # 配置过期是最隐蔽的 bug（docs/AGENTS.md），UI 不露出来就没法人工核对。
+    try:
+        t = get(port, "/api/team")
+        slots = t.get("slots") or []
+        ok(len(slots) > 0, "/api/team 有槽位", "%d 个" % len(slots))
+        if slots:
+            s0 = slots[0]
+            ok("skills" in s0, "槽位带 skills 展开", str(list(s0.keys())[:8]))
+            sk = s0.get("skills") or []
+            ok(len(sk) == len(s0.get("moves") or []),
+               "skills 数与 moves 数一致",
+               "%d vs %d" % (len(sk), len(s0.get("moves") or [])))
+            # 至少一个技能能查到名字（全查不到说明 id 或联表错了）
+            named = [x for x in sk if x.get("name")]
+            ok(bool(named) or not sk, "技能能查到名字",
+               "%d/%d" % (len(named), len(sk)))
+            # 查不到的必须留 {id, name: None}，不能静默丢掉
+            for x in sk:
+                if not x.get("name"):
+                    ok("id" in x, "查不到的技能保留 id", str(x))
+                    break
+    except Exception as e:
+        ok(False, "/api/team 技能展开", str(e)[:60])
+
     # 战绩口径（2026-11-21）：必须以"游戏内累计战绩"为主。
     #
     # 背景：results.jsonl 里 92% 是 flat，其中 100 条是段位卡读数卡死

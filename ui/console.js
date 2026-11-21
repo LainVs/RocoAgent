@@ -900,6 +900,41 @@ function runImage({ el, name }) {
 /* ================================================================
    队伍
    ================================================================ */
+/* ================================================================
+   我方队伍
+   ================================================================ */
+
+// 每只的 4 个技能。顺序 = 卡槽顺序，机器人就是按这个顺序查耗能的。
+//
+// 为什么必须显示（2026-11-21）：`my_team.moves` 一过期，`my_card_costs()`
+// 就会把 1 费的技能当成 5 费，策略于是"莫名其妙选了低伤害技能"。
+// 文档把这条记为「最隐蔽的 bug」，但界面从来没把配置露出来过 ——
+// 用户无法人工核对"配置里的卡"和"实盘看到的卡"是否一致。
+function skillRows(s) {
+  const list = s.skills || [];
+  if (!list.length) {
+    return `<div class="slot-moves empty-moves">未配置技能</div>`;
+  }
+  const cells = list.map((k, i) => {
+    const missing = !k.name;
+    const meta = missing ? `#${k.id}` : [
+      k.element,
+      k.power ? `威力 ${k.power}` : null,
+      k.cost != null ? `${k.cost} 费` : null,
+    ].filter(Boolean).join(' · ');
+    return `<span class="mv${missing ? ' missing' : ''}"
+                  title="${missing ? '技能库里查不到这个 id' : ''}">
+      <i>${i + 1}</i>
+      <b>${esc(k.name || '未知')}</b>
+      <em>${esc(meta)}</em>
+    </span>`;
+  }).join('');
+  const warn = list.length !== 4
+    ? `<div class="mv-warn">只有 ${list.length} 个技能（战斗需要 4 个）</div>`
+    : '';
+  return `<div class="slot-moves">${cells}</div>${warn}`;
+}
+
 async function refreshTeam() {
   let d;
   try {
@@ -936,6 +971,7 @@ async function refreshTeam() {
           HP ${s.max_hp || '—'} · 攻 ${s.atk || '—'} ·
           防 ${s.def || '—'} · 速 ${s.spe || '—'}
         </div>
+        ${skillRows(s)}
       </div>
     </div>`).join('');
 

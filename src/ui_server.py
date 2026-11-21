@@ -901,6 +901,15 @@ def dex(q="", limit=60, offset=0):
 
 
 def team():
+    """我方 6 只 + 每只的 4 个技能（展开成名字/属性/威力/耗能）。
+
+    为什么必须把技能也带出来（2026-11-21）：
+    `my_team.moves` 存的是技能 ID 数组，**顺序 = 卡槽顺序**。
+    机器人靠这张表查耗能（`my_card_costs`）和技能类型（`skill_kind`），
+    配置一过期，能耗惩罚就会错几倍 —— 表现为"策略选了低伤害技能"，
+    很容易被误判成策略 bug（docs/AGENTS.md 记为"最隐蔽的 bug"）。
+    以前 UI 把 `moves` 原样返回却**从不显示**，等于没法人工核对。
+    """
     try:
         db = _db()
     except Exception as e:
@@ -912,13 +921,44 @@ def team():
             "t.moves, t.note "
             "FROM my_team t LEFT JOIN species s ON s.id = t.species_id "
             "ORDER BY t.slot").fetchall()
-        slots = []
+
+        # 一次把用到的技能全查出来（4 个槽 × 最多 6 只 = 24 个 id）
+        want = set()
+        parsed = []
         for r in rows:
             d = dict(r)
             try:
+                ids = json.loads(d.get("moves") or "[]")
+            except (ValueError, TypeError):
+                ids = []
+            ids = [int(x) for x in ids if str(x).isdigit()][:4]
+            parsed.append((d, ids))
+            want.update(ids)
+
+        skills = {}
+        if want:
+            q = ("SELECT id, name, type_name, power, cost FROM skills "
+                 "WHERE id IN (%s)" % ",".join("?" * len(want)))
+            for s in db.execute(q, tuple(sorted(want))).fetchall():
+                skills[int(s["id"])] = {
+                    "id": int(s["id"]), "name": s["name"],
+                    "element": s["type_name"], "power": s["power"],
+                    "cost": s["cost"],
+                }
+
+        slots = []
+        for d, ids in parsed:
+            try:
                 d["types"] = json.loads(d.pop("type_names") or "[]")
-            except Exception:
+            except (ValueError, TypeError):
                 d["types"] = []
+            # 保留原始 id 数组（老前端可能在用），另给展开后的技能表。
+            # 查不到的 id 也保留一条 {id, name: None} —— 让"库里没有"
+            # 和"没配"能区分开，不要静默丢掉。
+            d["moves"] = ids
+            d["skills"] = [skills.get(i, {"id": i, "name": None,
+                                          "element": None, "power": None,
+                                          "cost": None}) for i in ids]
             slots.append(d)
         return {"slots": slots}
     except Exception as e:
@@ -1587,7 +1627,7 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        # 缓存头统一由 end_headers() 加，这里不重复发
         self.end_headers()
         try:
             self.wfile.write(body)
@@ -1597,6 +1637,32 @@ class Handler(SimpleHTTPRequestHandler):
     def _query(self):
         u = urlparse(self.path)
         return u.path, {k: v[0] for k, v in parse_qs(u.query).items()}
+
+    def end_headers(self):
+        """所有响应都禁缓存（2026-11-21）。
+
+        ★ 为什么必须全局加
+        -----------------
+        原来只有 `/api/*` 的 JSON 响应带 `no-store`，静态资源
+        （app.js / style.css / index.html）走父类的 `do_GET`，**没有缓存头**。
+
+        WebView2 会缓存这些文件。改了前端代码后重启悬浮窗，
+        实际加载的还是旧缓存 —— 表现为：
+          · "改了半小时代码完全没效果"
+          · `evaluate_js("typeof 新函数")` 返回 'undefined'
+          · 独立 webview 测同一页面却行为不同（它是新开的，没缓存）
+
+        实测代价：flexShrink 那个修复在独立窗口里量出 438，
+        真实悬浮窗一直量出 151，排查了半小时才发现是缓存。
+
+        悬浮窗是本地单用户工具，每次启动都该拿最新代码，
+        禁缓存没有性能顾虑（文件在本地，读取是毫秒级）。
+        """
+        self.send_header("Cache-Control", "no-store, no-cache, "
+                         "must-revalidate, max-age=0")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
+        super().end_headers()
 
     # ---------- GET
     def do_GET(self):

@@ -880,6 +880,58 @@ button, input, select {
   .brand small { display: none; }
 }
 
+/* ── 队伍：每个槽位的 4 个技能 ──────────────────────────────
+   顺序 = 卡槽顺序（机器人按这个顺序查耗能）。 */
+.slot-moves {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+.slot-moves .mv {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 7px 2px 4px;
+  border-radius: 5px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  font-size: 10.5px;
+  line-height: 1.6;
+}
+.slot-moves .mv i {
+  font-style: normal;
+  font-family: var(--font-num);
+  font-size: 9.5px;
+  color: var(--ink-3);
+  min-width: 8px;
+  text-align: center;
+}
+.slot-moves .mv b {
+  font-weight: 500;
+  color: var(--ink-0);
+}
+.slot-moves .mv em {
+  font-style: normal;
+  color: var(--ink-3);
+  font-family: var(--font-num);
+  font-size: 9.5px;
+}
+.slot-moves .mv.missing {
+  border-color: rgba(232, 102, 74, .40);
+  background: rgba(232, 102, 74, .08);
+}
+.slot-moves .mv.missing b { color: var(--lose); }
+.slot-moves.empty-moves {
+  font-size: 11px;
+  color: var(--warn);
+}
+.mv-warn {
+  margin-top: 5px;
+  font-size: 10.5px;
+  color: var(--warn);
+}
+
 /* ── 机器人这一手 ───────────────────────────────────────── */
 .dec-main {
   display: flex;
