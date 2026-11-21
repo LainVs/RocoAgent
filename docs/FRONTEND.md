@@ -216,6 +216,43 @@
 `board.state == "connected"` 也可能是**很久以前**的日志（espfast 停了不写新行），
 所以前端在 `age > 600s` 时降级成「最后已连 X 前」（琥珀），不按绿色处理。
 
+### 3.2b `game`：窗口分辨率是否匹配标定基准（2026-11-21 新增）
+
+```jsonc
+"game": {
+  "found": true, "hwnd": 262818,
+  "w": 2074, "h": 1607,
+  "aspect": 1.291,              // w / h
+  "base": [2560, 1600],         // winio.BASE_CLIENT_W/H
+  "scale_ok": false,            // 长宽比偏离基准 > 4%
+  "iconic": false,
+  "note": "窗口 2074x1607（比例 1.29）与标定基准 2560x1600（比例 1.60）不一致，固定 ROI 会变形"
+}
+```
+
+**为什么这条必须有**：`winio.Screen.scale()` 是
+
+```python
+return (cw / 2560.0, ch / 1600.0)     # x、y 分别算
+```
+
+窗口长宽比和基准不一致时，x 和 y 的缩放系数就不同（实测 0.810 vs
+1.004，差 24%），所有写死的 ROI 被非等比拉伸 —— 血条压扁、技能栏错位。
+表现是"今天怎么老读错"，而界面上没有任何东西指向分辨率。
+
+**只读实现**：`ui_server.game_status()` 自己 `EnumWindows` +
+`GetWindowRect`，**不**构造 `robot.Screen()`（那会开 mss、触发 DPI
+探测、刷新缓存）。判据和 `winio.find_game()` 一致（标题含「洛克王国」
+且类名含 Unreal）。
+
+前端规则：
+
+- `found=false` → 顶栏红标「无游戏窗口」，健康格「未找到」
+- `scale_ok=false` → 顶栏琥珀 `2074×1607`，健康格「分辨率」并附基准
+- 等比但 `iconic=true` → 「已最小化」
+- 都正常 → 顶栏不显示，健康格只写尺寸
+
+
 ### 3.3 `/api/decision`（2026-11-21 新增）
 
 `live_state.json` 只有"我看到什么"，没有"我要做什么"。决策在
