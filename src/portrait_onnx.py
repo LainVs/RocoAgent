@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""portrait_onnx.py —— 用 roco-cal 的 ONNX 模型识别精灵（角色立绘通道）。
+"""portrait_onnx.py —— 用 roco-cal 的 ONNX 模型识别精灵。
 
 为什么需要它
 ------------
@@ -7,15 +7,49 @@
 roco-cal 训练了一个 620 类的分类器，实测在我们的真实战斗帧上
 置信度 0.76~1.00，覆盖面远超模板匹配。
 
-关键：**模型认的是战场上的 3D 角色立绘，不是 HUD 小头像。**
+关键：**输入框必须取 HUD 头像，不能取固定百分比的立绘框。**
 实测喂 HUD 头像 84x76 会输出 "000无"（框里没内容）。
+
+★ 输入框该取哪里（2026-11-21 重大修正）
+---------------------------------------
+上面那句**是错的**。实测 165 张 HUD 头像上 Top-1 82.9%/89.5%，
+模型完全认 HUD 头像。
+
+真正该避免的是**固定百分比的立绘框**（`region()`）：
+
+    config/portrait_region.json
+        foe  x=0.645 y=0.355 w=0.075 h=0.195
+        self x=0.225 y=0.55  w=0.09  h=0.15
+
+这些框框的是**会在场地里走动的 3D 精灵模型**。实测在真实对战帧上
+把框画出来看：
+
+    233445  REG-self 框住我方精灵的尾巴/身体中段
+    233747  REG-self 框住我方精灵的后腿
+    234212  REG-self 框住人物 NPC 的腰
+
+同一批帧上三通道对比（帧 `_fit` 到基准 2560x1600，真值取自帧内名字条）：
+
+    A. region() 立绘框          0/8 =   0%   置信 0.52~0.99 随机
+    B. HUD 头像紧框             5/8 =  62%
+    C. HUD 头像 + margin=10     6/8 =  75%   命中时多为 1.00  <- 最佳
+
+所以本模块的**默认输入改为 HUD 头像框**，`region()` 降级为显式开关
+（`source="region"`），只留给 `--selftest` 和以后换目标检测时用。
+
+★ 高置信也会错
+--------------
+HUD 通道实测有一例 `帕帕斯卡 -> 龙息帕尔 conf=1.00`。所以**不能只信置信度**，
+调用方（`foe_ident`）必须保留属性硬约束和连续帧防抖。
 
 双通道设计
 ----------
-    A. HUD 头像（portraits.py，快 <5ms）—— 每帧轮询
-    B. 角色立绘（本模块，准 0.76+）    —— 换人/需要确认时
+    A. HUD 头像模板（portraits.py，快 <5ms）—— 每帧轮询
+    B. HUD 头像 ONNX（本模块）           —— 每帧轮询
 
-两者由 `identify_fused()` 融合，冲突时以 B 为准（立绘信息量大）。
+两者由 `identify_fused()` 融合。注意 `identify_fused()` 里的
+`portrait_result` 现在默认也来自 HUD 框，所以"立绘更权威"的旧假设不再成立，
+融合靠的是**置信度门槛 + 连续帧稳定**，不是通道优先级。
 
 模型规格（与上游 Rust 代码逐行对齐）
 ------------------------------------
@@ -164,38 +198,97 @@ def predict(img, topk=3):
     return out
 
 
-def predict_region(screen, side="foe", topk=3):
-    """从整屏里按标定区域裁剪后识别。
+def hud_crop(screen, side="foe", margin=None):
+    """按 HUD 头像框裁一张图（RGB）。失败返回 None。
 
-    screen 需要提供 grab_client((x,y,w,h)) -> RGB。
+    这是**默认输入**。依据见模块 docstring：
+    HUD 头像框 6/8 = 75%（命中时多为 1.00），而立绘百分比框 0/8 = 0%。
+
+    `margin` 默认取 `portraits.SEARCH_MARGIN`（10）。实测带 margin 比紧框
+    好（62% -> 75%）：紧框差几个像素就把头像边缘切掉，ONNX 看到的构图
+    和训练集不一致；留一圈边让它"居中"更接近训练分布。
+
+    `screen` 需要提供 `grab_client((x,y,w,h)) -> RGB` 和 `client_size`。
+    """
+    if screen is None:
+        return None
+    try:
+        import portraits
+        if margin is None:
+            margin = portraits.SEARCH_MARGIN
+        box_fn = (portraits.foe_box_for if side == "foe"
+                  else portraits.box_for)
+        cw, ch = getattr(screen, "client_size", None) or (2560, 1600)
+        box = box_fn(cw, ch, margin=margin)
+        img = screen.grab_client(box)
+    except Exception:
+        return None
+    if img is None or getattr(img, "size", 0) == 0:
+        return None
+    return img
+
+
+def predict_region(screen, side="foe", topk=3, source="hud"):
+    """从整屏里裁剪后识别。
+
+    source
+    ------
+    "hud"    （默认）HUD 头像框 —— 实测 6/8 = 75%，命中时多为 1.00
+    "region" 旧的百分比立绘框 —— 实测 0/8 = 0%，只在排查时用
+
+    `screen` 需要提供 `grab_client((x,y,w,h)) -> RGB`。
+
+    为什么要换默认
+    --------------
+    `region()` 框的是会在场地里走动的 3D 精灵，同一批帧里有时框到尾巴、
+    有时框到 NPC 的腰，识别结果等于瞎猜（置信度却仍是 0.5~0.99）。
+    详见模块 docstring 的实测表。
     """
     if not available() or screen is None:
         return []
-    d = region(side)
-    img = screen.grab_client((0, 0, 2560, 1600))
-    if img is None or img.size == 0:
-        return []
-    h, w = img.shape[:2]
-    x, y = int(d["x"] * w), int(d["y"] * h)
-    bw, bh = int(d["w"] * w), int(d["h"] * h)
-    crop = img[y:y + bh, x:x + bw]
-    if crop.size == 0:
+
+    if source == "region":
+        d = region(side)
+        img = screen.grab_client((0, 0, 2560, 1600))
+        if img is None or img.size == 0:
+            return []
+        h, w = img.shape[:2]
+        x, y = int(d["x"] * w), int(d["y"] * h)
+        bw, bh = int(d["w"] * w), int(d["h"] * h)
+        crop = img[y:y + bh, x:x + bw]
+        if crop.size == 0:
+            return []
+        return predict(crop, topk=topk)
+
+    crop = hud_crop(screen, side)
+    if crop is None:
         return []
     return predict(crop, topk=topk)
 
 
 # ------------------------------------------------------------------ 双通道融合
 
-# 立绘通道（ONNX）的"可以直接压过模板通道"阈值。
+# ONNX 通道的"可以直接压过模板通道"阈值。
 #
-# 依据（2026-11-21 定标，src/portrait_calib.py --compare）：
-#   145 张已标注敌方头像，两条通道在同一批数据上对比（模板通道留一验证）
+# 依据（2026-11-21 定标，165 张已标注头像留一验证）：
 #
-#     立绘 ONNX   Top-1 82.8%    conf>=0.90 时 93.2%（覆盖 81%）
 #     模板匹配     Top-1 42.1%    score>=0.85 时 94.6%（但只覆盖 26%）
+#     ONNX         Top-1 85.6%    conf>=0.90 时 96.6%（覆盖 72%）
 #
-# 所以"模板通道更权威"这个旧结论是反的。取 0.92 比 0.90 更保守一点，
-# 和下面"已有认定时改用新答案"的门槛保持一致。
+# ★ 2026-11-21 重要变更：两条通道现在看**同一张图**
+# -------------------------------------------------
+# 以前 ONNX 喂的是固定百分比立绘框（框 3D 精灵），模板喂 HUD 头像框，
+# 所以"两条一致"是强证据。现在 `predict_region()` 默认也走 HUD 头像框，
+# 两条通道看的是同一张图 —— 一致率实测 49%（81/165）。
+#
+# 这不影响下面的融合顺序，但**改变了语义**：
+#   · 一致 -> 两个不同模型对同一张图给出同一答案，比单模型可靠
+#   · 不一致 -> 只是"两个模型看法不同"，不代表哪条通道"看错了东西"
+#
+# 融合顺序本身仍然成立，因为下面第 2 步（优先模板）是**实测出来的**：
+#   ONNX conf<0.92 且 模板 conf>=0.60 的 16 张里，模板对 15 张（94%），
+#   ONNX 只对 7 张（44%）。模板在这个区间确实更准（模板对同类变体更敏感，
+#   ONNX 倾向把相似种认成常见种）。
 ONNX_OVERRIDE_CONF = 0.92
 
 
@@ -212,24 +305,39 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
     所以"游戏界面显示的，绝对正确"这个理由不成立 —— 实测留一验证
     Top-1 只有 42.1%（同库里的帧除外，那些会被自己以 1.00 匹配到）。
 
+    ⚠ 2026-11-21：两条通道现在看同一张图
+    ------------------------------------
+    `portrait_result` 默认也来自 HUD 头像框（见模块 docstring），
+    所以这里融合的是"模板匹配"和"ONNX 分类"两个模型对**同一张图**的看法，
+    不再是"HUD 头像 vs 3D 立绘"。
+
     hud_result      : portraits.identify() 返回的名字或 None
     portrait_result : predict_region() 返回的 [(name, conf), ...]
     hud_conf        : 模板通道的相似度分（0~1）
     prev            : 当前已认定的名字（防抖用）
-    stable_count    : 立绘通道连续给出同一答案的次数
+    stable_count    : ONNX 通道连续给出同一答案的次数
 
     实测教训（2026-11-21 01:12）
     ---------------------------
-    原策略"立绘 >=0.50 就覆盖"导致每 2 秒抖动：
+    原策略"ONNX >=0.50 就覆盖"导致每 2 秒抖动：
         FOE -> 绿草精灵(0.83) -> 白瑟(0.72) -> 燃薪虫(0.96) ...
-    因为立绘框里混了背景和 NPC，相邻帧答案不同。所以必须要求"连续 2 帧"。
+    那时 ONNX 框的是 3D 精灵，框里混了背景和 NPC，相邻帧答案不同。
+    所以必须要求"连续 2 帧"。（现在框已经换成 HUD 头像，不会这样抖，
+    但防抖保留 —— HUD 头像在换人瞬间也会有一两帧过渡。）
 
     当前策略（2026-11-21 定标后）
     ----------------------------
-      1. 立绘 conf >= 0.92 且连续 2 帧 -> 用立绘（定标 93.2%）
-      2. 否则模板通道 conf >= 0.60  -> 用模板
-      3. 否则立绘 conf >= 0.85 且连续 2 帧 -> 用立绘
+      1. ONNX conf >= 0.92 且连续 2 帧 -> 用 ONNX（定标 96.6%）
+      2. 否则模板通道 conf >= 0.60  -> 用模板（实测 94%，见 ONNX_OVERRIDE_CONF）
+      3. 否则 ONNX conf >= 0.85 且连续 2 帧 -> 用 ONNX
       4. 都不满足 -> 保持 prev（绝不抖）
+
+    第 3 步的现状（2026-11-21 实测）
+    -------------------------------
+    165 张里**没有一张**落进第 3 步的生效区间（模板<0.60 且 ONNX in
+    [0.85,0.92)），所以它现在等于死代码。而模板无效时 ONNX 在
+    [0.70,0.85) 只有 50% 准确 —— 说明 0.85 这个门槛偏松。
+    没改是因为没有实测样本支撑新门槛，等积累到样本再收紧。
     """
     top = portrait_result[0] if portrait_result else (None, 0.0)
     p_name, p_conf = top
@@ -239,21 +347,22 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
            "portrait": p_name, "portrait_conf": round(p_conf, 3),
            "kept": False}
 
-    # 1. 立绘高置信 + 稳定 -> 优先（定标 93.2%，比模板通道高一个量级）
+    # 1. ONNX 高置信 + 稳定 -> 优先（定标 96.6%，比模板通道高一个量级）
     if p_name and p_conf >= auth and stable_count >= 2:
         out.update(name=p_name, conf=p_conf, source="portrait")
         if hud_result and hud_result != p_name:
             out["conflict"] = True
         return out
 
-    # 2. 模板通道有结果 -> 用它（立绘不够自信时）
+    # 2. 模板通道有结果 -> 用它（ONNX 不够自信时）
     if hud_result and hud_conf >= 0.60:
         out.update(name=hud_result, conf=hud_conf, source="hud")
         if p_name and p_name != hud_result and p_conf >= 0.85:
             out["conflict"] = True
         return out
 
-    # 3. 模板没有 -> 立绘要"高置信 + 稳定"才敢用
+    # 3. 模板没有 -> ONNX 要"较高置信 + 稳定"才敢用
+    #    实测这一步从未生效（0/165），保留是为了模板库没覆盖的物种
     if p_name and p_conf >= 0.85 and stable_count >= 2:
         # 已有认定时，除非显著更高，否则不改
         if prev and prev != p_name and p_conf < auth:
@@ -274,6 +383,12 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
 # ------------------------------------------------------------------ 自检
 
 def _selftest():
+    """自检：同一帧上同时跑 region 和 HUD 两条路径，便于肉眼对比。
+
+    注意测试帧 `logs/shot/*.jpg` 是 1280x800（基准的一半），
+    所以 HUD 框要按比例缩放。线上 `grab_client` 会 `_fit` 到 2560x1600，
+    真实准确率比这里高（见模块 docstring 的 75%）。
+    """
     import glob
     import cv2
     if not available():
@@ -285,20 +400,38 @@ def _selftest():
     if not shots:
         print("没有测试帧")
         return 0
+
+    import portraits
     ok = 0
     for p in shots:
         im = cv2.imdecode(np.fromfile(p, dtype=np.uint8), cv2.IMREAD_COLOR)
         if im is None:
             continue
         h, w = im.shape[:2]
+        # 测试帧不是基准分辨率，box_for 的坐标要按比例缩
+        sx, sy = w / float(portraits.BASE_W), h / float(portraits.BASE_H)
+        print("  %s (%dx%d)" % (os.path.basename(p), w, h))
         for side in ("foe", "self"):
             d = region(side)
             x, y = int(d["x"] * w), int(d["y"] * h)
             bw, bh = int(d["w"] * w), int(d["h"] * h)
-            r = predict(im[y:y + bh, x:x + bw])
-            top = r[0] if r else ("(无)", 0.0)
-            print("  %-22s %-5s -> %-14s %.2f"
-                  % (os.path.basename(p), side, top[0], top[1]))
+            r_region = predict(im[y:y + bh, x:x + bw])
+
+            m = portraits.SEARCH_MARGIN
+            box_fn = (portraits.foe_box_for if side == "foe"
+                      else portraits.box_for)
+            hx, hy, hw, hh = box_fn(w, h, margin=m)
+            hx, hy = int(hx * sx), int(hy * sy)
+            hw, hh = max(1, int(hw * sx)), max(1, int(hh * sy))
+            r_hud = predict(im[max(0, hy):hy + hh, max(0, hx):hx + hw])
+
+            def fmt(r):
+                if not r:
+                    return "(无)"
+                return "%s %.2f" % (r[0][0][:12], r[0][1])
+
+            print("    %-5s region=%-20s hud=%-20s"
+                  % (side, fmt(r_region), fmt(r_hud)))
             ok += 1
     print("\n识别 %d 次" % ok)
     return 0
