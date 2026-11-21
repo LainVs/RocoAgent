@@ -548,7 +548,18 @@ def test_phase_infer():
         g = U.game_status()
         ok(isinstance(g, dict) and "found" in g, "game_status 结构",
            str(list(g.keys())))
-        if g.get("found"):
+        if g.get("found") and (g.get("iconic") or g.get("w") is None):
+            # 最小化 / 拿不到客户区尺寸：这是合法状态，不是失败。
+            # 2026-11-21 实测：游戏最小化时 GetClientRect 返回 0x0，
+            # 旧代码在这里算 aspect=None 然后 "%.2f" % None 抛 TypeError，
+            # **整个 /api/bot 500，控制台白屏**。所以这条要单独覆盖。
+            ok(g.get("aspect") is None, "最小化时不硬算长宽比",
+               str(g.get("aspect")))
+            ok(g.get("scale_ok") is None, "最小化时 scale_ok 是 None",
+               str(g.get("scale_ok")))
+            ok(bool(g.get("note")), "最小化时给出说明",
+               str(g.get("note"))[:40])
+        elif g.get("found"):
             ok(g.get("aspect") is not None, "算出窗口长宽比",
                "%.3f" % (g.get("aspect") or 0))
             ok(isinstance(g.get("scale_ok"), bool), "scale_ok 是布尔",

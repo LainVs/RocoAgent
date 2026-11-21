@@ -212,6 +212,12 @@ async function refreshBot() {
       res.className = 'top-link bad';
       res.textContent = '无游戏窗口';
       res.title = g.note || '';
+    } else if (g.iconic || g.w == null || g.h == null) {
+      // 最小化 / 拿不到客户区尺寸：顶栏显示原因，不显示 "null×null"
+      res.hidden = false;
+      res.className = 'top-link warn';
+      res.textContent = g.iconic ? '已最小化' : '尺寸未知';
+      res.title = g.note || '';
     } else if (g.scale_ok === false) {
       res.hidden = false;
       res.className = 'top-link warn';
@@ -308,12 +314,16 @@ async function refreshHealth() {
     items.push(healthItem('游戏窗口', '—', ''));
   } else if (!gm || gm.found !== true) {
     items.push(healthItem('游戏窗口', '未找到', 'bad'));
+  } else if (gm.iconic) {
+    // 最小化时必须先判：此时 GetClientRect 返回 0x0，w/h/aspect 都是 null，
+    // 落到下面的分支会显示「null×null」绿色（2026-11-21 实测踩到）。
+    items.push(healthItem('游戏窗口', '已最小化', 'warn'));
+  } else if (gm.w == null || gm.h == null) {
+    items.push(healthItem('游戏窗口', '尺寸未知', 'warn'));
   } else if (gm.scale_ok === false) {
     items.push(healthItem('分辨率',
       `${gm.w}×${gm.h} <small>基准 ${gm.base[0]}×${gm.base[1]}</small>`,
       'warn', 'has-sub'));
-  } else if (gm.iconic) {
-    items.push(healthItem('游戏窗口', '已最小化', 'warn'));
   } else {
     items.push(healthItem('游戏窗口', `${gm.w}×${gm.h}`, 'ok'));
   }

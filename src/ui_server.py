@@ -595,7 +595,20 @@ def game_status():
                 "note": "没找到游戏窗口（标题含「洛克王国」且类名含 Unreal）"}
 
     cw, ch = g["cw"], g["ch"]
-    aspect = round(cw / float(ch), 3) if ch else None
+    # 最小化时 GetClientRect 返回 0x0 —— 此时算不出比例，不能往下走。
+    # 踩过的坑（2026-11-21）：`cw / ch` 得到 ZeroDivisionError 之外的路径是
+    # `aspect = None`，然后 `"%.2f" % None` 抛 TypeError，
+    # **整个 /api/bot 请求 500，控制台白屏**。
+    if not cw or not ch:
+        return {"found": True, "hwnd": g["hwnd"],
+                "w": cw or None, "h": ch or None,
+                "win": [g["w"], g["h"]],
+                "aspect": None, "base": [_BASE_W, _BASE_H],
+                "scale_ok": None,
+                "iconic": bool(g["iconic"]),
+                "note": "游戏窗口最小化了，拿不到客户区尺寸"}
+
+    aspect = round(cw / float(ch), 3)
     base_aspect = _BASE_W / float(_BASE_H)
     scale_ok = None
     if aspect:
