@@ -74,14 +74,14 @@ SWITCH_COOLDOWN_S = 2.5
 SWITCH_RETRY_S = 2.0        # never re-enter _try_switch faster than this
 
 # UI anchors (window-relative), measured pixel-exactly from live frames
-LOBBY_BTN = (1980, 1480, 520, 150)     # 开始挑战 (gold blob centre ~2210,1567)
+LOBBY_BTN = (2000, 1440, 420, 140)     # 开始挑战 band（与 ACTION_BTN_BAND 一致）
 RESULT_BTN = (1150, 1470, 340, 130)    # 退出     (white blob centre ~1293,1532)
 # UI anchors, WINDOW-RELATIVE. They used to be absolute physical pixels measured
 # while the window happened to sit at (443,39); the moment the user dragged the
 # window the clicks landed on whatever used to be at that spot on the desktop -
 # "it is clicking a bit above the 开始挑战 button". Anything tied to the window
 # must be stored relative to the window rect and offset at click time.
-LOBBY_BTN_REL = (2210, 1567)             # 开始挑战 centre (window-relative)
+LOBBY_BTN_REL = (2197, 1524)             # 开始挑战 centre (window-relative)
 RESULT_BTN_REL = (1293, 1530)            # 退出centre
 ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash screens
 # 结算/升段页右上角的「略略略」才是跳过按钮。中间那块徽章点了没用（实测连点
@@ -89,7 +89,7 @@ ADVANCE_REL = (1290, 1238)               # neutral spot that advances splash scr
 RESULT_SKIP_REL = (2303, 238)
 # 对面 HUD 的名字条（头像右边），认不出对面时和头像一起存，供离线标注
 FOE_NAME_BOX = (2225, 50, 210, 55)
-ACTION_BTN_BAND = (1100, 1480, 400, 150)   # bottom-centre button slot
+ACTION_BTN_BAND = (2000, 1440, 420, 140)   # bottom-right button slot
 CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
 RESULT_LIST_BAND = (120, 330, 420, 900)    # the six "我方战况" rows
