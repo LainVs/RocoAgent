@@ -461,7 +461,21 @@ def main():
     try:
         import webview
     except ImportError:
-        print("缺少 pywebview：python -m pip install pywebview")
+        # 本机实测（2026-11-21）：这两个解释器的能力是**分裂**的 ——
+        #   .venv（AGENTS.md 指定的 $py）有 bleak，但**没有** pywebview
+        #   系统 Python 的用户 site-packages 有 pywebview，但**没有** bleak
+        # 所以用 $py 跑悬浮窗会走到这里。不写清楚的话，表现是
+        # "命令跑完了，可是没有窗口"，很难判断是崩了还是没启动。
+        sp = os.path.join(os.environ.get("APPDATA", ""), "Python",
+                          "Python%d%d" % sys.version_info[:2], "site-packages")
+        print("缺少 pywebview，悬浮窗起不来。")
+        print("  当前解释器: %s" % sys.executable)
+        print("  pywebview 装在: %s" % sp)
+        print("  两种解法：")
+        print("    1) 界面用系统 Python 开：  python src\\ui.py")
+        print("       （机器人仍然必须用 .venv，因为它需要 bleak）")
+        print("    2) 给 venv 补上：          <venv>\\Scripts\\python.exe "
+              "-m pip install pywebview")
         return 2
 
     print("悬浮窗")

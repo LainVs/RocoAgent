@@ -53,7 +53,7 @@ def main():
         ],
         matchup={"out": 3.0, "in": 0.5, "tag": "双重克制"},
         verdict={"kill_turns": 2, "die_turns": 4, "order": "first"},
-        system=LS.system_block(fps_ms=4.2,
+        system=LS.system_block(fps_ms=4.2, budget_ms=120,
                                detectors={"bar": True, "skillbar": True,
                                           "countdown": True}),
     )
@@ -67,6 +67,11 @@ def main():
     check(state["skills"][3]["usable"] is False, "usable 标记")
     check(state["foe"]["hp_range"] == [349, 419], "hp_range 转 list")
     check(state["matchup"]["out"] == 3.0, "matchup.out")
+    check(state["system"]["budget_ms"] == 120, "system.budget_ms 透传")
+    check(state["system"]["fps_ms"] == 4.2, "system.fps_ms 透传")
+    # 未知必须保持 None，不能变成 0（前端靠 null 画 "—"）
+    check(LS.system_block()["fps_ms"] is None, "system.fps_ms 缺省是 None")
+    check(LS.system_block()["budget_ms"] is None, "budget_ms 缺省是 None")
 
     ok = LS.publish(state, force=True)
     check(ok, "publish 成功")

@@ -142,9 +142,21 @@ def skill_block(i, name=None, element=None, cost=None,
     }
 
 
-def system_block(fps_ms=None, detectors=None, conflicts=0, gate=None):
+def system_block(fps_ms=None, detectors=None, conflicts=0, gate=None,
+                 budget_ms=None, blind=None):
+    """系统指标。
+
+    fps_ms    最近一次 Perc.observe() 的耗时（含技能表纠正）
+    budget_ms 主循环每轮的 sleep 间隔（config.POLL_S）。它不是"上限"，
+              而是**下限** —— 一轮的实际周期 ≈ fps_ms + budget_ms。
+              前端用这两个数算等效轮询频率，比一个孤零零的毫秒数有用。
+    blind     本局「没看到技能栏就出招」的次数。这是真正该报警的指标：
+              `bar=False` 在非我方回合是正常的，只有盲打才等于丢决策。
+    """
     return {
         "fps_ms": _num(fps_ms),
+        "budget_ms": _num(budget_ms),
+        "blind": None if blind is None else int(blind),
         "detectors": dict(detectors or {}),
         "conflicts": int(conflicts or 0),
         "gate": gate,

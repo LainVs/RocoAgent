@@ -107,12 +107,12 @@ async function refreshBot() {
    （技能栏从没画出来）。所以这两项必须独立显示，不能合并成一个
    "总体健康"的绿灯 —— 那会掩盖具体哪一环坏了。
    ================================================================ */
-function healthItem(label, value, level) {
+function healthItem(label, value, level, cls) {
   return `<div class="hitem ${level}">
     <i class="hdot"></i>
     <div class="hbody">
       <div class="hlabel">${label}</div>
-      <div class="hvalue">${value}</div>
+      <div class="hvalue${cls ? ' ' + cls : ''}">${value}</div>
     </div>
   </div>`;
 }
@@ -150,32 +150,68 @@ async function refreshHealth() {
   }
 
   // 3. 感知耗时
+  //
+  // 判据不能是一个魔法数字。主循环每轮 sleep 的下限是 config.POLL_S
+  // （120ms），一轮的实际周期 ≈ 感知耗时 + 间隔，所以：
+  //   <= 间隔       正常（周期 < 2×间隔）
+  //   <= 2×间隔     偏慢（周期翻倍，出招会明显迟）
+  //   >  2×间隔     异常
+  // 改前实测 387ms -> 周期 507ms（2Hz）；现在 ~85ms -> 周期 205ms（5Hz）。
   const ms = st && st.system ? st.system.fps_ms : null;
+  const budget = st && st.system && st.system.budget_ms
+    ? st.system.budget_ms : 120;
   if (ms == null) {
     items.push(healthItem('感知耗时', '—', ''));
   } else {
-    const lv = ms > 200 ? 'bad' : ms > 50 ? 'warn' : 'ok';
-    items.push(healthItem('感知耗时', `${ms.toFixed(0)} ms`, lv));
+    const lv = ms > budget * 2 ? 'bad' : ms > budget ? 'warn' : 'ok';
+    const rate = (1000 / (ms + budget)).toFixed(1);
+    items.push(healthItem('感知耗时',
+      `${ms.toFixed(0)} ms <small>${budget} 间隔 · ${rate} Hz</small>`,
+      lv, 'has-sub'));
   }
 
   // 4-6. 三个检测器（各自独立，出问题能定位到哪一环）
+  //
+  // 关键：**不在战斗时一律不判红**。技能卡只在轮到我方时才画出来，
+  // 所以非我方回合 bar=False / countdown=False 是正常现象 ——
+  // 把它们标红是过去控制台"一直红"的来源之一。
+  // 真正代表"看不清局面"的是下面第 7 格的「盲打」次数。
   const dets = (st && st.system && st.system.detectors) || {};
+  const inBattle = !!(st && st.mode === 'battle');
   const DET_LABEL = {
     bar: '血条',
     skillbar: '技能栏',
     countdown: '倒计时',
   };
   Object.keys(DET_LABEL).forEach((k) => {
-    // 没数据时不要报红 —— 那是"不知道"，不是"坏了"
     if (!st) {
       items.push(healthItem(DET_LABEL[k], '—', ''));
       return;
     }
+    if (!inBattle) {
+      items.push(healthItem(DET_LABEL[k], '不在战斗', ''));
+      return;
+    }
     const on = !!dets[k];
-    items.push(healthItem(DET_LABEL[k], on ? '正常' : '读不到', on ? 'ok' : 'bad'));
+    if (!on) {
+      items.push(healthItem(DET_LABEL[k], '未画', ''));
+      return;
+    }
+    items.push(healthItem(DET_LABEL[k], '正常', 'ok'));
   });
 
-  // 7. 决策门（被拦住时显示原因，这是排查卡住的关键）
+  // 7. 盲打次数（本局累计）
+  const blind = st && st.system ? st.system.blind : null;
+  if (blind == null) {
+    items.push(healthItem('盲打', '—', ''));
+  } else if (blind === 0) {
+    items.push(healthItem('盲打', '0 次 <small>每手都看清了</small>', 'ok'));
+  } else {
+    items.push(healthItem('盲打',
+      `${blind} 次 <small>没看到技能栏就出招</small>`, 'warn', 'has-sub'));
+  }
+
+  // 8. 决策门（被拦住时显示原因，这是排查卡住的关键）
   const gate = st && st.system ? st.system.gate : null;
   if (!st) {
     items.push(healthItem('决策门', '—', ''));

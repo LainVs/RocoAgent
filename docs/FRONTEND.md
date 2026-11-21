@@ -101,7 +101,8 @@
   "verdict": {"kill_turns": 2, "die_turns": 4, "order": "first"},
 
   "system": {
-    "fps_ms": 4.2,
+    "fps_ms": 85.3,
+    "budget_ms": 120,
     "detectors": {"bar": true, "skillbar": true, "countdown": true},
     "conflicts": 0,
     "gate": null
@@ -110,6 +111,19 @@
 ```
 
 字段缺失一律表示**未知**，绝不填 0。前端必须能处理任意字段缺失。
+
+`fps_ms` 是最近一次 `Perc.observe()` 的耗时；`budget_ms` 是主循环每轮
+`sleep` 的下限（`config.POLL_S`）。**它不是上限而是下限** ——
+一轮的真实周期 ≈ `fps_ms + budget_ms`，所以控制台用它算等效轮询频率
+（`1000 / (fps_ms + budget_ms)`），健康度按 `fps_ms` 与 `budget_ms`
+的倍数关系判，不用魔法数字。
+
+实测参考（2026-11-21，2560x1600）：
+
+| 状态 | fps_ms | 周期 | 等效频率 |
+|---|---|---|---|
+| 改前战斗态 | 387ms | 507ms | 2.0 Hz |
+| 改后战斗态 | ~85ms | 205ms | 4.9 Hz |
 
 ---
 

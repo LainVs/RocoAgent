@@ -30,6 +30,41 @@ robot.py（真正的机器人）
 
 `<venv>` = `C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv`
 
+### 1.1 前端（悬浮窗 / 控制台）用**另一个**解释器
+
+本机两个解释器的能力是**分裂**的（2026-11-21 实测）：
+
+| | `.venv`（AGENTS.md 的 `$py`） | 系统 Python（`C:\Python314`） |
+|---|---|---|
+| `bleak`（连板子） | ✅ | ❌ |
+| `pywebview`（开窗口） | ❌ | ✅（装在用户 site-packages） |
+
+原因是 `.venv` 建的时候 `include-system-site-packages = false`，
+而 pywebview / pythonnet 装在
+`%APPDATA%\Python\Python314\site-packages`。
+
+所以就两条命令，各用各的：
+
+```powershell
+# 机器人 —— 必须 .venv（需要 bleak）
+& "<venv>\Scripts\python.exe" src\run_bot.py --supervisor
+
+# 界面 —— 必须系统 Python（需要 pywebview）
+python src\ui.py
+```
+
+用错解释器的表现分别是：
+
+- 用 `.venv` 开界面 → **没有窗口**，`overlay.py` 现在会打印
+  「缺少 pywebview」并说明该换哪个解释器（以前是静默退出）。
+- 用系统 Python 起机器人 → 连板子时 `ModuleNotFoundError: bleak`。
+
+`src\test_ui.py` 也只依赖 pywebview（不 import robot），所以用系统 Python 跑：
+
+```powershell
+python src\test_ui.py          # 62 项
+```
+
 ---
 
 ## 2. 已定位的崩溃根因：winrt 的旧 MSVCP140

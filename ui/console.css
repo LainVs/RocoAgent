@@ -729,6 +729,27 @@ button, input, select {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* 感知耗时那格后面跟的补充说明（"+120 间隔 ≈ 5.0 Hz"）。
+   它比主数值弱一档，避免和真正的读数抢注意力。 */
+.hitem .hvalue small {
+  font-family: var(--font-cn);
+  font-size: 10px;
+  color: var(--ink-3);
+  margin-left: 4px;
+  letter-spacing: 0;
+}
+/* 带补充说明的格子：说明换到第二行。
+   实测一行塞 131px 进 109px 宽，末尾的 Hz 会被省略号切掉。 */
+.hitem .hvalue.has-sub {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  line-height: 1.4;
+}
+.hitem .hvalue.has-sub small {
+  display: block;
+  margin-left: 0;
+}
 .hitem.ok   .hvalue { color: var(--win); }
 .hitem.warn .hvalue { color: var(--warn); }
 .hitem.bad  .hvalue { color: var(--lose); }

@@ -943,8 +943,13 @@ class Bot:
                 verdict = None
 
             # 系统指标
+            #
+            # 三个检测器必须各管一件事。以前 bar 和 skillbar 都取
+            # st["bar"]（技能栏是否画出来），但前端把 bar 标成「血条」，
+            # 于是"血条"那一格实际显示的是技能栏状态 —— 排查时会被带偏。
             detectors = {
-                "bar": bool(st.get("bar")),
+                "bar": bool(st.get("my_pct") is not None
+                            and st.get("foe_pct") is not None),
                 "skillbar": bool(st.get("bar")),
                 "countdown": bool(st.get("countdown")),
             }
@@ -953,6 +958,12 @@ class Bot:
                 detectors=detectors,
                 conflicts=0,
                 gate=getattr(self, "_last_gate", None),
+                # 主循环每轮 sleep 的下限（config.POLL_S）。前端用它算
+                # 等效轮询频率：周期 ≈ 感知耗时 + 这个间隔。
+                budget_ms=int(round(POLL_S * 1000)),
+                # 盲打次数：真正代表"看不清局面"的指标。
+                # bar=False 本身不算，非我方回合技能卡本来就不画。
+                blind=getattr(self, "blind_actions", 0),
             )
 
             # 替补队伍：机器人只知道"见过名字"的那几只
@@ -1745,6 +1756,17 @@ class Bot:
         except Exception:
             pass
 
+    def _note_blind(self, why):
+        """记一次「没看到技能栏就出招」。
+
+        控制台的「技能栏 读不到」原来是个**误报**：技能卡只在轮到我方时
+        才画出来，所以非我方回合 `bar=False` 是正常的。真正该报警的指标是
+        「盲打了几次」—— 这直接等于丢了几手决策。
+        """
+        self.blind_actions = getattr(self, "blind_actions", 0) + 1
+        self.blind_last = (self.turn, why)
+        return self.blind_actions
+
     def _dump_bar(self, tag):
         """存一张技能栏截图（认不全数字时用），每 8 秒最多一张。"""
         if time.time() - getattr(self, "_bar_dump_at", 0) < 8.0:
@@ -2384,6 +2406,7 @@ class Bot:
                     self.acted_at = now
                     self.nodraw_since = None
                     self.turn += 1
+                    self._note_blind("bar never drew")
                     log("T%-3d SKILL 2 (bar never drew, blind)" % self.turn)
             else:
                 self.nodraw_since = None
@@ -2539,6 +2562,7 @@ class Bot:
                         other = [x for x in lit if x["index"] != 1]
                         slot = other[0]["index"] if other else 1
                     action, why = ("skill", slot), "blind fallback: slot %d" % slot
+                    self._note_blind("blind fallback")
                     self.miss_streak = 0
         else:
             heal_slot = _heal_slot(st)
