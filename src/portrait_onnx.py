@@ -354,6 +354,28 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
             out["conflict"] = True
         return out
 
+    # 1b. ONNX 压倒性领先模板 -> 不要求"连续 2 帧"
+    #
+    # 为什么需要（2026-11-21 实盘踩到）
+    # ------------------------------
+    # 那一局对面是「里拉瑶」，日志显示：
+    #     FOE -> id conflict hud=白发路路(0.65) portrait=里拉瑶(1.00) -> use portrait
+    #     FOE -> 白发路路 (0.65)          <- 最终却用了低分那个
+    #
+    # 因为 ONNX 还没连续 2 帧稳定（刚换上场），掉到了规则 2
+    # （模板 conf >= 0.60 就采纳）。模板 0.65 是"勉强及格"，
+    # ONNX 1.00 是"几乎确定"，却让 0.65 赢了。
+    #
+    # "连续 2 帧"本来是为了压抖动，但它不该拦住**压倒性**的答案：
+    # ONNX 1.00 同时模板只有 0.65，两者差距 0.30，抖动几乎不可能
+    # 造成这种组合。所以给一条快速通道。
+    if (p_name and p_conf >= 0.95
+            and hud_result and hud_result != p_name
+            and p_conf - hud_conf >= 0.25):
+        out.update(name=p_name, conf=p_conf, source="portrait-strong")
+        out["conflict"] = True
+        return out
+
     # 2. 模板通道有结果 -> 用它（ONNX 不够自信时）
     if hud_result and hud_conf >= 0.60:
         out.update(name=hud_result, conf=hud_conf, source="hud")

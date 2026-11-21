@@ -106,6 +106,32 @@ def main():
     check(r["name"] == "迪莫", "门槛调到 0.95 后 0.93 不再压过", r["source"])
 
     print()
+    print("[10] ONNX 压倒性领先时不要求连续 2 帧（2026-11-21 实盘）")
+    #
+    # 实盘日志：
+    #   FOE -> id conflict hud=白发路路(0.65) portrait=里拉瑶(1.00) -> use portrait
+    #   FOE -> 白发路路 (0.65)        <- 最终却用了低分那个
+    #
+    # 原因：ONNX 刚换上场，还没连续 2 帧稳定，掉到"模板 >=0.60 就采纳"。
+    # 模板 0.65 是勉强及格，ONNX 1.00 是几乎确定，不该让 0.65 赢。
+    r = PO.identify_fused("白发路路", [("里拉瑶", 1.00)], 0.65,
+                          prev=None, stable_count=1)
+    check(r["name"] == "里拉瑶", "ONNX 1.00 压过模板 0.65（未稳定也生效）",
+          r["source"])
+    check(r["source"] == "portrait-strong", "标记 portrait-strong", r["source"])
+    check(r["conflict"] is True, "记冲突便于排查")
+
+    # 边界：ONNX 只有 0.90（未达 0.95）-> 不启用快速通道
+    r = PO.identify_fused("白发路路", [("里拉瑶", 0.90)], 0.65,
+                          prev=None, stable_count=1)
+    check(r["name"] == "白发路路", "ONNX 0.90 不够强，仍用模板", r["source"])
+
+    # 边界：ONNX 0.96 但模板也 0.80，差距只有 0.16 -> 不启用
+    r = PO.identify_fused("白发路路", [("里拉瑶", 0.96)], 0.80,
+                          prev=None, stable_count=1)
+    check(r["name"] == "白发路路", "差距 0.16 不足 0.25，仍用模板", r["source"])
+
+    print()
     if fails:
         print("%d FAILURE(S)" % fails)
         return 1

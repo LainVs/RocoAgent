@@ -86,6 +86,18 @@ from config import (  # noqa: F401
     STALL_EXIT_S, LOBBY_HOLD_S,
 )
 
+# 敌方头像模板置信度低于这个值，就点开对面头像读特性并补录头像。
+#
+# 门槛 0.75 是实测出来的（140 个已标注敌方头像，留一验证）：
+#     >=0.75  覆盖 37%，正确率 100%   <- 拐点
+#     >=0.70  覆盖 39%，正确率  98%
+#     >=0.60  覆盖 51%，正确率  76%   <- 开始崩
+#
+# 为什么不直接用更高的 0.95：
+#   0.95 只覆盖 12% 的样本，等于 88% 的对手都要点头像 ——
+#   每次 3~7 秒，会把战斗拖慢到不可用。0.75 是"准"和"划算"的平衡点。
+FOE_SCAN_MIN_SCORE = 0.75
+
 # 感知与 IO 层已拆分，re-export 保持兼容。
 # 注意不能用 `import *`：下划线名字（_card_lit / _read_bar / _slots 等）
 # 不会被导出，而 test_lit.py / test_skillbar.py 确实在用它们。
@@ -199,6 +211,9 @@ class Bot:
             pass
         self.foe_name = None
         self.my_name = None
+        # 敌方模板通道的置信度（决定"要不要点头像补录"）
+        self.foe_score = 0.0
+        self.foe_ident_source = None
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -1304,6 +1319,14 @@ class Bot:
         fused = portrait_onnx.identify_fused(
             name, p_res, sc,
             prev=self.foe_name, stable_count=self._p_stable)
+        # 记下两个通道的分数与来源，供 _maybe_scan_foe 判断"要不要点头像"。
+        #
+        # 为什么单独存（2026-11-21）：扫描的触发条件从"foe_name 为空"
+        # 改成"模板置信度不足"，需要一个可读的分数。
+        # 注意存的是**模板通道**的分数（sc），不是融合后的 conf ——
+        # 因为决定"该不该补录头像"的依据就是模板库对这个对手熟不熟。
+        self.foe_score = float(sc or 0.0)
+        self.foe_ident_source = fused.get("source")
         if fused["conflict"]:
             log("FOE -> id conflict hud=%s(%.2f) portrait=%s(%.2f) -> use %s"
                 % (fused["hud"], fused["hud_conf"],
@@ -1481,7 +1504,27 @@ class Bot:
         """
         if getattr(self.args, "no_foe_scan", False):
             return
-        if self.foe_name is not None or self.foe_sig is None:
+        # 触发条件：**模板置信度不足**就点头像，而不是"foe_name 为空"。
+        #
+        # 为什么改（2026-11-21 实盘 + 用户提出）
+        # ------------------------------------
+        # 原来写的是 `if self.foe_name is not None: return` —— 只要有任何通道
+        # 给出了名字就不扫。而立绘 ONNX 现在几乎每局都能给出一个
+        # `FOE -> xxx (1.00, ONNX)`，于是 foe_name 立刻非空，
+        # **头像库的采集路径被永久掐死**（21:28 之后一次 FOE SCAN 都没有）。
+        #
+        # 现在改成看"模板通道的置信度"：模板不可靠才去点头像读特性。
+        # 这也是唯一能持续扩充头像库的路径。
+        #
+        # 门槛 0.75 是实测出来的（140 个已标注敌方头像，留一验证）：
+        #     >=0.75  覆盖 37%，正确率 100%   <- 拐点
+        #     >=0.70  覆盖 39%，正确率  98%
+        #     >=0.60  覆盖 51%，正确率  76%   <- 开始崩
+        # 所以 0.75 以上就信模板，不足才扫面板。
+        if self.foe_name is not None and \
+                getattr(self, "foe_score", 0.0) >= FOE_SCAN_MIN_SCORE:
+            return
+        if self.foe_sig is None:
             return
         if not st.get("battle"):
             return
