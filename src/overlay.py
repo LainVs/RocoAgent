@@ -251,6 +251,53 @@ def _rect_str(hwnd):
         return "?"
 
 
+def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale):
+    """把 CSS 坐标的窗口夹回虚拟桌面里。返回 (x, y)（CSS）。
+
+    为什么要自愈
+    ------------
+    位置是从 `config/overlay.json` 恢复的。换显示器、改分辨率、或者
+    上一次存了个坏值，都会让窗口落在**虚拟桌面之外** —— 表现是
+    「任务栏里看得到、屏幕上找不到」，用户点任务栏也调不出来。
+    与其指望用户去删配置文件，不如自己挪回来。
+
+    判定：把窗口换算成物理像素，要求它和虚拟桌面有至少 80px 的交集。
+
+    ⚠ 口径陷阱
+    ----------
+    这个进程**故意不是 DPI-aware**（见 dpi_scale 的注释：设了会把
+    create_window 的尺寸当物理像素，窗口只剩一半）。所以
+    GetSystemMetrics(SM_CXVIRTUALSCREEN) 返回的是**逻辑值**
+    （200% DPI 下报 1536x960，实际 3072x1920）。
+
+    而窗口位置是物理像素。必须把虚拟桌面乘上 scale 再比，
+    否则任何 x > 1536 的合法位置都会被误判成"屏幕外"。
+    """
+    try:
+        SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
+        SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
+        vx = int(round(UD.GetSystemMetrics(SM_XVIRTUALSCREEN) * scale))
+        vy = int(round(UD.GetSystemMetrics(SM_YVIRTUALSCREEN) * scale))
+        vw = int(round(UD.GetSystemMetrics(SM_CXVIRTUALSCREEN) * scale))
+        vh = int(round(UD.GetSystemMetrics(SM_CYVIRTUALSCREEN) * scale))
+        if vw <= 0 or vh <= 0:
+            return css_x, css_y
+        px = int(round(css_x * scale))
+        py = int(round(css_y * scale))
+        pw = max(1, int(round(css_w * scale)))
+        ph = max(1, int(round(css_h * scale)))
+        margin = 80
+        overlap_x = min(px + pw, vx + vw) - max(px, vx)
+        overlap_y = min(py + ph, vy + vh) - max(py, vy)
+        if overlap_x >= margin and overlap_y >= margin:
+            return css_x, css_y
+        _log("pos clamp: (%d,%d) 在屏幕外（虚拟桌面 %dx%d @%d,%d），"
+             "回到左上角" % (px, py, vw, vh, vx, vy))
+        return 40, 40
+    except Exception:
+        return css_x, css_y
+
+
 def load_window_state():
     try:
         with open(_STATE_FILE, "r", encoding="utf-8") as f:
@@ -568,13 +615,28 @@ def _run(args):
     state_h_max = ph
 
     # 恢复上次的窗口位置和尺寸（pywebview 自己不记无边框窗口的位置）
+    #
+    # ★ 坐标口径（踩过，2026-11-21）：
+    #   config/overlay.json 里存的是 **物理像素**（来自 GetWindowRect），
+    #   而 create_window(x=, y=) 要的是 **CSS 像素**（pywebview 会自己乘 DPI）。
+    #   以前直接把存下来的值传进去，等于缩放两次：
+    #       存 2118（物理）-> 当成 2118 CSS -> 实际 4236 物理
+    #   而屏幕只有 3072 宽，于是窗口完全跑到屏幕右侧外面 ——
+    #   表现就是「任务栏里看得到、屏幕上找不到」。
+    #
+    # 宽高不用换算：存的就是 css_w + FRAME_W，和 create_window 同一口径。
     saved = load_window_state()
-    pos_x = saved.get("x", int(40 * scale))
-    pos_y = saved.get("y", int(40 * scale))
+    raw_x, raw_y = saved.get("x"), saved.get("y")
+    if raw_x is not None and raw_y is not None:
+        pos_x = int(round(raw_x / scale))
+        pos_y = int(round(raw_y / scale))
+    else:
+        pos_x, pos_y = 40, 40
     if saved.get("w"):
         pw = saved["w"]
     if saved.get("h"):
         ph = saved["h"]
+    pos_x, pos_y = clamp_to_virtual_screen(pos_x, pos_y, pw, ph, scale)
 
     print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
         pw, ph, args.width, args.height))
