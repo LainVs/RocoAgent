@@ -1552,11 +1552,26 @@ class Bot:
         # 记下"这回合真的要叠 buff"，供下一回合判断
         if action and action[0] == "skill" and "buff first" in (why or ""):
             self._buffed_this_match = True
-        # v2 的换人判断还没校准（实测：对面秒不掉我们、我们能秒它、还更快。?
-        # 它却建议换）。换人不可逆，先禁?v2 的换人，只保留它的出招建议。?
+        # v2 的换人判断**只在"必死"时放行**（2026-11-22 深夜修正）
+        #
+        # 原来是无条件禁掉：
+        #     v2 wanted SWITCH (dying this turn (144 hp vs 179 incoming)
+        #                       -> switch to 恶魔狼 which survives) -> ignored
+        #
+        # 但那正是 v2 里最保守、最可解释的分支 —— 判据只有一条：
+        #     inc >= my_hp    （这一击 >= 当前血量）
+        # 且要求"换上的精灵扛得住这一击"。禁掉它等于明知会死还站着不动，
+        # 白送一只精灵。
+        #
+        # 其它换人建议（收益比较类的）仍然禁：那部分还没校准
+        # （实测会出现"对面秒不掉我们、我们能秒它、还更快"却建议换人）。
         if action and action[0] == "switch":
-            log("v2 wanted SWITCH (%s) -> ignored" % why)
-            return None, why
+            dying = "dying this turn" in (why or "")
+            if not dying:
+                log("v2 wanted SWITCH (%s) -> ignored (not a lethal case)"
+                    % why)
+                return None, why
+            log("v2 lethal switch -> allowed (%s)" % why)
         if detail:
             why = "%s [v2 %s]" % (why, detail.get("score"))
             # 对面行为预判（opponent_model 分层池化后给出）
