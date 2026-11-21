@@ -259,6 +259,26 @@ body.embedded .overlay .panel {
 .live-dot.warn { background: var(--warn); box-shadow: 0 0 0 3px rgba(232,163,61,.18); }
 
 .hdr-state { font-size: 11px; letter-spacing: .04em; color: var(--ink-1); }
+
+/* 启动机器人：只在"机器人未启动"时出现。
+   为什么不放在设置抽屉里：这是最常见的第一个操作，
+   藏起来会让人以为"必须去控制台才能启动"。 */
+.hdr-start {
+  font-family: inherit;
+  font-size: 10px;
+  line-height: 15px;
+  padding: 0 7px;
+  margin-left: 2px;
+  border-radius: 4px;
+  border: 1px solid rgba(127, 211, 232, .45);
+  background: rgba(127, 211, 232, .12);
+  color: var(--accent, #7FD3E8);
+  cursor: pointer;
+  text-shadow: var(--txt-shadow, none);
+}
+.hdr-start:hover { background: rgba(127, 211, 232, .22); }
+.hdr-start:disabled { opacity: .5; cursor: default; }
+.hdr-start[hidden] { display: none; }
 .hdr-turn  {
   font-family: var(--font-num);
   font-size: 11px;

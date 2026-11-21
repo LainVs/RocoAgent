@@ -165,8 +165,11 @@ function render(st) {
   const stateText = st._stale ? '数据过期'
     : st.mode === 'battle' ? '战斗中'
     : st.mode === 'idle' ? '待机'
-    : '未连接';
+    : '状态未知';
   $('sysState').textContent = stateText;
+  // 有数据了就说明机器人活着，不需要启动按钮
+  const sb = $('btnStartBot');
+  if (sb) sb.hidden = true;
 
   // ── 我方
   const me = st.me || {};
@@ -379,8 +382,19 @@ function renderEmpty() {
   if (sig === lastSig) return;
   lastSig = sig;
 
-  $('sysState').textContent = '未连接';
+  // ★ 措辞必须准确
+  //
+  // 以前这里写"未连接"，很容易被理解成"悬浮窗和机器人断开了"。
+  // 实际上 /api/state 返回 null 只有两种原因：
+  //   1. 机器人**没启动**（最常见）
+  //   2. 机器人启动过但已经退出，live_state.json 被清掉了
+  // 真正"连不上"是 fetch 抛异常那条分支（显示"服务未连接"）。
+  // 三种状态必须能区分开，否则排查方向全错。
+  $('sysState').textContent = '机器人未启动';
   $('liveDot').className = 'live-dot off';
+  // 直接把"启动"摆到状态旁边 —— 这是此时唯一有意义的操作
+  const sb = $('btnStartBot');
+  if (sb) sb.hidden = false;
   $('sysTurn').textContent = 'T—';
   $('sysClock').textContent = '';
   $('sysMs').textContent = '';
@@ -710,6 +724,37 @@ function bindHotkeys() {
   });
 }
 
+// 启动机器人：悬浮窗里直接能拉起，不用切到控制台。
+//
+// 为什么放在悬浮窗：用户看伤害计算器时机器人常常没跑，
+// 这时候"启动"是唯一有意义的操作，让人去另一个窗口找按钮很别扭。
+function bindStartBot() {
+  const btn = $('btnStartBot');
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    btn.disabled = true;
+    btn.textContent = '启动中…';
+    try {
+      const r = await fetch(API + '/api/bot/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ supervisor: true }),
+      });
+      const d = await r.json();
+      if (!d.ok) {
+        // 后端会给出具体原因（比如"解释器缺 bleak"），
+        // 这条信息对排查很关键，不能吞掉。
+        alert('启动失败：' + (d.msg || '未知原因'));
+      }
+    } catch (e) {
+      alert('启动失败：' + e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = '启动';
+    // 启动后等一两轮轮询，数据来了按钮会自动隐藏
+  });
+}
+
 /* ================================================================ */
 document.addEventListener('DOMContentLoaded', () => {
   bindAlpha();
@@ -718,6 +763,7 @@ document.addEventListener('DOMContentLoaded', () => {
   bindFold();
   bindDrag();
   bindHotkeys();
+  bindStartBot();
 
   renderEmpty();
   poll();

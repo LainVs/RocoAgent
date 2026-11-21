@@ -790,7 +790,8 @@ def test_resilience(port):
     ok(b.get("pct") == "60", "数据变化后跟上", "pct=%s" % b.get("pct"))
     ok(b.get("turn") == "T5", "回合号跟上", "turn=%s" % b.get("turn"))
     ok(c.get("pct") == "—", "数据源消失后清空", "pct=%s" % c.get("pct"))
-    ok(c.get("state") == "未连接", "显示未连接", "state=%s" % c.get("state"))
+    ok(c.get("state") == "机器人未启动", "显示未启动",
+       "state=%s" % c.get("state"))
     ok(d.get("pct") == "30", "数据源恢复后跟上", "pct=%s" % d.get("pct"))
     ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
 

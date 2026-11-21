@@ -691,10 +691,59 @@ def log_chunk(offset=0, max_bytes=48 * 1024):
 
 
 # ============================================================ 启停
+def _bot_python():
+    """机器人的解释器 —— 必须是**装了 bleak 的那个**，不是当前解释器。
+
+    ★ 这是个真实故障点（2026-11-21 发现）
+    ------------------------------------
+    ui_server 现在是用**系统 Python** 起的（因为控制台窗口要 pywebview）。
+    而机器人必须用项目 .venv（只有它有 bleak）。
+
+    原代码 `py = sys.executable` 会让机器人跟着 ui_server 的解释器走 ——
+    用系统 Python 跑 robot.py 会在连板子时 `ModuleNotFoundError: bleak`，
+    表现是"点了启动，进程起来又立刻死"。
+
+    解析顺序：
+      1. 环境变量 ROCO_BOT_PYTHON（显式指定，最可靠）
+      2. config/paths.local.json 的 "bot_python"
+      3. 项目 .venv 的标准位置
+      4. 退回 sys.executable（至少能跑，只是连不上板子）
+    """
+    cand = os.environ.get("ROCO_BOT_PYTHON")
+    if not cand:
+        try:
+            import io as _io
+            import json as _json
+            p = os.path.join(ROOT, "config", "paths.local.json")
+            with _io.open(p, encoding="utf-8-sig") as f:
+                cand = (_json.load(f) or {}).get("bot_python")
+        except Exception:
+            cand = None
+    if not cand:
+        cand = os.path.join(os.path.dirname(ROOT), "hardwork",
+                            "CV_ESP_Game_1", ".venv", "Scripts",
+                            "python.exe")
+    if cand and os.path.exists(cand):
+        return cand
+    return sys.executable
+
+
 def start_bot(supervisor=True, minutes=0):
     if _pids(r"robot\.py"):
         return {"ok": False, "msg": "已经在运行"}
-    py = sys.executable
+    py = _bot_python()
+    # 启动前确认这个解释器真的有 bleak，否则起来也是白起
+    try:
+        chk = subprocess.run([py, "-c", "import bleak"],
+                             capture_output=True, timeout=20)
+        if chk.returncode != 0:
+            return {"ok": False,
+                    "msg": "机器人解释器缺 bleak：%s\n"
+                           "请设环境变量 ROCO_BOT_PYTHON 指向项目 .venv"
+                           % py}
+    except Exception as e:
+        return {"ok": False, "msg": "检查解释器失败：%s: %s"
+                % (type(e).__name__, e)}
     env_log = open(BOT_LOG, "a", encoding="utf-8")
     try:
         if supervisor:
