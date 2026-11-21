@@ -156,11 +156,33 @@ def _root(hwnd):
     return UD.GetAncestor(hwnd, 2) or hwnd
 
 
-def add_layered(hwnd):
-    """必须自己加 WS_EX_LAYERED，否则 SetLayeredWindowAttributes 返回 0。"""
+def add_layered(hwnd, alpha=255):
+    """加 WS_EX_LAYERED 并**立即设 alpha**。
+
+    ★ 只加标志是不够的（2026-11-21 找到的真正根因）
+    ----------------------------------------------
+    `WS_EX_LAYERED` 只是让窗口"可以"用分层属性，但如果不调用
+    `SetLayeredWindowAttributes`，系统对这个窗口的默认行为是
+    **全不透明**（GetLayeredWindowAttributes 返回 flags=0）。
+
+    实测（修复前）：
+        GetLayeredWindowAttributes -> ok=1  alpha=0  flags=0x0
+        flags=0 表示 LWA_ALPHA 没启用，alpha 值根本不参与合成。
+
+    表现：CSS 的 rgba(250,249,245,0.42) 算出来是对的，但窗口
+    按"完全不透明"合成 —— 面板透出的是 WinForms 的浅灰底
+    （#F0F0F0），不是游戏画面。用户看到"一整块白，拉滑块没用"。
+
+    所以必须：加标志 + 设 LWA_ALPHA 255（完全不透明，让 CSS 自己
+    控制半透明）。255 是关键 —— 设 0 会让整个窗口消失。
+    """
     ex = UD.GetWindowLongW(hwnd, GWL_EXSTYLE)
     if not (ex & WS_EX_LAYERED):
         UD.SetWindowLongW(hwnd, GWL_EXSTYLE, ex | WS_EX_LAYERED)
+    try:
+        UD.SetLayeredWindowAttributes(hwnd, 0, int(alpha), LWA_ALPHA)
+    except Exception:
+        pass
 
 
 def set_click_through(hwnd, enabled):
@@ -198,6 +220,83 @@ def hide_from_taskbar(hwnd):
 def set_topmost(hwnd):
     UD.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE)
+
+
+def make_form_transparent(win):
+    """把 WinForms Form 和 WebView2 控件的底色设成透明，让 CSS 的 rgba 生效。
+
+    ★ 三次踩坑记录（2026-11-21，全部实测确认）
+    -----------------------------------------
+
+    坑 1：pywebview 的 transparent=True **不设 Form 的 BackColor**
+        if window.transparent and self.browser:
+            self.SetStyle(SupportsTransparentBackColor, True)
+            self.browser.DefaultBackgroundColor = Color.Transparent
+        else:
+            self.BackColor = ColorTranslator.FromHtml(window.background_color)
+        注意 else —— transparent 时 Form.BackColor 保持 WinForms 默认
+        的 Control 色（#F0F0F0 浅灰）。
+        实测：Form.BackColor = A255 R240 G240 B240
+
+    坑 2：`DefaultBackgroundColor = Transparent` 会把**整个网页画布挖空**
+        实测：设成 Transparent 后窗口只剩桌面，面板内容全没了。
+        正确的组合是：
+            Form/WebView2.BackColor   = Transparent   控件底色透明
+            DefaultBackgroundColor    = 不透明         网页照常绘制
+            CSS 的 rgba(...)                           半透明效果
+
+    坑 3：`DefaultBackgroundColor` **只能在 UI 线程访问**
+        在后台线程读写会抛：
+            InvalidOperationException: CoreWebView2Controller members
+            can only be accessed from the UI thread
+        所以这个函数必须从 UI 线程调用 —— 用 pywebview 的 loaded 事件，
+        它在主线程（UI 线程）触发。
+
+    返回值：成功设到 WebView2 时 True。
+    """
+    try:
+        from System.Drawing import Color
+
+        form = getattr(win, "native", None)
+        if form is None:
+            return False
+
+        # 1. Form：先开样式再设颜色（顺序不能反，否则 WinForms 忽略）
+        try:
+            from System.Windows.Forms import ControlStyles
+            form.SetStyle(ControlStyles.SupportsTransparentBackColor, True)
+        except Exception:
+            pass
+        form.BackColor = Color.Transparent
+
+        # 2. WebView2：BackColor 透明 + DefaultBackgroundColor 不透明
+        touched = False
+        try:
+            n = form.Controls.Count
+            for i in range(n):
+                c = form.Controls[i]
+                try:
+                    c.BackColor = Color.Transparent
+                except Exception:
+                    pass
+                if "WebView" in c.GetType().Name:
+                    try:
+                        c.DefaultBackgroundColor = Color.FromArgb(255, 0, 0, 0)
+                        touched = True
+                    except Exception as e:
+                        # UI 线程限制 —— 调用方应该从 loaded 事件里调
+                        _log("make_form_transparent: DefaultBackgroundColor "
+                             "设置失败（可能不在 UI 线程）: %s"
+                             % type(e).__name__)
+        except Exception:
+            pass
+
+        _log("make_form_transparent: Form 透明=%s  WebView2 不透明底=%s"
+             % (True, touched))
+        return touched
+    except Exception as e:
+        _log("make_form_transparent 失败: %s: %s" % (type(e).__name__, e))
+        return False
 
 
 def strip_dwm_frame(hwnd):
@@ -444,7 +543,7 @@ def end_drag():
     return True
 
 
-def fix_transparent(hwnd, ready_check=None, timeout=12.0):
+def fix_transparent(hwnd, ready_check=None, timeout=12.0, on_ready=None):
     """pywebview 的透明是延迟生效的。
 
     它自己的源码注释写的是 "no idea why this works"。实测：光靠它还不够。
@@ -457,6 +556,9 @@ def fix_transparent(hwnd, ready_check=None, timeout=12.0):
 
     如果不等页面就绪就切，WebView2 还没画第一帧，
     隐藏/显示等于什么都没发生，首帧就是白底（实测）。
+
+    on_ready: 页面就绪时的回调。用来设 WebView2 控件的透明背景 ——
+              实测那时控件才真正创建出来（之前 form.Controls 是空的）。
     """
     # 1. 等页面就绪
     if ready_check is not None:
@@ -468,6 +570,14 @@ def fix_transparent(hwnd, ready_check=None, timeout=12.0):
             except Exception:
                 pass
             time.sleep(0.25)
+
+    # ★ 页面就绪后立刻回调 —— 此时 WebView2 控件才创建好
+    if on_ready is not None:
+        try:
+            on_ready()
+        except Exception as e:
+            _log("fix_transparent on_ready 失败: %s: %s"
+                 % (type(e).__name__, e))
 
     # 2-4. 隐藏再显示
     UD.ShowWindow(hwnd, 0)     # SW_HIDE
@@ -613,6 +723,9 @@ def main():
     ap.add_argument("--width", type=int, default=DEFAULT_W)
     ap.add_argument("--height", type=int, default=DEFAULT_H)
     ap.add_argument("--page", default="index.html")
+    ap.add_argument("--alpha", type=int, default=0,
+                    help="调试用：启动时直接应用透明度（40~100），"
+                         "0 表示用页面保存的值")
     args = ap.parse_args()
 
     pidfile = os.path.join(ROOT, "logs", "overlay.pid")
@@ -799,6 +912,9 @@ def _run(args):
             为什么需要：全局热键 Ctrl+Alt+O / Ctrl+Alt+P 是在**原生线程**
             里处理的，页面完全不知道。不同步的话会出现"穿透已经关了，
             但按钮还写着已穿透"这种自相矛盾的显示。
+
+            顺带返回**页面侧的诊断信息**（dom），排查"透明度没效果"时
+            从外部就能看到 --alpha 到底是多少、embedded 类有没有加上。
             """
             hwnd = state.get("hwnd")
             ex = 0
@@ -807,12 +923,38 @@ def _run(args):
                     ex = UD.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
                 except Exception:
                     ex = 0
-            return {
+            out = {
                 "visible": bool(state.get("visible", True)),
                 "pass_through": bool(ex & WS_EX_TRANSPARENT),
                 "opacity": int(state.get("opacity", 255)),
                 "folded": bool(state.get("folded")),
             }
+            # 诊断：读页面真实状态
+            try:
+                w = _WINDOW.get("win")
+                if w is not None:
+                    out["dom"] = w.evaluate_js("""
+                      (() => {
+                        const root = document.documentElement;
+                        const cs = getComputedStyle(root);
+                        const p = document.getElementById('panel');
+                        return {
+                          bodyClass: document.body.className,
+                          alpha: cs.getPropertyValue('--alpha').trim(),
+                          bgRgb: cs.getPropertyValue('--bg-rgb').trim(),
+                          panelBg: p ? getComputedStyle(p).backgroundColor : null,
+                          stageDisplay: (() => {
+                            const s = document.getElementById('stage');
+                            return s ? getComputedStyle(s).display : null;
+                          })(),
+                          innerW: window.innerWidth,
+                          innerH: window.innerHeight,
+                        };
+                      })()
+                    """)
+            except Exception as e:
+                out["dom_error"] = "%s: %s" % (type(e).__name__, e)
+            return out
 
         def set_opacity(self, alpha):
             """整体透明度（0~255）。
@@ -1134,12 +1276,71 @@ def _run(args):
             return
         state["hwnd"] = hwnd
 
+        # ★ Form/WebView2 的透明必须在**任何显示操作之前**设好
+        #
+        # fix_transparent 里有 ShowWindow(0) -> ShowWindow(5)，
+        # 会触发一次完整重绘。如果在那之后才设 BackColor，
+        # 第一次重绘已经用浅灰底画过一遍了（实测会残留白底）。
+        make_form_transparent(win)
+
+        # ★ Form/WebView2 的透明必须在**UI 线程**设
+        #
+        # DefaultBackgroundColor 只能在 UI 线程访问，后台线程会抛
+        # "CoreWebView2Controller members can only be accessed from the UI thread"。
+        # pywebview 的 loaded 事件就在 UI 线程触发，所以挂在那里。
+        def _on_loaded():
+            try:
+                make_form_transparent(win)
+                # ★ 设完 DefaultBackgroundColor 后，WebView2 会重建窗口样式，
+                # 把 WS_EX_LAYERED 冲掉（实测 layered=False）。
+                # 必须重新加上，否则窗口变成完全不透明/全透明。
+                time.sleep(0.3)
+                add_layered(hwnd)
+                _log("loaded 后重新 add_layered 完成")
+            except Exception as e:
+                _log("loaded 事件设透明失败: %s: %s"
+                     % (type(e).__name__, e))
+
+        try:
+            win.events.loaded += _on_loaded
+            _log("已注册 loaded 事件（UI 线程设透明）")
+        except Exception as e:
+            _log("注册 loaded 事件失败: %s" % e)
+
         # 顺序很重要：先等页面画出来，再修透明
-        fix_transparent(hwnd, page_ready)
+        #
+        # ★ on_ready 里设 WebView2 的 DefaultBackgroundColor
+        # 现在整个 setup() 跑在 UI 线程（webview.start(setup)），
+        # 所以这里可以安全访问 CoreWebView2Controller。
+        fix_transparent(hwnd, page_ready,
+                        on_ready=lambda: make_form_transparent(win))
         add_layered(hwnd)
         hide_from_taskbar(hwnd)
         strip_dwm_frame(hwnd)
         set_topmost(hwnd)
+
+        # ★ 第三次：等页面真正加载完再设一次
+        #
+        # 实测（2026-11-21）：前两次调用时 WebView2 控件**还没创建**
+        # （日志显示 "Form + 0 个子控件"），所以只设到了 Form 本身。
+        # 而真正画白色的是 WebView2 控件（BackColor=A255 R240 G240 B240）。
+        #
+        # 这里在后台线程里等 page_ready，再设一次。
+        def _late_transparent():
+            end = time.time() + 20.0
+            while time.time() < end:
+                try:
+                    if page_ready():
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.3)
+            time.sleep(0.8)          # 让 WebView2 完成首帧
+            for _ in range(3):
+                make_form_transparent(win)
+                time.sleep(0.4)
+
+        threading.Thread(target=_late_transparent, daemon=True).start()
 
         # 关键：用 url 加载时，create_window 的 width/height 会被
         # WebView2 按页面内容"自适应"。而且 win.resize() 在透明+无焦点
@@ -1187,8 +1388,52 @@ def _run(args):
             _log("initial SetWindowPos FAIL: %s" % e)
 
         enter_embedded()
+
+        # 调试：--alpha N 直接应用，绕过滑块。
+        # 排查"透明度没效果"时用：python src\overlay.py --alpha 42
+        if getattr(args, "alpha", 0):
+            try:
+                win.evaluate_js(
+                    "(window.__setAlpha||function(){})(%d)" % args.alpha)
+                time.sleep(0.4)
+                _log("--alpha %d 已应用" % args.alpha)
+            except Exception as e:
+                _log("--alpha 应用失败: %s" % e)
+
         state["ready"] = True
         print("窗口就绪 hwnd=%d" % hwnd)
+
+        # 诊断：把页面真实状态写进日志。
+        #
+        # 排查"透明度完全无效果"时，从外部完全看不到页面内部状态：
+        #   · PrintWindow 抓的是缓存帧
+        #   · 浏览器 tab 连不上（服务端口可能被占）
+        #   · 没法从外部改 CSS 变量
+        # 所以启动后主动把关键值打到 logs/overlay.log，下次一看就知道。
+        try:
+            dom = win.evaluate_js("""
+              (() => {
+                const root = document.documentElement;
+                const cs = getComputedStyle(root);
+                const p = document.getElementById('panel');
+                const s = document.getElementById('stage');
+                return {
+                  body: document.body.className,
+                  alpha: cs.getPropertyValue('--alpha').trim(),
+                  bgRgb: cs.getPropertyValue('--bg-rgb').trim(),
+                  panelBg: p ? getComputedStyle(p).backgroundColor : null,
+                  stage: s ? getComputedStyle(s).display : null,
+                  vw: window.innerWidth, vh: window.innerHeight,
+                };
+              })()
+            """)
+            _log("DOM %s" % json.dumps(dom, ensure_ascii=False))
+        except Exception as e:
+            _log("DOM dump failed: %s: %s" % (type(e).__name__, e))
+
+        # ★ 此时 WebView2 控件已创建，但 DefaultBackgroundColor 只能在
+        # UI 线程设 —— 这里仍是后台线程，交给 setup 开头的调用。
+        # 只做无害的 Form.BackColor（那部分不限线程）。
 
         # 监视：每 3 秒记一次窗口尺寸，抓"被谁改回去了"。
         # 实测踩过：fit 明明设成 680x942，几秒后变成 340x471，
@@ -1199,8 +1444,6 @@ def _run(args):
                 _log("watch: rect=%s" % _rect_str(hwnd))
 
         threading.Thread(target=watch, daemon=True).start()
-
-    threading.Thread(target=setup, daemon=True).start()
 
     # ---- 热键（轮询 GetAsyncKeyState，不需要装全局钩子）
     def hotkeys():
@@ -1235,7 +1478,20 @@ def _run(args):
 
     threading.Thread(target=hotkeys, daemon=True).start()
 
-    webview.start()
+    # ★ setup 必须在 **UI 线程** 跑
+    #
+    # 踩过的坑（2026-11-21）：原来写的是
+    #     threading.Thread(target=setup, daemon=True).start()
+    # 于是 setup 里的 make_form_transparent 无法设置 WebView2 的
+    # DefaultBackgroundColor —— 那个属性**只能在 UI 线程访问**：
+    #     InvalidOperationException: CoreWebView2Controller members
+    #     can only be accessed from the UI thread
+    #
+    # 表现：Form 层透明设上了，但 WebView2 控件仍是浅灰 #F0F0F0，
+    # CSS 的 rgba(...,0.42) 透出的是这层灰 -> 看起来纯白、拉滑块没用。
+    #
+    # webview.start(func) 会在 GUI 线程里执行 func，才是正确的线程。
+    webview.start(setup)
 
 
 if __name__ == "__main__":
