@@ -346,6 +346,7 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U31 | 9 处空态各写各的，多数只说"缺什么"不说"该做什么" | 渲染实测：搜不存在的精灵会给出"试试更短的词" |
 | U32 | `/api/log` 的 offset 按解码后的字符串长度推算，中文日志被切断时会重复/丢行 | 单测：切在中文字符中间，offset 落在换行边界，续拉 120 行 0 重复 |
 | U33 | 控制台测试混在 1642 行的 `test_ui.py` 里，三个会话同时改 | 新文件 `test_console.py` 80 项独立跑通，与 `test_ui.py` 共用 `test_ui_common.py` |
+| U34 | 游戏窗口最小化时 `GetClientRect` 返回 0×0 → `"%.2f" % None` 抛异常，**整个 `/api/bot` 500，控制台白屏** | 单测：最小化时 `aspect`/`scale_ok` 为 None 并给出说明；渲染实测显示「已最小化」 |
 
 **验证基线**：`python src/test_ui.py` → 175 项全过（原 62）；
 `--no-dom` 125 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
