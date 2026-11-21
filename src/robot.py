@@ -2993,6 +2993,11 @@ class Bot:
                 log("policy_v2 failed: %s: %s" % (type(e).__name__, e))
                 action = None
         if action is None:
+            # 记录 v2 为什么没用（10 秒限流）。实测 v2 只覆盖 34% 的出招，
+            # 不知道原因就没法改。
+            if now - getattr(self, "_v2_skip_at", 0.0) > 10.0:
+                self._v2_skip_at = now
+                log("policy_v2 skipped: %s" % (why or "no action"))
             action, why = decide(st, ctx)
         if action is None:
             # digits unreadable this turn
