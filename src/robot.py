@@ -1050,21 +1050,70 @@ class Bot:
             dmg = s.get("value")
             if dmg is None:
                 dmg = _est_value(s)
-            cost = 0
-            try:
-                meta = E.D.skill(s.get("name") or "")
-                if meta:
-                    cost = int(meta.get("energy_consumption") or 0)
-            except Exception:
-                pass
+            # 耗能必须从**我方技能表**查（my_card_costs），不能用技能名查。
+            #
+            # 踩过的坑（2026-11-21 09:00，用户报的"选低伤害技能"）：
+            # 原来写的是
+            #     meta = E.D.skill(s.get("name") or "")
+            #     cost = int(meta.get("energy_consumption") or 0)
+            # 但机器人**不读技能名**（turns.jsonl 里 skills 只有
+            # c/i/lit/plate/t/v，没有 name），所以 s.get("name") 恒为 None，
+            # E.D.skill(None) 返回 None，cost 恒为 0。
+            #
+            # 后果：policy_v2 的 energy_after 恒等于 energy，w_energy 项
+            # 对所有技能完全相同，失去区分度 —— 等于"不知道任何技能耗能"。
+            # 初版 policy_legacy 用的是 card_costs（查表），一直是对的。
+            #
+            # 现在改回查表：slot_costs 在函数开头已经算好（顺序 = 卡槽顺序）。
+            cost = slot_costs.get(s["index"], 0)
             skills.append({
                 "i": s["index"], "dmg": dmg, "cost": cost,
                 "kind": kind, "lit": bool(s.get("lit", True)),
             })
 
+        # 退化检测：如果所有伤害技能的 cost 都是 0，而技能表里有耗能，
+        # 说明查表链路断了（2026-11-21 踩过：用技能名查导致 cost 恒为 0）。
+        # 记一条警告，下次退化能立刻发现。
+        try:
+            dmg_skills = [s for s in skills
+                          if s.get("kind") == "num" and s.get("dmg")]
+            if dmg_skills and all(not s.get("cost") for s in dmg_skills):
+                if any(slot_costs.values()):
+                    log("POLICY WARN: all costs are 0 but card table has "
+                        "values %s -- cost lookup broken" % slot_costs)
+        except Exception:
+            pass
+
+        # 能量下界：点亮卡里最大的耗能，就是"我至少有这么多能量"。
+        #
+        # 为什么不用 st["energy"]（2026-11-21 实测）
+        # ----------------------------------------
+        # perceive 的 energy 来自 energy.read_energy()，返回的是
+        # **能量点亮数 0~6**，实测取值几乎总是 0~2
+        # （328 条样本：0 出现 33 次、1 出现 293 次、2 出现 2 次）。
+        # 而技能耗能是 1~6，两者量纲不同 —— 拿 1 减去 6 得负数，
+        # 被 max(0, ...) 夹成 0，所有技能的能量项完全相同，等于没信息。
+        #
+        # 可靠的做法：**卡面 lit 是权威的**（实测 lit 与 plate>220
+        # 完全一致，3061 on / 775 off，0 处矛盾）。一张 cost=6 的卡
+        # 亮着，就说明能量至少 6。所以取点亮卡的最大耗能作为下界。
+        #
+        # 这样 energy_lb - cost 才有区分度：
+        #   全亮（含 cost=6）-> energy_lb=6
+        #     打 cost=1 -> 剩 5，能量项 0.5
+        #     打 cost=6 -> 剩 0，能量项 0.0
+        lit_costs = [s["cost"] for s in skills
+                     if s.get("lit") and s.get("cost")]
+        energy_lb = max(lit_costs) if lit_costs else 0
+        raw_energy = st.get("energy")
+        if raw_energy is not None and raw_energy > energy_lb:
+            # 点亮数大于推导下界时，说明点数其实反映了更多能量（少见），
+            # 取较大值，避免低估。
+            energy_lb = int(raw_energy)
+
         state = {
             "me": {"name": my_name, "hp": my_hp, "hp_max": my_max,
-                   "energy": st.get("energy") if st.get("energy") is not None else 10,
+                   "energy": energy_lb,
                    "skills": skills},
             "foe": {"name": foe_name, "hp": foe_hp, "hp_max": foe_max},
             "bench": self.bench_state(),
