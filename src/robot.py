@@ -214,6 +214,7 @@ class Bot:
         # 敌方模板通道的置信度（决定"要不要点头像补录"）
         self.foe_score = 0.0
         self.foe_ident_source = None
+        self.foe_conf = 0.0
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -1327,12 +1328,19 @@ class Bot:
         # 因为决定"该不该补录头像"的依据就是模板库对这个对手熟不熟。
         self.foe_score = float(sc or 0.0)
         self.foe_ident_source = fused.get("source")
+        self.foe_conf = float(fused.get("conf") or 0.0)
         if fused["conflict"]:
             log("FOE -> id conflict hud=%s(%.2f) portrait=%s(%.2f) -> use %s"
                 % (fused["hud"], fused["hud_conf"],
                    fused["portrait"], fused["portrait_conf"], fused["source"]))
-        if fused["source"] == "portrait" and fused["name"]:
-            # ONNX 通道给的是种族名（不带编号），可直接当 foe_name 用
+        if (fused["source"] or "").startswith("portrait") and fused["name"]:
+            # ONNX 通道给的是种族名（不带编号），可直接当 foe_name 用。
+            #
+            # 注意用 startswith 而不是 ==：`identify_fused` 会返回
+            # "portrait" 和 "portrait-strong" 两种（后者是"ONNX 压倒性领先"
+            # 的快速通道）。写成 == "portrait" 会把 portrait-strong 漏掉 ——
+            # 实测 22:20:02 日志显示 `use portrait-strong` 但最终仍写成
+            # 模板通道的「白发路路」。
             if fused["name"] != self.foe_name:
                 log("FOE -> %s (%.2f, ONNX)" % (fused["name"], fused["conf"]))
                 self.foe_name = fused["name"]
@@ -1402,12 +1410,37 @@ class Bot:
             self._foe_sig_streak = 0
             if hud_name:
                 self._foe_name_seen = hud_name
-        if name is not None and sc >= 0.60 and (margin if 'margin' in dir() else 1.0) >= 0.06:
+        # 模板通道兜底：只在"还没有可靠答案"时才采纳。
+        #
+        # 为什么必须加这个判断（2026-11-21 实盘）
+        # ------------------------------------
+        # 原来这里是无条件覆盖：
+        #     if name is not None and sc >= 0.60:
+        #         if sp and sp != self.foe_name: self.foe_name = sp
+        #
+        # 于是日志出现 1 秒内横跳：
+        #     22:23:21 FOE -> 高帽鹬鸵 (1.00, ONNX)   <- ONNX 几乎确定
+        #     22:23:22 FOE -> 白发路路 (0.62)         <- 模板 0.62 覆盖了它
+        #
+        # 模板 0.60 是"勉强及格"，不该推翻 1.00。所以：
+        #   · 已经由 ONNX 定过（且置信度够高）-> 模板必须明显更好才允许改
+        #   · 否则维持原判
+        ONNX_LOCK = 0.90
+        locked = (self.foe_name is not None
+                  and getattr(self, "foe_ident_source", "") and
+                  str(self.foe_ident_source).startswith("portrait")
+                  and getattr(self, "foe_conf", 0.0) >= ONNX_LOCK)
+        if name is not None and sc >= 0.60 \
+                and (margin if 'margin' in dir() else 1.0) >= 0.06:
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
-                log("FOE -> %s (%.2f)" % (sp, sc))
-                self.foe_name = sp
-                self.foe_bust = name
+                if locked and sc < 0.95:
+                    # ONNX 已高置信定名，模板只有 0.60~0.95 不足以推翻
+                    pass
+                else:
+                    log("FOE -> %s (%.2f)" % (sp, sc))
+                    self.foe_name = sp
+                    self.foe_bust = name
             nick = getattr(self, "_cast_nick", None)
             if sp and nick:
                 try:
