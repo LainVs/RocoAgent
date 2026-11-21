@@ -276,7 +276,6 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 误合并比重复更糟。
 
 #### U28：机器人停了，健康面板还在报绿
-
 `live_state.json` 在机器人退出后**不会被删**，里面存着最后一帧：
 `bar=True` / `blind=0` / `gate=None`。原逻辑照读，于是健康面板显示
 
@@ -342,8 +341,10 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U26 | 分辨率报的是窗口矩形（2074×1607），不是客户区（2048×1536） | 单测：`w/h` 是客户区且 `client <= window`；渲染顶栏 `2048×1536` |
 | U27 | 图鉴 857 条里 103 个重名（「圣光迪莫」9 条），显示成重复卡 | 单测：683 条名字全唯一、分页不重叠、搜索也去重 |
 | U28 | 机器人停后 `live_state` 仍是旧的，健康面板照出绿色「正常/畅通」 | 渲染实测：过期时只剩板子一个绿 |
+| U29 | 日志着色按"正则碰巧命中"分类：场次边界和出招都是灰的，`STUCK recovery failed` 只算 warn | 渲染实测：`=== MATCH` 加粗高亮，筛选 全部/出招/异常/噪音 |
+| U30 | 「感知耗时」在过期帧上显示绿色 67ms（漏掉的最后一格假绿灯） | 渲染实测：`stale_green` 为空数组 |
 
-**验证基线**：`python src/test_ui.py` → 167 项全过（原 62）；
+**验证基线**：`python src/test_ui.py` → 170 项全过（原 62）；
 `--no-dom` 120 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
@@ -357,7 +358,7 @@ $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
 python src\test_ui.py --no-dom        # 120 项，约 5 秒
-python src\test_ui.py                 # 167 项，约 90 秒，含真实渲染
+python src\test_ui.py                 # 170 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -365,7 +366,7 @@ python src\test_ui.py                 # 167 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 167 项、`--no-dom` 120 项、
+**基线（本轮结束）**：`test_ui.py` 170 项、`--no-dom` 120 项、
 其余三个脚本 ALL PASS。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
