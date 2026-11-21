@@ -915,7 +915,13 @@ class Bot:
             #     真实战斗帧 = 0
             #     结算页     = 8372
             #     VS 准备页  = 13824  <- 必须排除，否则会点"取消准备"
+            #
+            # ⚠ 还要排除"对局中"：换人/力竭期间底部按钮区域也会匹配到白胶囊，
+            # 而那时技能栏不画、血条读不到，看起来就像结算页。
+            # 技能栏 15 秒内出现过 = 还在对局里。
+            _bar_recent2 = (now - getattr(self, "_last_bar_at", 0.0)) < 15.0
             if (self.match_started is not None
+                    and not _bar_recent2
                     and now - self.match_started > 8.0
                     and now - getattr(self, "_exit_probe_at", 0.0) > 1.0):
                 self._exit_probe_at = now
@@ -946,11 +952,25 @@ class Bot:
             #     MATCH 3: 28s, 1 actions
             #
             # 因为 4:3 下血条检测间歇失败，`battle=False` 在正常战斗里也会
-            # 出现。所以必须**两个条件同时成立**：
+            # 出现。所以必须**三个条件同时成立**：
             #   · 不在战斗
             #   · 结算页的"退出"按钮真的在（has_exit_button 用白色连通域）
+            #   · 最近 15 秒**没见过技能栏**
             # 再加 10 秒去抖，避免开局动画期间误判。
-            if (not st["battle"]
+            #
+            # ⚠ 第三条是 2026-11-22 新增（实测把 turn=9 的对局点掉了）
+            # ------------------------------------------------------
+            # 05:13:48 FAINT -> dead_count=1
+            # 05:14:01 state battle=False bar=False me=None foe=None
+            # 05:14:24 STUCK on result screen (turn=9) -> click 退出
+            #
+            # 打了 9 手的一局被"脱困"点掉。原因：换人/力竭期间技能栏不画、
+            # 血条也读不到，`battle=False`，而 `has_exit_button` 在战斗画面
+            # 底部同样能匹配到白色胶囊（返回键/技能键区域）。
+            # 技能栏只在"对局中 + 我方回合"出现，15 秒内见过一次就说明
+            # 这一场还没结束 —— 绝不允许脱困。
+            _bar_recent = (now - getattr(self, "_last_bar_at", 0.0)) < 15.0
+            if (not st["battle"] and not _bar_recent
                     and now - (getattr(self, "_stuck_at", 0.0) or 0.0) > 10.0):
                 try:
                     import ui_probe as _UP
