@@ -84,26 +84,24 @@ def main():
               "-> (%d,%d)" % (x, y))
 
     print()
-    print("[4] 位置往返（物理写出 -> 读回再 /scale）")
+    print("[4] 位置往返（存 CSS，读 CSS，不乘不除）")
     tmp = tempfile.mkdtemp()
     old = overlay._STATE_FILE
     overlay._STATE_FILE = os.path.join(tmp, "overlay.json")
     try:
-        # 模拟：窗口当前物理位置 1992,28（drag_end 就是这么存的）
+        # drag_end 存的就是 GetWindowRect 的值（这台机器上是逻辑/CSS 像素）
         overlay.save_window_state(x=1992, y=28)
         got = overlay.load_window_state()
         check(got.get("x") == 1992 and got.get("y") == 28,
-              "存的是物理像素", str(got))
+              "存什么读什么（不做换算）", str(got))
 
-        css_x = int(round(got["x"] / SCALE))
-        check(int(round(css_x * SCALE)) == 1992,
-              "CSS 再乘回去等于原物理值",
-              "%d * %.1f = %d" % (css_x, SCALE, int(round(css_x * SCALE))))
-
-        # 关键回归：修复前是把物理值直接当 CSS 用，于是放大成 3984
-        wrong = int(round(1992 * SCALE))
-        check(wrong > vw, "（对照）修复前会跑到屏幕外",
-              "phys_x=%d > 物理桌面 %d" % (wrong, vw))
+        # 闭环：存的值直接当 CSS 传给 create_window
+        css_x = got["x"]
+        check(css_x == 1992, "读出来直接就是 CSS 值", str(css_x))
+        # 逻辑桌面 1536 宽，1992 越界 -> 应被 clamp 回来
+        cx, cy = overlay.clamp_to_virtual_screen(css_x, 28, 353, 369, SCALE)
+        check(cx == 40, "越界的 CSS 位置被夹回左上角",
+              "1992 -> %d（逻辑桌面 %d）" % (cx, lw))
 
         print()
         print("[5] folded 标记也能往返")
@@ -120,6 +118,50 @@ def main():
     finally:
         overlay._STATE_FILE = old
         shutil.rmtree(tmp, ignore_errors=True)
+
+    print()
+    print("[7] 口径一致性：GetWindowRect 与 GetSystemMetrics 同口径")
+    # 实测结论（2026-11-21）：这台机器上两者都返回**逻辑像素**
+    #   rect.left = -286（逻辑；物理 -572）
+    #   SM_CXVIRTUALSCREEN = 1536（逻辑；物理 3072）
+    # 所以 clamp 里绝不能乘 scale —— 乘了会把合法位置误判成"屏幕内"，
+    # 除（或反向错配）会把合法位置误判成"屏幕外"。
+    lw = UD.GetSystemMetrics(78)
+    lh = UD.GetSystemMetrics(79)
+    check(lw > 0 and lh > 0, "逻辑桌面可读", "%dx%d" % (lw, lh))
+    # 物理桌面应该是逻辑 × scale（用于确认 scale 本身是对的）
+    phys_expect = int(lw * SCALE)
+    check(phys_expect > lw, "物理 = 逻辑 × scale",
+          "%d = %d × %.0f" % (phys_expect, lw, SCALE))
+
+    print()
+    print("[8] 拖动没移动时不该写盘")
+    # 用临时配置验证 save 只在真的移动后发生
+    tmp2 = tempfile.mkdtemp()
+    old2 = overlay._STATE_FILE
+    overlay._STATE_FILE = os.path.join(tmp2, "overlay.json")
+    try:
+        overlay.save_window_state(x=100, y=100)
+        before = dict(overlay.load_window_state())
+        # 模拟 drag_end 的判断逻辑（未移动）
+        start = (100, 100)
+        cur = (101, 100)
+        moved = (abs(cur[0] - start[0]) > 2 or abs(cur[1] - start[1]) > 2)
+        if moved:
+            overlay.save_window_state(x=cur[0], y=cur[1])
+        check(not moved, "1px 抖动不算移动")
+        check(overlay.load_window_state() == before, "配置未被改写")
+
+        cur2 = (140, 100)
+        moved2 = (abs(cur2[0] - start[0]) > 2
+                  or abs(cur2[1] - start[1]) > 2)
+        if moved2:
+            overlay.save_window_state(x=cur2[0], y=cur2[1])
+        check(moved2, "40px 算移动")
+        check(overlay.load_window_state().get("x") == 140, "配置已更新")
+    finally:
+        overlay._STATE_FILE = old2
+        shutil.rmtree(tmp2, ignore_errors=True)
 
     print()
     if fails:

@@ -289,8 +289,12 @@ def _rect_str(hwnd):
         return "?"
 
 
-def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale):
+def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale=None):
     """把 CSS 坐标的窗口夹回虚拟桌面里。返回 (x, y)（CSS）。
+
+    `scale` 参数保留只为兼容旧调用方 —— 当前实现**不需要**它，
+    因为 GetWindowRect 和 GetSystemMetrics 在这台机器上都是逻辑像素，
+    同一口径直接比即可（详见下方口径说明）。
 
     为什么要自愈
     ------------
@@ -301,35 +305,39 @@ def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale):
 
     判定：把窗口换算成物理像素，要求它和虚拟桌面有至少 80px 的交集。
 
-    ⚠ 口径陷阱
-    ----------
-    这个进程**故意不是 DPI-aware**（见 dpi_scale 的注释：设了会把
-    create_window 的尺寸当物理像素，窗口只剩一半）。所以
-    GetSystemMetrics(SM_CXVIRTUALSCREEN) 返回的是**逻辑值**
-    （200% DPI 下报 1536x960，实际 3072x1920）。
+    ★ 口径（实测确认，2026-11-21）
+    ------------------------------
+    这台机器上，`GetWindowRect` 和 `GetSystemMetrics(SM_CXVIRTUALSCREEN)`
+    **都返回逻辑像素**，两个视角（DPI-aware / unaware）结果完全一致：
 
-    而窗口位置是物理像素。必须把虚拟桌面乘上 scale 再比，
-    否则任何 x > 1536 的合法位置都会被误判成"屏幕外"。
+        rect.left = -286        （逻辑；物理是 -572）
+        SM_CXVIRTUALSCREEN = 1536   （逻辑；物理是 3072）
+
+    所以两边**同一口径，直接比，不要乘 scale**。
+    早期版本乘了 scale，把逻辑 1536 变成 3072，于是合法的 x=2000
+    也被当成"在屏幕内"放过去了；反向的错也犯过（拿物理比逻辑，
+    把合法位置判成越界）。
+
+    参数 css_w/css_h 是窗口的 CSS 尺寸，和 rect 同口径。
     """
     try:
         SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN = 76, 77
         SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN = 78, 79
-        vx = int(round(UD.GetSystemMetrics(SM_XVIRTUALSCREEN) * scale))
-        vy = int(round(UD.GetSystemMetrics(SM_YVIRTUALSCREEN) * scale))
-        vw = int(round(UD.GetSystemMetrics(SM_CXVIRTUALSCREEN) * scale))
-        vh = int(round(UD.GetSystemMetrics(SM_CYVIRTUALSCREEN) * scale))
+        vx = UD.GetSystemMetrics(SM_XVIRTUALSCREEN)
+        vy = UD.GetSystemMetrics(SM_YVIRTUALSCREEN)
+        vw = UD.GetSystemMetrics(SM_CXVIRTUALSCREEN)
+        vh = UD.GetSystemMetrics(SM_CYVIRTUALSCREEN)
         if vw <= 0 or vh <= 0:
             return css_x, css_y
-        px = int(round(css_x * scale))
-        py = int(round(css_y * scale))
-        pw = max(1, int(round(css_w * scale)))
-        ph = max(1, int(round(css_h * scale)))
+        px, py = int(css_x), int(css_y)
+        pw = max(1, int(css_w))
+        ph = max(1, int(css_h))
         margin = 80
         overlap_x = min(px + pw, vx + vw) - max(px, vx)
         overlap_y = min(py + ph, vy + vh) - max(py, vy)
         if overlap_x >= margin and overlap_y >= margin:
             return css_x, css_y
-        _log("pos clamp: (%d,%d) 在屏幕外（虚拟桌面 %dx%d @%d,%d），"
+        _log("pos clamp: (%d,%d) 在屏幕外（逻辑桌面 %dx%d @%d,%d），"
              "回到左上角" % (px, py, vw, vh, vx, vy))
         return 40, 40
     except Exception:
@@ -337,8 +345,21 @@ def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale):
 
 
 def load_window_state():
+    """读窗口状态。
+
+    ★ 必须用 utf-8-sig
+    -------------------
+    用户（或脚本）手写这个文件时很容易带 BOM —— 实测 PowerShell 的
+    `Set-Content -Encoding UTF8`（5.1）就会写 BOM。
+
+    用 `encoding="utf-8"` 读带 BOM 的文件，`json.load` 会抛
+    `Unexpected UTF-8 BOM`，而这里以前是 `except: return {}` ——
+    表现是**配置被静默忽略**，窗口位置永远回到默认值。
+
+    utf-8-sig 能读带 BOM 和不带 BOM 两种，没有副作用。
+    """
     try:
-        with open(_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(_STATE_FILE, "r", encoding="utf-8-sig") as f:
             d = json.load(f)
         out = {}
         for k in ("x", "y", "w", "h"):
@@ -637,9 +658,15 @@ def _run(args):
 
     print("悬浮窗")
     print("  地址  %s" % url)
+    # 这里还没创建窗口，拿不到 GetDpiForWindow。dpi_scale() 会退回
+    # GetDpiForSystem，对非 DPI-aware 进程可能报 96（显示 100%）。
+    # 所以只在真拿到非 1.0 时才报 DPI，否则不瞎猜。
     scale = dpi_scale()
-    print("  尺寸  %dx%d CSS px（DPI %.0f%%）" % (
-        args.width, args.height, scale * 100))
+    if abs(scale - 1.0) > 0.01:
+        print("  尺寸  %dx%d CSS px（DPI %.0f%%）" % (
+            args.width, args.height, scale * 100))
+    else:
+        print("  尺寸  %dx%d CSS px" % (args.width, args.height))
     print("  Ctrl+Alt+O 显示/隐藏   Ctrl+Alt+P 点击穿透")
     print()
 
@@ -654,27 +681,33 @@ def _run(args):
 
     # 恢复上次的窗口位置和尺寸（pywebview 自己不记无边框窗口的位置）
     #
-    # ★ 坐标口径（踩过，2026-11-21）：
-    #   config/overlay.json 里存的是 **物理像素**（来自 GetWindowRect），
-    #   而 create_window(x=, y=) 要的是 **CSS 像素**（pywebview 会自己乘 DPI）。
-    #   以前直接把存下来的值传进去，等于缩放两次：
-    #       存 2118（物理）-> 当成 2118 CSS -> 实际 4236 物理
-    #   而屏幕只有 3072 宽，于是窗口完全跑到屏幕右侧外面 ——
-    #   表现就是「任务栏里看得到、屏幕上找不到」。
+    # ★ 坐标口径（踩过两次，2026-11-21）
+    #   config/overlay.json 里的 x/y 是 **CSS 像素**（= 逻辑像素）。
     #
-    # 宽高不用换算：存的就是 css_w + FRAME_W，和 create_window 同一口径。
+    #   第一次踩：以为是物理像素，读的时候 /scale —— 结果又缩了一次。
+    #   第二次踩：drag_end 存 GetWindowRect，而这个进程**不是 DPI-aware**，
+    #             GetWindowRect 报的已经是逻辑值，却被当成物理值存下来，
+    #             启动时再 /scale 就偏了一半。
+    #
+    #   现在统一：**存什么读什么，不乘不除**。宽度也一样（css_w + FRAME_W）。
     saved = load_window_state()
-    raw_x, raw_y = saved.get("x"), saved.get("y")
-    if raw_x is not None and raw_y is not None:
-        pos_x = int(round(raw_x / scale))
-        pos_y = int(round(raw_y / scale))
-    else:
-        pos_x, pos_y = 40, 40
+    pos_x = saved.get("x", 40)
+    pos_y = saved.get("y", 40)
     if saved.get("w"):
         pw = saved["w"]
     if saved.get("h"):
         ph = saved["h"]
-    pos_x, pos_y = clamp_to_virtual_screen(pos_x, pos_y, pw, ph, scale)
+    clamped_x, clamped_y = clamp_to_virtual_screen(pos_x, pos_y, pw, ph,
+                                                   scale)
+    if (clamped_x, clamped_y) != (pos_x, pos_y):
+        # 自愈的结果要**写回去**，否则坏值永远留在配置里，
+        # 每次启动都要再夹一次（而且用户拖到新位置后又会混进旧坏值）。
+        pos_x, pos_y = clamped_x, clamped_y
+        save_window_state(x=pos_x, y=pos_y)
+        _log("pos clamp: 已把修正后的位置 (%d,%d) 写回配置"
+             % (pos_x, pos_y))
+    else:
+        pos_x, pos_y = clamped_x, clamped_y
 
     print("  参数  %dx%d（目标视口 %dx%d CSS）" % (
         pw, ph, args.width, args.height))
@@ -718,13 +751,31 @@ def _run(args):
             """结束拖动，把窗口位置存下来（下次启动恢复）。"""
             hwnd = state.get("hwnd")
             ok = end_drag()
-            if hwnd:
-                try:
-                    r = ctypes.wintypes.RECT()
-                    UD.GetWindowRect(hwnd, ctypes.byref(r))
+            if not hwnd:
+                return ok
+            try:
+                # ★ 只在**真的移动过**才保存
+                #
+                # 实测（2026-11-21）：drag_end 在一次会话里被触发了 5 次，
+                # 而用户根本没拖窗口 —— 前端 pointerup 只要经过页头就会调过来。
+                # 每次都写盘，位置被写成各种中间值（78,316 / 80,288 / 138,296）。
+                r = ctypes.wintypes.RECT()
+                UD.GetWindowRect(hwnd, ctypes.byref(r))
+                start = _DRAG.get("win")
+                moved = True
+                if start and _DRAG.get("active") is False and start != (0, 0):
+                    moved = (abs(r.left - start[0]) > 2
+                             or abs(r.top - start[1]) > 2)
+                if moved:
+                    # 存的是 CSS（= 逻辑）像素，和启动时读取口径一致，
+                    # 不乘不除。详见 clamp_to_virtual_screen 的口径说明。
                     save_window_state(x=r.left, y=r.top)
-                except Exception:
-                    pass
+                    _log("drag_end: saved css pos (%d,%d)" % (r.left, r.top))
+                else:
+                    _log("drag_end: 没移动，不保存")
+            except Exception:
+                pass
+            return ok
             return ok
 
         def set_click_through(self, enabled):
@@ -833,6 +884,10 @@ def _run(args):
             hwnd = state.get("hwnd")
             if not hwnd:
                 return False
+            # 拖动中不重算尺寸：页面在动，测量会量到半截（实测 153）。
+            if _DRAG.get("active"):
+                _log("fit_window skipped (dragging)")
+                return False
             _log("fit_window(force=%s) in, rect=%s"
                  % (force, _rect_str(hwnd)))
             try:
@@ -867,6 +922,19 @@ def _run(args):
                     """)
                 if not h or int(h) < 40:
                     _log("fit: measured=%s (too small, skip)" % h)
+                    return False
+
+                # ★ 合理下限：面板最矮也有页头 + 一张卡 ≈ 200 CSS px。
+                #
+                # 实测（2026-11-21）：拖动过程中页面会重排，某次 fit 量到
+                # **153**，窗口被缩成 153 高，整块内容被裁掉。
+                # 40 这个下限只挡住"完全没渲染"，挡不住这种"量到半截"。
+                #
+                # 这里不直接拒绝（那样遇到真的紧凑布局会永远调不下来），
+                # 而是记下来并**保持当前高度**，等下一次测量。
+                if int(h) < 200 and state.get("css_h"):
+                    _log("fit: measured=%s 明显偏小（当前 %s），跳过"
+                         % (h, state.get("css_h")))
                     return False
 
                 # 宽度固定用启动时的值，**绝不能读 window.innerWidth**：
