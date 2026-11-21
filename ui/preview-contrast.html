@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>配色对比度：改前 vs 改后</title>
+<style>
+  body { margin:0; padding:24px; font-family: -apple-system, "Segoe UI",
+         "Microsoft YaHei", sans-serif; background:#111; color:#ccc; }
+  h1 { font-size:16px; font-weight:600; margin:0 0 6px; color:#eee; }
+  h2 { font-size:13px; font-weight:500; margin:26px 0 10px; color:#999; }
+  p.hint { font-size:12px; color:#777; margin:0 0 18px; line-height:1.6; }
+  .strip { display:flex; gap:0; border-radius:10px; overflow:hidden;
+            margin-bottom:14px; }
+  /* 三种典型游戏底色 */
+  .b1 { background:#D8D4CC; }  /* 亮石砖 */
+  .b2 { background:#2A2A2E; }  /* 暗阴影 */
+  .b3 { background:#808080; }  /* 中性灰 */
+  .cell { flex:1; padding:14px 10px; }
+  .cell .tag { font-size:10px; color:#666; margin-bottom:6px; }
+  .card {
+    /* ★ 关键：模拟整窗 alpha 0.78 —— 文字和背景一起变淡 */
+    opacity: 0.78;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 11px;
+  }
+  .hd { font-size:10px; color:var(--ink3); margin-bottom:8px;
+         letter-spacing:.02em; }
+  .row { display:flex; gap:12px; align-items:baseline;
+          margin-bottom:5px; }
+  .row.sub { margin-bottom:3px; }
+  .t0 { font-size:15px; font-weight:600; color:var(--ink0); }
+  .t2 { color:var(--ink2); }
+  .t3 { color:var(--ink3); font-size:10px; }
+  .small { font-size:10px; }
+  .pct { margin-left:auto; font-size:14px; font-weight:600;
+          color:var(--ink0); }
+  .accent { color:var(--accent); }
+  .win { color:var(--win); }
+  .warn { color:var(--warn); }
+  .kill { color:var(--kill); }
+  .note { margin-top:8px; padding-top:7px;
+           border-top:1px solid rgba(128,128,128,.25);
+           font-size:10px; color:var(--ink3); }
+  .verdict { font-size:12px; padding:10px 14px; border-radius:8px;
+              background:#1a1a1a; margin-bottom:22px;
+              border-left:3px solid #C96442; line-height:1.7; }
+  code { background:#222; padding:1px 5px; border-radius:3px;
+          font-size:11px; }
+</style>
+</head>
+<body>
+
+<h1>悬浮窗配色对比度：改前 vs 改后</h1>
+<p class="hint">
+  每格背景是一种典型游戏画面底色。卡片整体 <code>opacity: 0.78</code>
+  模拟真实悬浮窗（整窗 alpha 200/255）—— <b>文字和背景一起变淡</b>，
+  这正是为什么纯色对比度达标、实际却看不清。
+</p>
+
+<div class="verdict">
+  <b>改前的问题</b>：<code>--ink-3</code>（说明性小字）半透明下最坏只有
+  <b>2.80</b>（深色）/ <b>2.48</b>（浅色），远低于 WCAG AA 的 4.5。<br>
+  它承担「性格 —」「推测」「技能栏未识别」这些解释性文字 ——
+  用户最需要看清"为什么没数据"的地方，恰恰最看不清。
+</div>
+
+<h2>深色主题 · 改前</h2>
+<div class="strip">
+  <div class="cell b1"><div class="tag">亮石砖</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#7A776F;--accent:#D97757;--win:#4E9F6E;
+       --warn:#C79A3E;--kill:#C4553F">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.80</div>
+  </div></div>
+  <div class="cell b2"><div class="tag">暗阴影</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#7A776F;--accent:#D97757;--win:#4E9F6E;
+       --warn:#C79A3E;--kill:#C4553F">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.82</div>
+  </div></div>
+  <div class="cell b3"><div class="tag">中性灰</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#7A776F;--accent:#D97757;--win:#4E9F6E;
+       --warn:#C79A3E;--kill:#C4553F">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.90</div>
+  </div></div>
+</div>
+
+<h2>深色主题 · 改后</h2>
+<div class="strip">
+  <div class="cell b1"><div class="tag">亮石砖</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#ABA9A2;--accent:#E2987F;--win:#6FB98C;
+       --warn:#CCA34E;--kill:#DC998B">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.51</div>
+  </div></div>
+  <div class="cell b2"><div class="tag">暗阴影</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#ABA9A2;--accent:#E2987F;--win:#6FB98C;
+       --warn:#CCA34E;--kill:#DC998B">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.51</div>
+  </div></div>
+  <div class="cell b3"><div class="tag">中性灰</div>
+  <div class="card" style="--bg:#1F1E1D;--ink0:#F5F4EE;--ink2:#B8B5AD;
+       --ink3:#ABA9A2;--accent:#E2987F;--win:#6FB98C;
+       --warn:#CCA34E;--kill:#DC998B">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.51</div>
+  </div></div>
+</div>
+
+<h2>浅色主题 · 改前</h2>
+<div class="strip">
+  <div class="cell b1"><div class="tag">亮石砖</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#5C5852;
+       --ink3:#8E8A82;--accent:#C96442;--win:#3F8F5F;
+       --warn:#B8860B;--kill:#B5453A">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.48</div>
+  </div></div>
+  <div class="cell b2"><div class="tag">暗阴影</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#5C5852;
+       --ink3:#8E8A82;--accent:#C96442;--win:#3F8F5F;
+       --warn:#B8860B;--kill:#B5453A">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.86</div>
+  </div></div>
+  <div class="cell b3"><div class="tag">中性灰</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#5C5852;
+       --ink3:#8E8A82;--accent:#C96442;--win:#3F8F5F;
+       --warn:#B8860B;--kill:#B5453A">
+    <div class="hd">改前</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 2.65</div>
+  </div></div>
+</div>
+
+<h2>浅色主题 · 改后</h2>
+<div class="strip">
+  <div class="cell b1"><div class="tag">亮石砖</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#55524C;
+       --ink3:#55524D;--accent:#884027;--win:#295E3F;
+       --warn:#6C4E06;--kill:#93382F">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.50</div>
+  </div></div>
+  <div class="cell b2"><div class="tag">暗阴影</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#55524C;
+       --ink3:#55524D;--accent:#884027;--win:#295E3F;
+       --warn:#6C4E06;--kill:#93382F">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.50</div>
+  </div></div>
+  <div class="cell b3"><div class="tag">中性灰</div>
+  <div class="card" style="--bg:#FAF9F5;--ink0:#1F1E1D;--ink2:#55524C;
+       --ink3:#55524D;--accent:#884027;--win:#295E3F;
+       --warn:#6C4E06;--kill:#93382F">
+    <div class="hd">改后</div>
+    <div class="row"><span class="t0">音速犬</span><span class="pct">100%</span></div>
+    <div class="row sub"><span class="t2">血量 422~486</span><span class="t2">物防 173~237</span></div>
+    <div class="row sub"><span class="t3">性格 —</span><span class="t3">推测 ····</span></div>
+    <div class="row"><span class="accent">我打 ×2.0</span><span class="kill">秒杀</span><span class="win">先手</span><span class="warn">能量 3</span></div>
+    <div class="row t3 small">技能栏未识别</div>
+    <div class="note">ink-3 最坏 4.50</div>
+  </div></div>
+</div>
+
+<h2>改动清单</h2>
+<div class="verdict">
+<table style="font-size:11px;border-collapse:collapse;width:100%">
+<tr style="color:#999"><th align="left">token</th><th align="left">深色</th>
+<th align="left">浅色</th><th align="left">说明</th></tr>
+<tr><td><code>--ink-3</code></td><td>#7A776F → #ABA9A2</td>
+<td>#8E8A82 → #55524D</td><td>说明性小字，两个主题都不达标</td></tr>
+<tr><td><code>--accent</code></td><td>#D97757 → #E2987F</td>
+<td>#C96442 → #884027</td><td>克制关系强调色</td></tr>
+<tr><td><code>--win</code></td><td>#4E9F6E → #6FB98C</td>
+<td>#3F8F5F → #295E3F</td><td>先手 / 优势</td></tr>
+<tr><td><code>--warn</code></td><td>#C79A3E → #CCA34E</td>
+<td>#B8860B → #6C4E06</td><td>能量 / 提醒</td></tr>
+<tr><td><code>--kill</code></td><td>#C4553F → #C9624E</td>
+<td>#B5453A（不变）</td><td>⚠ 深色变粉红，见下方说明</td></tr>
+</table>
+</div>
+
+<div class="verdict">
+  <b>--kill 拆成两个 token（关键决策）</b><br><br>
+  <code>--kill</code> 同时用于两类地方，门槛不同：<br>
+  · <b>图形</b>（血条填充 <code>.bar .fill</code>）→ 门槛 3.0<br>
+  · <b>文字</b>（被克制倍数、伤害百分比、被击杀回合）→ 门槛 4.5<br><br>
+  实测：同一个值<b>无法同时满足两者</b>。<br>
+  深色 <code>#C4553F</code> 图形 2.70 / 文字 2.70，两边都不够；<br>
+  提到 <code>#DC998B</code> 文字达标（4.51），但红色提亮就偏粉，
+  失去"伤害"的警示感。<br><br>
+  所以拆开：<br>
+  · <code>--kill</code> → 深色 <code>#C9624E</code>（图形 3.00）<br>
+  · <code>--kill-text</code> → 深色 <code>#DC998B</code>（文字 4.51）<br><br>
+  血条保持冲击力，文字达标。测试里锁住了「<code>--kill</code> 只能用于
+  background」，防止以后有人改回 color 导致对比度静默跌回 2.70。
+</div>
+
+</body>
+</html>

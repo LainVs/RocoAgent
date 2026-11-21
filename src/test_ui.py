@@ -1141,6 +1141,116 @@ def test_contrast():
     ok("--ink-4" in css, "保留装饰级 token --ink-4")
 
 
+# ============================================================ 3c2. 悬浮窗对比度
+def test_overlay_contrast():
+    """悬浮窗 `style.css` 的对比度回归。
+
+    为什么单独测（2026-11-21）
+    -------------------------
+    上面的 `test_contrast` 只测 `console.css`（控制台），**从没测过
+    悬浮窗的 `style.css`** —— 而悬浮窗才是用户一直盯着看的那个。
+
+    实测发现两个主题的 `--ink-3` 在半透明下都不达 WCAG AA：
+
+        深色  #7A776F  最坏 2.80（需 4.5）
+        浅色  #8E8A82  最坏 2.48（需 4.5）
+
+    它承担的正是 `.card-sub` / 空态提示这些**解释性文字** ——
+    用户最需要看清"为什么没数据"的地方，恰恰最看不清。
+
+    为什么门槛按"最坏情况"算
+    ------------------------
+    悬浮窗半透明浮在游戏画面上。整窗 alpha（`SetLayeredWindowAttributes`）
+    会让**文字和背景一起**变淡，所以纯色背景的对比度不够，必须按
+    "叠在典型游戏底色上"算。这里取三种：亮石砖 / 暗阴影 / 中性灰。
+    """
+    print("\n[3c2] 悬浮窗对比度（WCAG AA，含半透明最坏情况）")
+    import re
+
+    def lin(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def lum(rgb):
+        r, g, b = (lin(x) for x in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def ratio(a, b):
+        la, lb = lum(a), lum(b)
+        hi, lo = max(la, lb), min(la, lb)
+        return (hi + 0.05) / (lo + 0.05)
+
+    def over(fg, d, a):
+        return tuple(round(a * f + (1 - a) * x) for f, x in zip(fg, d))
+
+    try:
+        with open(os.path.join(UI, "style.css"), encoding="utf-8") as f:
+            css = f.read()
+    except OSError as e:
+        ok(False, "读 style.css", str(e)[:60])
+        return
+
+    # 三种典型游戏底色 + 用户常用的窗口 alpha 200/255
+    DESKTOPS = [(216, 212, 204), (42, 42, 46), (128, 128, 128)]
+    ALPHA = 200 / 255.0
+
+    def tokens_of(block_start):
+        i = css.find(block_start)
+        if i < 0:
+            return {}
+        j = css.find("}", i)
+        out = {}
+        for m in re.finditer(r"--([\w-]+):\s*#([0-9A-Fa-f]{6})",
+                             css[i:j]):
+            h = m.group(2)
+            out[m.group(1)] = tuple(int(h[k:k + 2], 16) for k in (0, 2, 4))
+        return out
+
+    light = tokens_of(":root {")
+    dark = tokens_of("body.theme-dark {")
+    ok(bool(light) and bool(dark), "解析到两个主题的 token",
+       "light=%d dark=%d" % (len(light), len(dark)))
+
+    def worst_ratio(fg, bg):
+        w = ratio(fg, bg)
+        for d in DESKTOPS:
+            w = min(w, ratio(over(fg, d, ALPHA), over(bg, d, ALPHA)))
+        return w
+
+    # (token, 门槛)。--kill 是图形用途（血条填充），门槛 3.0；
+    # --kill-text 是文字用途，门槛 4.5。
+    CHECKS = (
+        ("ink-0", 4.5), ("ink-2", 4.5), ("ink-3", 4.5),
+        ("accent", 4.5), ("win", 4.5), ("warn", 4.5),
+        ("kill", 3.0), ("kill-text", 4.5),
+    )
+
+    for theme_name, toks, bgkey in (
+            ("深色", dark, (31, 30, 29)),
+            ("浅色", light, (250, 249, 245))):
+        bg = toks.get("bg") or bgkey
+        for name, need in CHECKS:
+            if name not in toks:
+                ok(False, "%s --%s 存在" % (theme_name, name))
+                continue
+            w = worst_ratio(toks[name], bg)
+            ok(w >= need, "%s --%s >= %.1f" % (theme_name, name, need),
+               "最坏 %.2f" % w)
+
+    # 语义检查：--kill 必须只用于 background（图形），不能用于 color（文字）
+    #
+    # 这是 2026-11-21 的教训：同一个值无法同时满足图形 3.0 和文字 4.5，
+    # 所以拆成两个 token。如果以后有人把 color 改回 var(--kill)，
+    # 文字对比度会静默跌回 2.70。
+    for m in re.finditer(r"([^\n{}]+)\{([^}]*)\}", css):
+        sel, body = m.group(1), m.group(2)
+        if "var(--kill)" not in body:
+            continue
+        ok("background" in body and "color:" not in body,
+           "--kill 只用于 background（%s）" % sel.strip()[:28],
+           body.strip()[:50])
+
+
 # ============================================================ 3b. 日志尾推断
 def test_phase_infer():
     """`/api/bot` 的 phase 全部来自日志尾推断，这里用临时日志验证。
@@ -1382,6 +1492,7 @@ def main():
         test_contract()
         test_fit_state_sync()
         test_contrast()
+        test_overlay_contrast()
         test_phase_infer()
         test_label(port)
         test_window_state()

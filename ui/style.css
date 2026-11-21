@@ -59,18 +59,24 @@
   /* 文字：三级，暖调（冷白在暖底上会发蓝） */
   --ink-0: #1F1E1D;               /* 主：名字 / 伤害 / 百分比 */
   --ink-1: #1F1E1D;
-  --ink-2: #5C5852;               /* 次：绝对值 / 区间 */
-  --ink-3: #8E8A82;               /* 弱：单位 / 序号 */
+  --ink-2: #55524C;               /* 次：绝对值 / 区间 */
+  --ink-3: #55524D;               /* 弱：单位 / 序号 */
 
   /* 唯一强调色：Claude 暖珊瑚 */
-  --accent:      #C96442;
-  --accent-soft: rgba(201, 100, 66, 0.55);
-  --accent-dim:  rgba(201, 100, 66, 0.12);
+  --accent:      #884027;
+  --accent-soft: rgba(136, 64, 39, 0.55);
+  --accent-dim:  rgba(136, 64, 39, 0.12);
 
   /* 语义色：只在血条和"击杀"上用，不做装饰 */
-  --win:  #3F8F5F;
-  --warn: #B8860B;
+  --win:  #295E3F;
+  --warn: #6C4E06;
   --kill: #B5453A;
+  /* ★ 文字用的伤害红（2026-11-21）
+     --kill 同时用于血条填充（图形，门槛 3.0）和文字（门槛 4.5）。
+     半透明浮在游戏画面上时，同一个值无法同时满足两者：
+         #B5453A  图形 3.63 OK / 文字 3.63 FAIL
+     所以拆开 —— 血条保持冲击力，文字用更深的 #93382F（4.52）。 */
+  --kill-text: #93382F;
 
   /* 分隔线 / 底槽 */
   --line:      rgba(31, 30, 29, 0.09);
@@ -111,15 +117,16 @@ body.theme-dark {
   --ink-0: #F5F4EE;
   --ink-1: #F5F4EE;
   --ink-2: #B8B5AD;
-  --ink-3: #7A776F;
+  --ink-3: #ABA9A2;
 
-  --accent:      #D97757;
-  --accent-soft: rgba(217, 119, 87, 0.55);
-  --accent-dim:  rgba(217, 119, 87, 0.14);
+  --accent:      #E2987F;
+  --accent-soft: rgba(226, 152, 127, 0.55);
+  --accent-dim:  rgba(226, 152, 127, 0.14);
 
-  --win:  #4E9F6E;
-  --warn: #C79A3E;
-  --kill: #C4553F;
+  --win:  #6FB98C;
+  --warn: #CCA34E;
+  --kill: #C9624E;        /* 图形用（血条填充），门槛 3.0 */
+  --kill-text: #DC998B;   /* 文字用，门槛 4.5 —— 见浅色主题那段注释 */
 
   --line:      rgba(245, 244, 238, 0.10);
   --line-soft: rgba(245, 244, 238, 0.055);
@@ -406,7 +413,7 @@ body.embedded .overlay .panel {
   transition: color .2s;
 }
 .hdr-ms.warn { color: var(--warn); }
-.hdr-ms.bad  { color: var(--kill); }
+.hdr-ms.bad  { color: var(--kill-text); }
 
 .ibtn {
   display: grid;
@@ -804,7 +811,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 /* 数值颜色直接编码好坏：我打得多 = 好（accent），挨得多 = 坏（kill） */
 .mu-side.good b { color: var(--accent); }
-.mu-side.bad  b { color: var(--kill); }
+.mu-side.bad  b { color: var(--kill-text); }
 
 .mu-arrow {
   font-size: 10px;
@@ -819,7 +826,7 @@ input[type="range"]::-webkit-slider-thumb {
   white-space: nowrap;
 }
 .mu-tag.good { color: var(--accent); }
-.mu-tag.bad  { color: var(--kill); }
+.mu-tag.bad  { color: var(--kill-text); }
 
 /* ── 技能行 ─────────────────────────────────────────── */
 /* 旧版是两行（名字/伤害 + 全宽伤害条 + 呼吸动画 + 斩杀箭头）。
@@ -894,7 +901,7 @@ input[type="range"]::-webkit-slider-thumb {
   min-width: 30px;
   text-shadow: var(--halo);
 }
-.skill.kill .sk-pct { color: var(--kill); font-weight: 500; }
+.skill.kill .sk-pct { color: var(--kill-text); font-weight: 500; }
 .skill.na .sk-pct {
   font-family: var(--font-cn);
   font-size: 9.5px;
@@ -940,7 +947,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .verdict .sep { color: var(--ink-3); opacity: .55; }
 .verdict .good { color: var(--accent); }
-.verdict .bad  { color: var(--kill); }
+.verdict .bad  { color: var(--kill-text); }
 
 /* ── 折叠态：横向紧凑条 ─────────────────────────────── */
 .overlay.folded { width: 320px; }
