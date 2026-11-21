@@ -97,6 +97,7 @@ def test_api(port):
         ("/api/rounds?limit=2", ("items",)),
         ("/api/dex?limit=2", ("items", "total")),
         ("/api/log?offset=0", ("offset", "lines")),
+        ("/api/portraits?side=foe&limit=3", ("items", "total")),
     ]
     for path, keys in endpoints:
         try:
@@ -352,6 +353,59 @@ def test_dom(port):
        "Alt+A 改了透明度", "alpha=%s" % result.get("alphaAfterAltA"))
     ok(result.get("foldedAfterAltT") is True,
        "Alt+T 折叠了", "folded=%s" % result.get("foldedAfterAltT"))
+
+
+# ============================================================ 4.5 标注
+def test_label(port):
+    print("\n[4.5] 头像标注 API")
+
+    def post(path, body):
+        data = json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(
+            "http://127.0.0.1:%d%s" % (port, path), data=data,
+            headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    # 列表
+    try:
+        d = get(port, "/api/portraits?side=foe&limit=3")
+        ok("items" in d and "total" in d, "待标注列表", "total=%s" % d.get("total"))
+        ok("groups" in d, "同款分组字段存在")
+    except Exception as e:
+        ok(False, "待标注列表", str(e)[:60])
+
+    # 非法 side
+    try:
+        d = get(port, "/api/portraits?side=bogus")
+        ok(d.get("total") == 0, "非法 side 返回空")
+    except Exception as e:
+        ok(False, "非法 side", str(e)[:60])
+
+    # 缺参数 -> 拒绝
+    try:
+        r = post("/api/portrait/label", {"side": "foe", "stem": "", "species": ""})
+        ok(r.get("ok") is False, "缺参数被拒", r.get("msg"))
+    except Exception as e:
+        ok(False, "缺参数", str(e)[:60])
+
+    # 不存在的文件 -> 拒绝（不会误删）
+    try:
+        r = post("/api/portrait/label",
+                 {"side": "foe", "stem": "_unknown_NOSUCHFILE",
+                  "species": "水灵"})
+        ok(r.get("ok") is False, "不存在的文件被拒", r.get("msg"))
+    except Exception as e:
+        ok(False, "不存在的文件", str(e)[:60])
+
+    # 不存在的物种 -> 拒绝
+    try:
+        r = post("/api/portrait/label",
+                 {"side": "foe", "stem": "_unknown_NOSUCHFILE",
+                  "species": "绝对不存在的精灵ZZZ"})
+        ok(r.get("ok") is False, "未知物种被拒", r.get("msg"))
+    except Exception as e:
+        ok(False, "未知物种", str(e)[:60])
 
 
 # ============================================================ 5. 窗口状态
@@ -673,6 +727,7 @@ def main():
         test_api(port)
         test_static(port)
         test_contract()
+        test_label(port)
         test_window_state()
         if not args.no_dom:
             test_dom(port)
