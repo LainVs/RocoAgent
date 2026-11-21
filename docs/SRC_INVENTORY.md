@@ -23,6 +23,7 @@
 | 文件 | 职责 |
 |---|---|
 | `statmodel.py` | **唯一**数值模型（面板 / 伤害 / 克制 / 区间） |
+| `pvp_meta.py` | **PvP 大数据**：性格 / 血量 / 物防 / 技能携带的概率分布（见 `docs/PVP_META.md`） |
 | `damage.py` | 数据层（roco-claude json） |
 | `foe_hp.py` | 对手血量 / 承伤 |
 | `pvp_engine.py` | TTD/TKO / 技能池 |
@@ -95,6 +96,8 @@
 | `test_skillbar.py` | 技能栏识别（含负样本） |
 | `test_switch.py` | 换人面板（只有 5 行、倒地宠不可选） |
 | `test_policy.py` | `policy_v2` 决策回归 |
+| `test_pvp_meta.py` | 概率分布合法（和为 1 / 分位有序 / 未知物种返回空） |
+| `test_priority.py` | 先发制人：能反杀才用 / 打不死不硬用 / 不压过高伤害 |
 | `test_state_bus.py` | 状态总线 |
 
 ## 四、队伍编辑（原管理面板的功能）

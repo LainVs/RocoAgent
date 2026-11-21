@@ -633,7 +633,7 @@ class Bot:
             #
             # 硬闸：只要"开始挑战"按钮在，就绝对不是战斗。
             # 每秒最多探一次（has_start_button 是一次小区域抓屏）。
-            if (st.get("battle") and not st.get("bar")
+            if (st.get("battle")
                     and now - getattr(self, "_lobby_probe_at", 0.0) > 1.0):
                 self._lobby_probe_at = now
                 try:
@@ -3643,6 +3643,11 @@ class Bot:
         self.match_ended_at = ended
         self.last_progress_at = ended
         self.advance_count = 0
+        # 没有登记比赛（match_started=None）：只做状态清理。
+        # 原来会写一条 "MATCH 0 END (0s, 0 actions)" 到 rounds.jsonl，
+        # 把统计搞脏（实测 01:56:21 / 01:57:18 两条）。
+        if started is None:
+            return
         # started 可能已经是 None（脱困路径在"比赛还没登记"时就会调到这里）。
         # 原来直接 `ended - started` 抛
         #   TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
