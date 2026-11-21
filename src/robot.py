@@ -1520,6 +1520,14 @@ class Bot:
             return None, why
         if detail:
             why = "%s [v2 %s]" % (why, detail.get("score"))
+            # 对面行为预判（opponent_model 分层池化后给出）
+            adv = detail.get("anticipate")
+            if adv:
+                why += " [对手 攻%.0f%% 换%.0f%% 增%.0f%% %s n=%s]" % (
+                    (adv.get("p_attack") or 0) * 100,
+                    (adv.get("p_switch") or 0) * 100,
+                    (adv.get("p_buff") or 0) * 100,
+                    adv.get("level") or "", adv.get("n"))
         return action, why
 
     def bench_state(self):
@@ -3648,6 +3656,16 @@ class Bot:
         # 把统计搞脏（实测 01:56:21 / 01:57:18 两条）。
         if started is None:
             return
+        # 每局结束后重建对手行为模型（数据量很小，<50ms）。
+        # 不重建的话模型永远停在手动 --build 的那一刻，
+        # anticipate 也就永远拿旧数据做决策。
+        try:
+            import opponent_model as _OM
+            _model, _nm = _OM.build_from_actions(_OM.load_actions())
+            with open(_OM.MODEL, "w", encoding="utf-8") as _f:
+                json.dump(_model, _f, ensure_ascii=False)
+        except Exception:
+            pass
         # started 可能已经是 None（脱困路径在"比赛还没登记"时就会调到这里）。
         # 原来直接 `ended - started` 抛
         #   TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'

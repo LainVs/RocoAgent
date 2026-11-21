@@ -1,19 +1,410 @@
 {
- "音速犬|烈火战神": {
-  "n": 2,
-  "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.0,
-  "p_buff": 0.5,
-  "switch_top": [],
-  "next_types_top": []
+ "__global__|__all__": {
+  "n": 218,
+  "p_attack": 0.275,
+  "p_switch": 0.505,
+  "p_buff": 0.22,
+  "reliable": true,
+  "level": "global"
  },
- "恶魔狼|烈火战神": {
-  "n": 1,
+ "__foe__|烈火战神": {
+  "n": 6,
+  "p_attack": 0.333,
+  "p_switch": 0.333,
+  "p_buff": 0.333,
   "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|绒光优优": {
+  "n": 3,
+  "p_attack": 0.667,
+  "p_switch": 0.333,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|花衣蝶": {
+  "n": 4,
+  "p_attack": 0.75,
+  "p_switch": 0.25,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|铠甲虫": {
+  "n": 3,
+  "p_attack": 0.667,
+  "p_switch": 0.333,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|画间沉铁兽": {
+  "n": 9,
+  "p_attack": 0.444,
+  "p_switch": 0.222,
+  "p_buff": 0.333,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|雪影冰灵": {
+  "n": 17,
+  "p_attack": 0.118,
+  "p_switch": 0.765,
+  "p_buff": 0.118,
+  "reliable": true,
+  "level": "foe"
+ },
+ "__foe__|卡瓦重": {
+  "n": 9,
+  "p_attack": 0.222,
+  "p_switch": 0.778,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|彩虹独角兽": {
+  "n": 2,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|白发路路": {
+  "n": 26,
+  "p_attack": 0.423,
+  "p_switch": 0.423,
+  "p_buff": 0.154,
+  "reliable": true,
+  "level": "foe"
+ },
+ "__foe__|裘卡": {
+  "n": 1,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|龙息帕尔": {
+  "n": 6,
+  "p_attack": 0.167,
+  "p_switch": 0.167,
+  "p_buff": 0.667,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|火羽": {
+  "n": 14,
+  "p_attack": 0.429,
+  "p_switch": 0.286,
+  "p_buff": 0.286,
+  "reliable": true,
+  "level": "foe"
+ },
+ "__foe__|水灵": {
+  "n": 11,
+  "p_attack": 0.182,
+  "p_switch": 0.545,
+  "p_buff": 0.273,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|彩蝶鲨": {
+  "n": 9,
+  "p_attack": 0.333,
+  "p_switch": 0.444,
+  "p_buff": 0.222,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|冰钻布鲁斯": {
+  "n": 7,
+  "p_attack": 0.286,
+  "p_switch": 0.571,
+  "p_buff": 0.143,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|嘟嘟煲": {
+  "n": 7,
+  "p_attack": 0.143,
+  "p_switch": 0.571,
+  "p_buff": 0.286,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|友爱星飞": {
+  "n": 5,
+  "p_attack": 0.0,
+  "p_switch": 0.4,
+  "p_buff": 0.6,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|贝古斯": {
+  "n": 3,
+  "p_attack": 0.333,
+  "p_switch": 0.667,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|海豹船长": {
+  "n": 15,
+  "p_attack": 0.467,
+  "p_switch": 0.267,
+  "p_buff": 0.267,
+  "reliable": true,
+  "level": "foe"
+ },
+ "__foe__|月牙雪熊": {
+  "n": 3,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|寂灭骨龙": {
+  "n": 3,
+  "p_attack": 0.333,
+  "p_switch": 0.667,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|翼龙": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|菊花梨": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|迪莫": {
+  "n": 3,
+  "p_attack": 0.0,
+  "p_switch": 0.333,
+  "p_buff": 0.667,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|炽心勇狮": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|音速犬": {
+  "n": 4,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|银月狼王": {
+  "n": 3,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|化蝶": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|冥古龙": {
+  "n": 3,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|叮叮卯": {
+  "n": 5,
+  "p_attack": 0.4,
+  "p_switch": 0.6,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|绿草精灵": {
+  "n": 2,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|岚鸟": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|尖嘴狐仙": {
+  "n": 4,
+  "p_attack": 0.25,
+  "p_switch": 0.5,
+  "p_buff": 0.25,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|饮雪狂兽": {
+  "n": 4,
+  "p_attack": 0.0,
+  "p_switch": 0.25,
+  "p_buff": 0.75,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|觅觅蝠": {
+  "n": 5,
+  "p_attack": 0.0,
+  "p_switch": 0.2,
+  "p_buff": 0.8,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|酷拉": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|海枝枝": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|卡拉波斯": {
+  "n": 4,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|圣羽翼王": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|离心舞者": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|星光狮（星光能量的样子）": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|巨噬针鼹": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|布克棱岩": {
+  "n": 2,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|食尘短绒": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|棋绮后（白子）": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|布灵布灵": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "foe"
+ },
+ "__foe__|圣水守护": {
+  "n": 2,
+  "p_attack": 0.0,
+  "p_switch": 0.5,
+  "p_buff": 0.5,
+  "reliable": false,
+  "level": "foe"
+ },
+ "音速犬|烈火战神": {
+  "n": 4,
+  "p_attack": 0.389,
+  "p_switch": 0.306,
+  "p_buff": 0.306,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "冰钻布鲁斯",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|烈火战神": {
+  "n": 2,
+  "p_attack": 0.267,
+  "p_switch": 0.367,
+  "p_buff": 0.367,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "绒光优优",
@@ -24,28 +415,31 @@
  },
  "恶魔狼|绒光优优": {
   "n": 1,
-  "reliable": false,
-  "p_attack": 1.0,
-  "p_switch": 0.0,
+  "p_attack": 0.704,
+  "p_switch": 0.296,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "音速犬|花衣蝶": {
   "n": 1,
-  "reliable": false,
-  "p_attack": 1.0,
-  "p_switch": 0.0,
+  "p_attack": 0.778,
+  "p_switch": 0.222,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "银月狼王|花衣蝶": {
   "n": 3,
-  "reliable": false,
-  "p_attack": 0.667,
-  "p_switch": 0.333,
+  "p_attack": 0.727,
+  "p_switch": 0.273,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "铠甲虫",
@@ -56,10 +450,11 @@
  },
  "银月狼王|铠甲虫": {
   "n": 3,
-  "reliable": false,
   "p_attack": 0.667,
   "p_switch": 0.333,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "陨星虫",
@@ -70,10 +465,11 @@
  },
  "音速犬|画间沉铁兽": {
   "n": 8,
+  "p_attack": 0.41,
+  "p_switch": 0.236,
+  "p_buff": 0.354,
   "reliable": false,
-  "p_attack": 0.375,
-  "p_switch": 0.25,
-  "p_buff": 0.375,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -88,10 +484,11 @@
  },
  "银月狼王|雪影冰灵": {
   "n": 6,
+  "p_attack": 0.139,
+  "p_switch": 0.794,
+  "p_buff": 0.067,
   "reliable": false,
-  "p_attack": 0.167,
-  "p_switch": 0.833,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [
    [
     "卡瓦重",
@@ -110,10 +507,11 @@
  },
  "银月狼王|卡瓦重": {
   "n": 6,
-  "reliable": false,
-  "p_attack": 0.167,
-  "p_switch": 0.833,
+  "p_attack": 0.198,
+  "p_switch": 0.802,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -132,10 +530,11 @@
  },
  "银月狼王|彩虹独角兽": {
   "n": 2,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "卡瓦重",
@@ -150,10 +549,11 @@
  },
  "银月狼王|白发路路": {
   "n": 5,
+  "p_attack": 0.414,
+  "p_switch": 0.491,
+  "p_buff": 0.095,
   "reliable": false,
-  "p_attack": 0.4,
-  "p_switch": 0.6,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [
    [
     "卡瓦重",
@@ -171,29 +571,37 @@
   "next_types_top": []
  },
  "音速犬|绒光优优": {
-  "n": 1,
-  "reliable": false,
-  "p_attack": 1.0,
-  "p_switch": 0.0,
+  "n": 2,
+  "p_attack": 0.633,
+  "p_switch": 0.367,
   "p_buff": 0.0,
-  "switch_top": [],
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "圣水守护",
+    1
+   ]
+  ],
   "next_types_top": []
  },
  "银月狼王|裘卡": {
   "n": 1,
-  "reliable": false,
   "p_attack": 1.0,
   "p_switch": 0.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "音速犬|龙息帕尔": {
   "n": 5,
+  "p_attack": 0.179,
+  "p_switch": 0.179,
+  "p_buff": 0.641,
   "reliable": false,
-  "p_attack": 0.2,
-  "p_switch": 0.2,
-  "p_buff": 0.6,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -203,11 +611,12 @@
   "next_types_top": []
  },
  "音速犬|雪影冰灵": {
-  "n": 7,
+  "n": 10,
+  "p_attack": 0.108,
+  "p_switch": 0.729,
+  "p_buff": 0.163,
   "reliable": false,
-  "p_attack": 0.143,
-  "p_switch": 0.857,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [
    [
     "月牙雪熊",
@@ -226,10 +635,11 @@
  },
  "音速犬|火羽": {
   "n": 6,
+  "p_attack": 0.245,
+  "p_switch": 0.378,
+  "p_buff": 0.378,
   "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 0.5,
-  "p_buff": 0.5,
+  "level": "pair",
   "switch_top": [
    [
     "画间沉铁兽",
@@ -253,37 +663,46 @@
  },
  "恶魔狼|画间沉铁兽": {
   "n": 1,
+  "p_attack": 0.506,
+  "p_switch": 0.198,
+  "p_buff": 0.296,
   "reliable": false,
-  "p_attack": 1.0,
-  "p_switch": 0.0,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "恶魔狼|火羽": {
-  "n": 2,
+  "n": 3,
+  "p_attack": 0.584,
+  "p_switch": 0.208,
+  "p_buff": 0.208,
   "reliable": false,
-  "p_attack": 1.0,
-  "p_switch": 0.0,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "银月狼王|火羽": {
-  "n": 4,
+  "n": 5,
+  "p_attack": 0.495,
+  "p_switch": 0.253,
+  "p_buff": 0.253,
   "reliable": false,
-  "p_attack": 0.75,
-  "p_switch": 0.0,
-  "p_buff": 0.25,
-  "switch_top": [],
+  "level": "pair",
+  "switch_top": [
+   [
+    "音速犬",
+    1
+   ]
+  ],
   "next_types_top": []
  },
  "恶魔狼|水灵": {
   "n": 2,
+  "p_attack": 0.245,
+  "p_switch": 0.536,
+  "p_buff": 0.218,
   "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.5,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [
    [
     "彩蝶鲨",
@@ -293,27 +712,34 @@
   "next_types_top": []
  },
  "恶魔狼|彩蝶鲨": {
-  "n": 2,
+  "n": 5,
+  "p_attack": 0.436,
+  "p_switch": 0.35,
+  "p_buff": 0.214,
   "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.0,
-  "p_buff": 0.5,
-  "switch_top": [],
+  "level": "pair",
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
   "next_types_top": []
  },
  "音速犬|冰钻布鲁斯": {
-  "n": 4,
+  "n": 7,
+  "p_attack": 0.286,
+  "p_switch": 0.571,
+  "p_buff": 0.143,
   "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 0.75,
-  "p_buff": 0.25,
+  "level": "pair",
   "switch_top": [
    [
-    "嘟嘟煲",
-    1
+    "火羽",
+    2
    ],
    [
-    "火羽",
+    "嘟嘟煲",
     1
    ],
    [
@@ -330,10 +756,11 @@
  },
  "音速犬|嘟嘟煲": {
   "n": 7,
-  "reliable": false,
   "p_attack": 0.143,
   "p_switch": 0.571,
   "p_buff": 0.286,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "友爱星飞",
@@ -352,10 +779,11 @@
  },
  "音速犬|友爱星飞": {
   "n": 5,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.4,
   "p_buff": 0.6,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "白发路路",
@@ -369,11 +797,12 @@
   "next_types_top": []
  },
  "音速犬|白发路路": {
-  "n": 14,
+  "n": 20,
+  "p_attack": 0.442,
+  "p_switch": 0.371,
+  "p_buff": 0.187,
   "reliable": true,
-  "p_attack": 0.571,
-  "p_switch": 0.286,
-  "p_buff": 0.143,
+  "level": "pair",
   "switch_top": [
    [
     "嘟嘟煲",
@@ -392,10 +821,11 @@
  },
  "音速犬|贝古斯": {
   "n": 3,
-  "reliable": false,
   "p_attack": 0.333,
   "p_switch": 0.667,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "白发路路",
@@ -410,10 +840,11 @@
  },
  "音速犬|海豹船长": {
   "n": 10,
+  "p_attack": 0.485,
+  "p_switch": 0.23,
+  "p_buff": 0.285,
   "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.2,
-  "p_buff": 0.3,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -428,10 +859,11 @@
  },
  "音速犬|月牙雪熊": {
   "n": 3,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "迪莫",
@@ -445,14 +877,19 @@
   "next_types_top": []
  },
  "音速犬|寂灭骨龙": {
-  "n": 2,
-  "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.5,
+  "n": 3,
+  "p_attack": 0.333,
+  "p_switch": 0.667,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "翼龙",
+    1
+   ],
+   [
+    "雪影冰灵",
     1
    ]
   ],
@@ -460,10 +897,11 @@
  },
  "音速犬|翼龙": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "白发路路",
@@ -474,19 +912,21 @@
  },
  "音速犬|菊花梨": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.0,
   "p_buff": 1.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "音速犬|迪莫": {
   "n": 3,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.333,
   "p_buff": 0.667,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -496,29 +936,45 @@
   "next_types_top": []
  },
  "音速犬|水灵": {
-  "n": 3,
+  "n": 7,
+  "p_attack": 0.097,
+  "p_switch": 0.558,
+  "p_buff": 0.345,
   "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 0.0,
-  "p_buff": 1.0,
-  "switch_top": [],
+  "level": "pair",
+  "switch_top": [
+   [
+    "火羽",
+    1
+   ],
+   [
+    "彩蝶鲨",
+    1
+   ],
+   [
+    "卡拉波斯",
+    1
+   ]
+  ],
   "next_types_top": []
  },
  "银月狼王|炽心勇狮": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.0,
   "p_buff": 1.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [],
   "next_types_top": []
  },
  "银月狼王|音速犬": {
-  "n": 1,
-  "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 1.0,
+  "n": 3,
+  "p_attack": 0.545,
+  "p_switch": 0.455,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "雪影冰灵",
@@ -528,11 +984,12 @@
   "next_types_top": []
  },
  "音速犬|银月狼王": {
-  "n": 2,
-  "reliable": false,
+  "n": 3,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "音速犬",
@@ -541,16 +998,21 @@
    [
     "白发路路",
     1
+   ],
+   [
+    "巨噬针鼹",
+    1
    ]
   ],
   "next_types_top": []
  },
  "音速犬|音速犬": {
   "n": 1,
-  "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 1.0,
+  "p_attack": 0.444,
+  "p_switch": 0.556,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "化蝶",
@@ -561,10 +1023,11 @@
  },
  "音速犬|化蝶": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "友爱星飞",
@@ -575,10 +1038,11 @@
  },
  "恶魔狼|冥古龙": {
   "n": 2,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "冰钻布鲁斯",
@@ -597,18 +1061,19 @@
   ]
  },
  "音速犬|叮叮卯": {
-  "n": 4,
-  "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.5,
+  "n": 5,
+  "p_attack": 0.4,
+  "p_switch": 0.6,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
-    "绿草精灵",
-    1
+    "彩蝶鲨",
+    2
    ],
    [
-    "彩蝶鲨",
+    "绿草精灵",
     1
    ]
   ],
@@ -616,10 +1081,11 @@
  },
  "音速犬|绿草精灵": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "叮叮卯",
@@ -629,14 +1095,23 @@
   "next_types_top": []
  },
  "音速犬|彩蝶鲨": {
-  "n": 2,
+  "n": 4,
+  "p_attack": 0.222,
+  "p_switch": 0.546,
+  "p_buff": 0.231,
   "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 0.5,
-  "p_buff": 0.5,
+  "level": "pair",
   "switch_top": [
    [
     "恶魔狼",
+    1
+   ],
+   [
+    "白金独角兽",
+    1
+   ],
+   [
+    "卡拉波斯",
     1
    ]
   ],
@@ -644,10 +1119,11 @@
  },
  "音速犬|岚鸟": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "冰钻布鲁斯",
@@ -658,10 +1134,11 @@
  },
  "音速犬|卡瓦重": {
   "n": 2,
-  "reliable": false,
-  "p_attack": 0.5,
-  "p_switch": 0.5,
+  "p_attack": 0.278,
+  "p_switch": 0.722,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "恶魔狼",
@@ -672,10 +1149,11 @@
  },
  "音速犬|尖嘴狐仙": {
   "n": 4,
-  "reliable": false,
   "p_attack": 0.25,
   "p_switch": 0.5,
   "p_buff": 0.25,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "饮雪狂兽",
@@ -690,10 +1168,11 @@
  },
  "音速犬|饮雪狂兽": {
   "n": 4,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.25,
   "p_buff": 0.75,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "尖嘴狐仙",
@@ -704,10 +1183,11 @@
  },
  "恶魔狼|绿草精灵": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "彩蝶鲨",
@@ -718,10 +1198,11 @@
  },
  "音速犬|觅觅蝠": {
   "n": 5,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 0.2,
   "p_buff": 0.8,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "咕咕帽",
@@ -732,10 +1213,11 @@
  },
  "银月狼王|酷拉": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "影狸",
@@ -746,10 +1228,11 @@
  },
  "音速犬|海枝枝": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "海豹船长",
@@ -760,10 +1243,11 @@
  },
  "银月狼王|冥古龙": {
   "n": 1,
-  "reliable": false,
   "p_attack": 0.0,
   "p_switch": 1.0,
   "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
   "switch_top": [
    [
     "恶魔狼王",
@@ -774,10 +1258,11 @@
  },
  "恶魔狼|海豹船长": {
   "n": 5,
+  "p_attack": 0.441,
+  "p_switch": 0.318,
+  "p_buff": 0.241,
   "reliable": false,
-  "p_attack": 0.4,
-  "p_switch": 0.4,
-  "p_buff": 0.2,
+  "level": "pair",
   "switch_top": [
    [
     "冥古龙",
@@ -792,13 +1277,237 @@
  },
  "恶魔狼|白发路路": {
   "n": 1,
+  "p_attack": 0.376,
+  "p_switch": 0.487,
+  "p_buff": 0.137,
   "reliable": false,
-  "p_attack": 0.0,
-  "p_switch": 1.0,
-  "p_buff": 0.0,
+  "level": "pair",
   "switch_top": [
    [
     "海豹船长",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|卡瓦重": {
+  "n": 1,
+  "p_attack": 0.198,
+  "p_switch": 0.802,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "烈火战神",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|水灵": {
+  "n": 2,
+  "p_attack": 0.245,
+  "p_switch": 0.536,
+  "p_buff": 0.218,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "龙息帕尔",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|龙息帕尔": {
+  "n": 1,
+  "p_attack": 0.148,
+  "p_switch": 0.148,
+  "p_buff": 0.704,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "恶魔狼|雪影冰灵": {
+  "n": 1,
+  "p_attack": 0.105,
+  "p_switch": 0.791,
+  "p_buff": 0.105,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "龙息帕尔",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|卡拉波斯": {
+  "n": 4,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "彩蝶鲨",
+    1
+   ],
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|圣羽翼王": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"翼\\\"]\"",
+    1
+   ]
+  ]
+ },
+ "音速犬|离心舞者": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|星光狮（星光能量的样子）": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "疾光千兽",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|巨噬针鼹": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "布克棱岩",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|布克棱岩": {
+  "n": 2,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "食尘短绒",
+    1
+   ],
+   [
+    "棋绮后（白子）",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"地\\\"]\"",
+    1
+   ]
+  ]
+ },
+ "音速犬|食尘短绒": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "布克棱岩",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"地\\\"]\"",
+    1
+   ]
+  ]
+ },
+ "音速犬|棋绮后（白子）": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "音速犬|布灵布灵": {
+  "n": 1,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "恶魔狼",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|圣水守护": {
+  "n": 2,
+  "p_attack": 0.0,
+  "p_switch": 0.5,
+  "p_buff": 0.5,
+  "reliable": false,
+  "level": "pair",
+  "switch_top": [
+   [
+    "水灵",
     1
    ]
   ],

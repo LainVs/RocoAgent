@@ -227,20 +227,63 @@ def build_from_actions(rows):
             e["next_types"][json.dumps(r["foe_types"],
                                        ensure_ascii=False)] += 1
 
-    out = {}
+    # ---- 分层池化（2026-11-22）------------------------------------------
+    #
+    # 单看 (我|对面) 这一对，样本几乎永远不够：实测 318 条 / 53 组对位，
+    # 只有 1 组达到 MIN_SAMPLES=12，于是 anticipate 永远返回 None。
+    #
+    # 再建两层先验：
+    #     __foe__|<对面>      这只对面精灵对**所有**我方精灵的行为分布
+    #     __global__|__all__  全体分布
+    #
+    # 对每一对做 Dirichlet 平滑：
+    #     p = (count + K * prior) / (n + K)
+    # 这样 1~2 条样本也能给出"偏向对面总体习惯"的合理概率。
+    K = 8.0
+    foe_all = defaultdict(Counter)
+    glob = Counter()
     for key, e in pairs.items():
-        n = e["n"]
-        acts = e["actions"]
+        foe = key.split("|", 1)[1]
+        foe_all[foe].update(e["actions"])
+        glob.update(e["actions"])
+
+    def _pack(n, acts, extra=None):
         total = sum(acts.values()) or 1
-        out[key] = {
-            "n": n,
-            "reliable": n >= MIN_SAMPLES,
+        d = {
+            "n": int(n),
             "p_attack": round(acts.get("attack", 0) / total, 3),
             "p_switch": round(acts.get("switch", 0) / total, 3),
             "p_buff": round(acts.get("buff", 0) / total, 3),
+        }
+        if extra:
+            d.update(extra)
+        return d
+
+    out = {}
+    g_n = sum(glob.values())
+    out["__global__|__all__"] = _pack(g_n, glob, {
+        "reliable": g_n >= MIN_SAMPLES, "level": "global"})
+    for foe, c in foe_all.items():
+        fn = sum(c.values())
+        out["__foe__|%s" % foe] = _pack(fn, c, {
+            "reliable": fn >= MIN_SAMPLES, "level": "foe"})
+
+    for key, e in pairs.items():
+        foe = key.split("|", 1)[1]
+        prior = foe_all[foe]
+        pt = sum(prior.values()) or 1
+        n = e["n"]
+        blended = Counter()
+        for a in ("attack", "switch", "buff"):
+            blended[a] = e["actions"].get(a, 0) + K * prior.get(a, 0) / pt
+        out[key] = _pack(n + K, blended, {
+            # n 保留**真实对位样本数**（调用方据此判断置信度）
+            "n": n,
+            "reliable": n >= MIN_SAMPLES,
+            "level": "pair",
             "switch_top": e["switch_to"].most_common(3),
             "next_types_top": e["next_types"].most_common(3),
-        }
+        })
     return out, len([m for m in matches if m is not None])
 
 

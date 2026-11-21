@@ -50,16 +50,32 @@ def load():
 
 
 def lookup(model, me, foe):
-    """取 (me vs foe) 的行为分布。没有就返回 None。"""
+    """取行为分布，按 对位 -> 对面 -> 全局 回退。
+
+    返回 (entry, level)，level 取 "pair" / "foe" / "global" / "weak"。
+    2026-11-22：单看对位样本几乎永远不够（53 组里只有 1 组达标），
+    所以加了分层回退；对位样本少时用对面层先验（已做平滑）。
+    """
     if not me or not foe:
-        return None
+        return None, None
     # 名字可能带 #N 后缀（我方形态），去掉再查
     me0 = me.split("#")[0]
     # 旧模板名 -> 种族名（与 opponent_model.ALIASES 保持一致）
     import opponent_model as _OM
     me0 = _OM.ALIASES.get(me0, me0)
-    return (model.get("%s|%s" % (me0, foe))
+    pair = (model.get("%s|%s" % (me0, foe))
             or model.get("%s|%s" % (me, foe)))
+    if pair and pair.get("n", 0) >= _OM.MIN_SAMPLES:
+        return pair, "pair"
+    foe_e = model.get("__foe__|%s" % foe)
+    if foe_e and foe_e.get("reliable"):
+        return foe_e, "foe"
+    if pair:
+        return pair, "weak"
+    glob = model.get("__global__|__all__")
+    if glob and glob.get("reliable"):
+        return glob, "global"
+    return None, None
 
 
 def advice(me, foe, my_pct, foe_pct, my_hp, foe_hp,
@@ -76,62 +92,61 @@ def advice(me, foe, my_pct, foe_pct, my_hp, foe_hp,
     }
     """
     m = model if model is not None else load()
-    e = lookup(m, me, foe)
-    if not e or not e.get("reliable"):
+    e, level = lookup(m, me, foe)
+    if not e:
+        return None
+    # weak = 对位样本少、也没能回退到对面层；少于 3 条就不猜
+    if level == "weak" and e.get("n", 0) < 3:
         return None
 
     pa = e.get("p_attack", 0)
     ps = e.get("p_switch", 0)
     pb = e.get("p_buff", 0)
+    # 对位层才敢说 high；对面层/全局层是"这只精灵的总体习惯"，只能是 low
+    base_conf = "low" if level in ("foe", "global", "weak") else None
+
+    def mk(kind, reason, confidence):
+        return {
+            "kind": kind,
+            "reason": reason,
+            "p_attack": pa, "p_switch": ps, "p_buff": pb,
+            "switch_to": e.get("switch_top") or [],
+            "level": level, "n": e.get("n"),
+            "confidence": base_conf or confidence,
+        }
 
     # 对面明显偏防御/增益 -> 我们可以叠 buff（它这回合不打断我们）
     if pb >= CLEAR_BIAS:
-        return {
-            "kind": "buff",
-            "reason": "对面 %.0f%% 概率放增益/防御，这回合打不到我们，可以叠 buff"
-                      % (pb * 100),
-            "p_attack": pa, "p_switch": ps, "p_buff": pb,
-            "switch_to": e.get("switch_top") or [],
-            "confidence": "high" if pb >= 0.7 else "low",
-        }
+        return mk("buff",
+                  "对面 %.0f%% 概率放增益/防御，这回合打不到我们，可以叠 buff"
+                  % (pb * 100),
+                  "high" if pb >= 0.7 else "low")
 
     # 对面明显偏换人 -> 预判他换上谁，我们换成能压制那只的
     if ps >= CLEAR_BIAS:
         tops = e.get("switch_top") or []
         if tops:
             target, cnt = tops[0]
-            return {
-                "kind": "switch",
-                "reason": "对面 %.0f%% 概率换人，最可能换上 %s（%d 次），"
-                          "建议换成能压制它的对位精灵"
-                          % (ps * 100, target, cnt),
-                "p_attack": pa, "p_switch": ps, "p_buff": pb,
-                "switch_to": tops,
-                "target": target,
-                "confidence": "high" if ps >= 0.7 else "low",
-            }
-        return {
-            "kind": "buff",
-            "reason": "对面 %.0f%% 概率换人但没记录换上谁，先叠 buff"
-                      % (ps * 100),
-            "p_attack": pa, "p_switch": ps, "p_buff": pb,
-            "switch_to": [],
-            "confidence": "low",
-        }
+            r = mk("switch",
+                   "对面 %.0f%% 概率换人，最可能换上 %s（%d 次），"
+                   "建议换成能压制它的对位精灵"
+                   % (ps * 100, target, cnt),
+                   "high" if ps >= 0.7 else "low")
+            r["target"] = target
+            return r
+        return mk("buff",
+                  "对面 %.0f%% 概率换人但没记录换上谁，先叠 buff" % (ps * 100),
+                  "low")
 
     # 对面偏攻击 -> 看我们扛不扛得住
     if pa >= CLEAR_BIAS:
         if my_hp and my_pct is not None:
             cur = my_hp * my_pct / 100.0
             if cur < my_hp * 0.35:
-                return {
-                    "kind": "switch",
-                    "reason": "对面 %.0f%% 概率攻击，我血 %.0f%% 扛不住，"
-                              "建议换成能吃的对位" % (pa * 100, my_pct),
-                    "p_attack": pa, "p_switch": ps, "p_buff": pb,
-                    "switch_to": e.get("switch_top") or [],
-                    "confidence": "high",
-                }
+                return mk("switch",
+                          "对面 %.0f%% 概率攻击，我血 %.0f%% 扛不住，"
+                          "建议换成能吃的对位" % (pa * 100, my_pct),
+                          "high")
     return None
 
 

@@ -164,6 +164,27 @@ def decide(state):
     we_outspeed = _speed(my_name) >= _speed(foe_name)
     matchup = _type_mult(my_name, foe_name)
 
+    # ---- 对面行为预判（opponent_model -> anticipate）------------------
+    #
+    # 用户口径："对面行为的概率分布 我们可以统计下来 A 放技能
+    # a1 攻击 a2 防御 a3 状态 B 换人 换哪些人 概率分布"。
+    #
+    # 模型来自 logs/opponent_actions.jsonl（每回合记录对面做了什么），
+    # 分层池化后即使对位样本少也能用（见 opponent_model.build_from_actions）。
+    # 拿不到可靠样本时 adv=None，下面的逻辑完全退化成旧行为。
+    adv = None
+    try:
+        import anticipate
+        adv = anticipate.advice(
+            me=my_name, foe=foe_name,
+            my_pct=(100.0 * my_hp / my_max) if my_max else None,
+            foe_pct=(100.0 * foe_hp / foe_max) if foe_max else None,
+            my_hp=my_max, foe_hp=foe_max, bench=bench)
+    except Exception:
+        adv = None
+    p_atk = (adv or {}).get("p_attack")
+    p_buf = (adv or {}).get("p_buff")
+
     cands = []
 
     # ---- 必死保护：这回合一定会死，且换人/治疗能活 -------------------
@@ -231,12 +252,15 @@ def decide(state):
             kills = (not dies_first) and dmg >= foe_hp
             taken = inc
         score = _outcome(dmg / max(1, foe_max), kills,
-                         taken / max(1, my_max),
+                         (inc if p_atk is None else
+                          int(round(inc * max(p_atk, 0.35)))) / max(1, my_max),
                          (not acts_first) and inc >= my_hp,
                          my_hp - taken, my_max, energy_after, 0, matchup)
         cands.append((score, ("skill", s["i"]),
-                      "skill %d: %d dmg, %d taken, %s" % (
+                      "skill %d: %d dmg, %d taken%s, %s" % (
                           s["i"], dmg, taken,
+                          "" if p_atk is None else " (p_atk %.0f%%)"
+                          % (p_atk * 100),
                           ("priority %+d" % pri) if pri > 0
                           else ("kill" if kills
                                 else ("outspeed" if we_outspeed
@@ -347,11 +371,17 @@ def decide(state):
         survive_turns = my_hp / max(1, inc)
         early = (state.get("turn", 1) or 1) <= w.get("buff_max_turn", 4)
         already = bool(state.get("buffed"))
+        # 对面大概率攻击 -> 叠 buff 的代价更高，多要求半回合生存。
+        # 反之对面大概率也在叠 buff/防御（p_buf 高），这回合更安全。
+        risky = p_atk is not None and p_atk >= 0.7
+        need = need_turns + (0.5 if risky else 0.0)
         if early and not already and not foe_killable_now \
-                and survive_turns >= need_turns:
+                and survive_turns >= need:
             cands.append((9e9, ("skill", s["i"]),
-                          "status %d: buff first (survive %.1f turns)" % (
-                              s["i"], survive_turns)))
+                          "status %d: buff first (survive %.1f turns%s)" % (
+                              s["i"], survive_turns,
+                              "" if p_atk is None
+                              else ", p_atk %.0f%%" % (p_atk * 100))))
         else:
             cands.append((0.0, ("skill", s["i"]),
                           "status %d: buff (no priority, survive %.1f)" % (
@@ -401,6 +431,7 @@ def decide(state):
         "incoming_source": inc_src,
         "outspeed": we_outspeed,
         "matchup": matchup,
+        "anticipate": adv,
         "runner_up": (round(cands[1][0], 4), cands[1][1]) if len(cands) > 1 else None,
         "all": [(round(s, 4), a) for s, a, _ in cands[:6]],
     }
