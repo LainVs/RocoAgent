@@ -47,8 +47,8 @@ def alive(port, timeout=1.5):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8770)
-    ap.add_argument("--width", type=int, default=1180)
-    ap.add_argument("--height", type=int, default=820)
+    ap.add_argument("--width", type=int, default=1320)
+    ap.add_argument("--height", type=int, default=900)
     ap.add_argument("--page", default="console.html")
     args = ap.parse_args()
 
@@ -84,6 +84,35 @@ def main():
         pos = json.load(io.open(cfg, encoding="utf-8-sig"))
     except Exception:
         pos = {}
+
+    # ★ 位置必须夹回屏幕内
+    #
+    # 实测（2026-11-21）：配置里存过 x=-174，窗口标题栏跑到屏幕左边外面，
+    # 用户看到的是"窗口在，但左边一截看不到"。
+    # 和悬浮窗踩的是同一个坑 —— 存进去的时候合法，换分辨率/换显示器后
+    # 就不合法了。这里用同样的判据。
+    def _clamp(x, y, w, h):
+        try:
+            import ctypes
+            UD = ctypes.windll.user32
+            vx, vy = UD.GetSystemMetrics(76), UD.GetSystemMetrics(77)
+            vw = UD.GetSystemMetrics(78)
+            vh = UD.GetSystemMetrics(79)
+            if vw <= 0 or vh <= 0:
+                return x, y
+            margin = 120
+            ov_x = min(x + w, vx + vw) - max(x, vx)
+            ov_y = min(y + h, vy + vh) - max(y, vy)
+            if ov_x >= margin and ov_y >= margin and x >= vx - 8:
+                return x, y
+            print("  位置 (%d,%d) 越界，改到居中" % (x, y))
+            return max(vx, (vw - w) // 2), max(vy, (vh - h) // 3)
+        except Exception:
+            return x, y
+
+    if pos.get("x") is not None and pos.get("y") is not None:
+        pos["x"], pos["y"] = _clamp(int(pos["x"]), int(pos["y"]),
+                                    args.width, args.height)
 
     win = webview.create_window(
         "RocoAgent · 控制台",

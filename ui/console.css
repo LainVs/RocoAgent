@@ -62,6 +62,9 @@ button, input, select {
   display: grid;
   grid-template-rows: var(--top) 1fr;
   height: 100%;
+  /* 同 .main：防止内容把根容器撑宽（grid 子项默认 min-width:auto） */
+  min-width: 0;
+  overflow: hidden;
 }
 
 .topbar {
@@ -154,6 +157,12 @@ button, input, select {
   min-height: 0;
   /* 关键：让 1fr 列能收缩，否则长表格会把侧边栏挤扁 */
   grid-template-rows: 100%;
+  /* ★ min-width: 0 不能少
+     grid 子项默认 min-width:auto —— 内容比窗口宽时它会**撑破父级**
+     而不是让内容换行。实测：窗口 1320 设备像素（=1000 CSS），
+     但 .main 的 scrollWidth 撑到 1000，右侧整块被裁掉。
+     加上这一行之后 1fr 才会真正收缩、内容才会换行。 */
+  min-width: 0;
 }
 
 .sidebar {
