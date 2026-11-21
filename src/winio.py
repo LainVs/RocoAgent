@@ -226,14 +226,19 @@ class Screen:
     # 的技能栏都是 17ms。Perc.observe() 要抓 MY_BAR / FOE_BAR /
     # SKILL_BOX / CNT_ROI / PIP_BAND 五个区域 = 85ms，占了感知耗时的一半。
     #
-    # 一次整块客户区 grab 只要 51ms，切出来的 5 块完全一样。
+    # 一次整窗 grab 只要 ~52ms，切出来的 5 块完全一样。
     # 另外整帧**不转 RGB**：4MP 的 cvtColor 要 ~20ms，而切片是小图，
     # 每块转一次总共不到 1ms。
+    #
+    # 为什么抓"整窗"而不是"客户区"：grab_s(box) 的 box 是**窗口坐标**，
+    # sbox() 减掉 BASE_OFF(13,58) 再经 _grab_at_client 加回 client_off，
+    # 净效果就是按窗口坐标 (x,y) 取像素。CNT_ROI 的 y=55 < 58，
+    # 换到客户区就是负坐标 —— 只抓客户区会把倒计时读丢。
     #
     # 实测：85.7ms -> 51.8ms（省 34ms / 40%）。
 
     def grab_frame(self):
-        """整块客户区，BGRA 原样。返回 (frame, (sx, sy))。
+        """整窗（含边框/标题栏），BGRA 原样。返回 (frame, (sx, sy))。
 
         失败返回 (None, (1.0, 1.0))，调用方按"抓不到"处理。
         """
@@ -241,20 +246,18 @@ class Screen:
             self.refresh()
             if self.rect is None:
                 return None, (1.0, 1.0)
-        ox, oy = getattr(self, "client_off", (0, 0))
-        cw, ch = getattr(self, "client_size", None) \
-            or (self.BASE_CLIENT_W, self.BASE_CLIENT_H)
         try:
-            shot = self.sct.grab({"left": self.rect[0] + ox,
-                                  "top": self.rect[1] + oy,
-                                  "width": cw, "height": ch})
+            shot = self.sct.grab({"left": self.rect[0], "top": self.rect[1],
+                                  "width": self.rect[2], "height": self.rect[3]})
         except Exception:
             return None, (1.0, 1.0)
+        cw, ch = getattr(self, "client_size", None) \
+            or (self.BASE_CLIENT_W, self.BASE_CLIENT_H)
         return np.asarray(shot), (cw / float(self.BASE_CLIENT_W),
                                   ch / float(self.BASE_CLIENT_H))
 
     def crop_frame(self, frame, box, scale=None, client=False):
-        """从 grab_frame() 的整帧切一块 -> RGB，缩回基准尺寸。
+        """从 grab_frame() 的整窗帧切一块 -> RGB，缩回基准尺寸。
 
         box 默认是**窗口坐标**（和 grab_s 一致）；client=True 时按
         客户区坐标（和 grab_client 一致）。
@@ -263,12 +266,13 @@ class Screen:
             return None
         sx, sy = scale or self.scale()
         x0, y0, w0, h0 = box
+        ox, oy = getattr(self, "client_off", (0, 0))
         if client:
-            px = int(round(x0 * sx))
-            py = int(round(y0 * sy))
+            px = ox + int(round(x0 * sx))
+            py = oy + int(round(y0 * sy))
         else:
-            px = int(round((x0 - self.BASE_OFF_X) * sx))
-            py = int(round((y0 - self.BASE_OFF_Y) * sy))
+            px = ox + int(round((x0 - self.BASE_OFF_X) * sx))
+            py = oy + int(round((y0 - self.BASE_OFF_Y) * sy))
         pw = max(1, int(round(w0 * sx)))
         ph = max(1, int(round(h0 * sy)))
         if py < 0 or px < 0:

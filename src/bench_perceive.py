@@ -18,8 +18,9 @@
     python src/bench_perceive.py --bar logs --truth 171,114,45,102
                                                   # 带真值校验（按槽位顺序）
 
-耗时基线（2026-11-21，2560x1600 客户端，venv 解释器）
-    大厅态  p50 73ms   战斗态旧实现约 170ms -> 新实现约 85ms
+耗时基线（2026-11-21，venv 解释器，确定性测量）
+    4 个区域逐个抓 82.9ms  ->  1 次整窗抓 62.8ms
+    技能表查询 40ms/次     ->  缓存命中 0.006ms
 """
 from __future__ import annotations
 
@@ -105,7 +106,7 @@ def bench_bar(paths, truth):
                 if not s:
                     texts.append(None)
                     continue
-                texts.append(dr.read_skill(rgb, s, tpl)["text"])
+                texts.append(P.read_skill_with_fallback(rgb, s, tpl)["text"])
         ms.append((time.perf_counter() - t0) * 1000)
         line = "%-30s bar=%-5s npills=%d  %s" % (
             os.path.basename(f), vis, npills, texts)

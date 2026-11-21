@@ -137,6 +137,103 @@ def countdown_visible_crop(crop):
     return int((crop.min(axis=2) > 200).sum()) > 250
 
 
+# ---------------------------------------------------------------- 数字兜底
+#
+# 模板集是用 logs/digits/frames 那 110 张帧建的（build_templates.py）。
+# 那批语料里「7」只出现过一次（"70"），而且是**粗竖直**的写法。
+# 实盘还有另一种写法：**细斜杠**的 7（见 bar_partial_012307 的 427）。
+# 它和所有 130 个模板的相关度最高只有 0.45，低于 TPL_MATCH=0.55，
+# 于是被判成 '?'。
+#
+# 实测 173 张 _dump_bar 保存的失败帧、152 个被拒字形，按形状聚类后：
+#   簇 0  n=115   全部是这种细斜杠 7   ← 唯一的真数字
+#   簇 1~14        卡面图案噪点（云状/斜条/三角/白块），本来就不该当字
+# 也就是说 76% 的失败是这一个数字造成的。
+#
+# 模板匹配对「同一个数字的两种写法」无能为力，但两者的**结构**一样。
+# 实测三段墨迹的水平跨度（占字形宽度比例）：
+#
+#   数字   top(0~22%)  bottom(78~100%)  middle(40~60%)
+#   7      0.71~1.00   0.36~0.43        0.29~0.43
+#   2      0.86        0.86~0.93        0.43~0.50
+#   4      0.64~0.71   0.29~0.71        0.79
+#   5      0.86        0.93             0.86
+#   1      0.57        1.00             0.29
+#
+# 只有 7 同时满足「顶部满宽 + 底部窄 + 中部窄」：
+#   4 的中间是宽的，1/2/5 的底部是宽的，0/3/6/8/9 底部也宽。
+# 所以这条判据只在模板已经拒识时才用，不会影响正常读数。
+
+_SEVEN_TOP_MIN = 0.64
+_SEVEN_BOT_MAX = 0.55
+_SEVEN_MID_MAX = 0.55
+
+
+def _band_span(a, f0, f1):
+    """a 是二值字形（已裁掉空白行）。返回 [f0,f1) 这一段行里墨迹的水平跨度/宽度。"""
+    h, w = a.shape[:2]
+    y0 = int(f0 * h)
+    y1 = max(y0 + 1, int(f1 * h))
+    seg = a[y0:y1]
+    if seg.size == 0 or w == 0:
+        return 0.0
+    cols = seg.any(axis=0)
+    xs = np.where(cols)[0]
+    if len(xs) == 0:
+        return 0.0
+    return (xs[-1] - xs[0] + 1) / float(w)
+
+
+def _looks_like_seven(glyph):
+    """结构判据：顶部满宽横杠 + 底部窄 + 中部窄 => 7。"""
+    try:
+        a = (np.clip(np.asarray(glyph, np.float32), 0, 1) > 0.45).astype(np.uint8)
+        rows = np.where(a.any(axis=1))[0]
+        if len(rows) < 6:
+            return False
+        a = a[rows[0]:rows[-1] + 1]
+        top = _band_span(a, 0.00, 0.22)
+        bot = _band_span(a, 0.78, 1.00)
+        mid = _band_span(a, 0.40, 0.60)
+        return (top >= _SEVEN_TOP_MIN and bot <= _SEVEN_BOT_MAX
+                and mid <= _SEVEN_MID_MAX)
+    except Exception:
+        return False
+
+
+def read_skill_with_fallback(crop, pill, tpl):
+    """dr.read_skill + 模板拒识时的 7 兜底。
+
+    只补 '?'，不覆盖已经认出来的数字 —— 兜底判据再准也不该推翻高置信度的
+    模板结果。补上的槽位带 `recovered=True`，方便复盘时区分。
+    """
+    res = dr.read_skill(crop, pill, tpl)
+    if not res or res.get("kind") != "num":
+        return res
+    txt = res.get("text") or ""
+    if "?" not in txt:
+        return res
+    try:
+        glyphs = dr.extract_glyphs(crop, pill)
+    except Exception:
+        return res
+    if len(glyphs) != len(txt):
+        return res
+    chars = list(txt)
+    changed = False
+    for i, ch in enumerate(chars):
+        if ch == "?" and _looks_like_seven(glyphs[i]["glyph"]):
+            chars[i] = "7"
+            changed = True
+    if not changed:
+        return res
+    out = dict(res)
+    out["text"] = "".join(chars)
+    out["value"] = int(out["text"]) if out["text"].isdigit() else None
+    out["recovered"] = True
+    return out
+
+
 class Perc:
     """Reads state from three small screen regions. ~25 ms per observation."""
 
@@ -206,7 +303,7 @@ class Perc:
             visible, npills = _is_skillbar(crop, reg, pills, slots)
             if visible:
                 for i, pill in enumerate(slots):
-                    r = dr.read_skill(crop, pill, self.tpl)
+                    r = read_skill_with_fallback(crop, pill, self.tpl)
                     r["index"] = i + 1
                     p75 = _plate_p75(crop, pill) if pill else None
                     r["plate"] = None if p75 is None else int(round(p75))

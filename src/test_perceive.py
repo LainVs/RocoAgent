@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 sys.path.insert(0, r"D:\Tools")
 
 import config            # noqa: E402
+import digitread as dr   # noqa: E402
 import winio             # noqa: E402
 import perceive as NEW   # noqa: E402
 
@@ -64,41 +65,73 @@ def load_old_perceive():
 
 
 class FakeScreen:
-    """用一整帧合成画面冒充 Screen，验证切片坐标是否和 grab_s 一致。"""
+    """用一整帧画面冒充 Screen，验证切片坐标是否和 grab_s 一致。
+
+    默认就是本机的真实参数（2560x1600 客户区、边框偏移 13/58、缩放 1.0），
+    也可以从真机 Screen 抄一份（见 capture_live）。
+    """
 
     BASE_CLIENT_W, BASE_CLIENT_H = 2560, 1600
     BASE_OFF_X, BASE_OFF_Y = 13, 58
 
-    def __init__(self, frame_bgra):
+    def __init__(self, frame_bgra, client_off=(13, 58),
+                 client_size=(2560, 1600), rect=(0, 0, 2586, 1671),
+                 scale=(1.0, 1.0)):
         self.frame = frame_bgra
-        self.client_off = (13, 58)
-        self.client_size = (2560, 1600)
-        self.rect = (0, 0, 2586, 1671)
+        self.client_off = client_off
+        self.client_size = client_size
+        self.rect = rect
+        self._scale = scale
+
+    @classmethod
+    def capture_live(cls, scr):
+        """抓一帧真机画面冻住，让新旧两版跑在**同一帧**上。
+
+        直接对着屏幕各跑一次是不严谨的：两次抓屏之间游戏在动，
+        npills 会变，看起来像重构改坏了。
+        """
+        frame, scale = scr.grab_frame()
+        if frame is None:
+            return None
+        return cls(frame, client_off=getattr(scr, "client_off", (13, 58)),
+                   client_size=getattr(scr, "client_size", (2560, 1600)),
+                   rect=scr.rect or (0, 0, 2586, 1671), scale=scale)
+
     def scale(self):
-        return 1.0, 1.0
+        return self._scale
 
     def _cut(self, px, py, pw, ph):
         return self.frame[py:py + ph, px:px + pw]
 
     def grab_s(self, box):
-        # 复刻 winio：sbox 减 BASE_OFF，然后切 -> RGB
+        # 复刻 winio.grab_s：sbox() 减 BASE_OFF 换算成客户区像素，
+        # _grab_at_client() 再加 client_off 落到窗口坐标，_fit() 缩回基准尺寸。
+        sx, sy = self._scale
+        ox, oy = self.client_off
         x, y, w, h = box
-        px = (x - self.BASE_OFF_X)
-        py = (y - self.BASE_OFF_Y)
-        sub = self._cut(px, py, w, h)
-        return cv2.cvtColor(sub, cv2.COLOR_BGRA2RGB)
+        px = ox + int(round((x - self.BASE_OFF_X) * sx))
+        py = oy + int(round((y - self.BASE_OFF_Y) * sy))
+        pw = max(1, int(round(w * sx)))
+        ph = max(1, int(round(h * sy)))
+        sub = self._cut(px, py, pw, ph)
+        rgb = cv2.cvtColor(sub, cv2.COLOR_BGRA2RGB)
+        if abs(sx - 1.0) >= 0.004 or abs(sy - 1.0) >= 0.004:
+            rgb = cv2.resize(rgb, (max(1, int(w)), max(1, int(h))),
+                             interpolation=cv2.INTER_AREA)
+        return rgb
 
     def grab_frame(self):
-        return self.frame, (1.0, 1.0)
+        return self.frame, self._scale
 
     def crop_frame(self, frame, box, scale=None, client=False):
-        sx, sy = scale or (1.0, 1.0)
+        sx, sy = scale or self._scale
+        ox, oy = self.client_off
         x, y, w, h = box
         if client:
-            px, py = int(x * sx), int(y * sy)
+            px, py = ox + int(round(x * sx)), oy + int(round(y * sy))
         else:
-            px = int(round((x - self.BASE_OFF_X) * sx))
-            py = int(round((y - self.BASE_OFF_Y) * sy))
+            px = ox + int(round((x - self.BASE_OFF_X) * sx))
+            py = oy + int(round((y - self.BASE_OFF_Y) * sy))
         pw = max(1, int(round(w * sx)))
         ph = max(1, int(round(h * sy)))
         if py < 0 or px < 0 or py + ph > frame.shape[0] \
@@ -126,32 +159,39 @@ class NoFrameScreen:
 
 
 def synthetic_frame():
-    """造一整帧：血条 + 技能栏（用真实抓到的 bar_partial）+ 倒计时空白。"""
-    f = np.zeros((1600, 2560, 4), np.uint8)
+    """造一整帧（窗口尺寸）：血条 + 技能栏 + 倒计时空白。
+
+    帧是**整窗**尺寸（2586x1671，含 13px 边框 + 58px 标题栏），
+    因为 grab_frame() 抓的是整窗，和 grab_s 的窗口坐标口径一致。
+    """
+    f = np.zeros((1671, 2586, 4), np.uint8)
     f[:, :, 3] = 255
 
     # MY_BAR: 绿色满条。_read_bar 看的是填充比例，画满即可
     mx, my, mw, mh = 166, 170, 244, 20
     f[my:my + mh, mx:mx + mw] = (60, 210, 80, 255)
 
-    # FOE_BAR: 右半边空 -> 约 50%，但要留下灰色底板让 ui=True
+    # FOE_BAR: 左半绿右半灰底板 -> 约 50%，且 ui=True
     fx, fy, fw, fh = 2251, 170, 245, 20
     f[fy:fy + fh, fx:fx + fw] = (95, 95, 95, 255)
-    f[fy:fy + fh, fx + fw // 2:fx + fw] = (60, 210, 80, 255)
+    f[fy:fy + fh, fx:fx + fw // 2] = (60, 210, 80, 255)
 
     # SKILL_BOX: 贴真实抓到的技能栏（171/114/45/102）
     bar = cv2.imread(os.path.join(config.LOG_DIR, "bar_partial_093057.png"))
     if bar is not None:
         x0, y0, x1, y1 = config.SKILL_BOX
-        px = x0 - 13
-        py = y0 - 58
-        h = min(bar.shape[0], 1600 - py)
-        w = min(bar.shape[1], 2560 - px)
-        f[py:py + h, px:px + w, :3] = bar[:h, :w]
+        h = min(bar.shape[0], f.shape[0] - y0)
+        w = min(bar.shape[1], f.shape[1] - x0)
+        f[y0:y0 + h, x0:x0 + w, :3] = bar[:h, :w]
     return f
 
 
 def cmp_state(tag, a, b, keys):
+    """逐字段比对。
+
+    `recovered=True` 的槽位是**故意**和旧版不一样的（7 兜底），
+    单独由 expect_recovered() 校验，这里只核对它确实只是把 '?' 换成了 '7'。
+    """
     bad = []
     for k in keys:
         if a.get(k) != b.get(k):
@@ -161,12 +201,21 @@ def cmp_state(tag, a, b, keys):
         bad.append("skills len %d != %d" % (len(sa), len(sb)))
     else:
         for i, (x, y) in enumerate(zip(sa, sb)):
-            for kk in ("text", "value", "kind", "color", "score", "plate",
-                       "lit", "skill_name", "skill_kind"):
+            recovered = bool(y and y.get("recovered"))
+            check = ("kind", "color", "plate", "lit", "skill_name", "skill_kind")
+            if not recovered:
+                check = check + ("text", "value", "score")
+            for kk in check:
                 xv = None if x is None else x.get(kk)
                 yv = None if y is None else y.get(kk)
                 if xv != yv:
                     bad.append("skill%d.%s old=%r new=%r" % (i + 1, kk, xv, yv))
+            if recovered:
+                xt = (x or {}).get("text") or ""
+                yt = (y or {}).get("text") or ""
+                if yt != xt.replace("?", "7"):
+                    bad.append("skill%d 兜底结果不对 old=%r new=%r"
+                               % (i + 1, xt, yt))
     if bad:
         P("  [FAIL] %s" % tag)
         for x in bad[:12]:
@@ -223,21 +272,113 @@ def main():
     a.my_name = b.my_name = "音速犬"
     ok_all &= cmp_state("回退路径", a.observe(), b.observe(), keys)
 
-    # ---- 2. 实时屏幕：大厅态（bar=False，覆盖另一条分支）----
+    # ---- 1c. 数字兜底：细斜杠的 7 必须补回来，别的数字不许动 ----
+    P("")
+    P("== 7 兜底（真实失败帧，人工核对过真值）==")
+    tpl = dr.load_templates()
+    cases = (
+        ("bar_partial_012307.png", ["427", "133", "142", "114"]),
+        ("bar_partial_093057.png", ["171", "114", "45", "102"]),
+    )
+    for fname, want in cases:
+        path = os.path.join(config.LOG_DIR, fname)
+        if not os.path.exists(path):
+            P("  跳过 %s（截图不在）" % fname)
+            continue
+        img = cv2.imread(path)
+        rgb = img[:, :, ::-1]
+        h, w = rgb.shape[:2]
+        pills = dr.find_pills(rgb, (0, 0, w, h))
+        slots = NEW._slots(rgb, (0, 0, w, h), pills)
+        got = []
+        plain = []
+        for s in slots:
+            if not s:
+                got.append(None)
+                plain.append(None)
+                continue
+            got.append(NEW.read_skill_with_fallback(rgb, s, tpl)["text"])
+            plain.append(dr.read_skill(rgb, s, tpl)["text"])
+        good = got == want
+        ok_all &= good
+        P("  %s %-26s 兜底前 %s -> 兜底后 %s"
+          % ("[OK]  " if good else "[FAIL]", fname, plain, got))
+
+    # ---- 3. 110 帧旧语料：兜底不能破坏原本 100% 的读数 ----
+    P("")
+    P("== 110 帧旧语料回归（logs/digits/frames，被 gitignore，可能不在）==")
+    corpus = os.path.join(config.LOG_DIR, "digits", "frames")
+    if not os.path.isdir(corpus):
+        P("  跳过（语料不在本机）")
+    else:
+        import glob
+        frames = sorted(glob.glob(os.path.join(corpus, "*.png")))
+        q = 0
+        seen = 0
+        glyphs = 0
+        sevens_hit = sevens = other_fp = 0
+        for p in frames:
+            img = cv2.imread(p)
+            if img is None:
+                continue
+            rgb = img[:, :, ::-1]
+            h, w = rgb.shape[:2]
+            pills = dr.find_pills(rgb, (0, 0, w, h))
+            slots = NEW._slots(rgb, (0, 0, w, h), pills)
+            vis, _ = NEW._is_skillbar(rgb, (0, 0, w, h), pills, slots)
+            if not vis:
+                continue
+            seen += 1
+            for s in slots:
+                if not s:
+                    continue
+                r = NEW.read_skill_with_fallback(rgb, s, tpl)
+                q += r["text"].count("?")
+                # 统计 7 判据的查全/查准（这批语料的真值见 README：
+                # --/425/70/100 与 --/212/70/100，所以只有 70 里那个 7）
+                gl = dr.extract_glyphs(rgb, s)
+                raw = dr.read_skill(rgb, s, tpl)["text"]
+                if raw.count("?") or len(gl) != len(raw):
+                    continue
+                for g, ch in zip(gl, raw):
+                    if not ch.isdigit():
+                        continue
+                    glyphs += 1
+                    flag = NEW._looks_like_seven(g["glyph"])
+                    if ch == "7":
+                        sevens += 1
+                        sevens_hit += 1 if flag else 0
+                    elif flag:
+                        other_fp += 1
+        good = (q == 0 and other_fp == 0 and sevens_hit == sevens)
+        ok_all &= good
+        # 这批语料的真值是 --/425/70/100 和 --/212/70/100，
+        # README 记录当时 110 帧里 108 帧可见、0 个 '?'。
+        P("  %s 可见 %d 帧，'?' 共 %d 个（期望 0）"
+          % ("[OK]  " if q == 0 else "[FAIL]", seen, q))
+        P("  %s 7 判据：真实 7 认出 %d/%d，非 7 误判 %d/%d"
+          % ("[OK]  " if (other_fp == 0 and sevens_hit == sevens) else "[FAIL]",
+             sevens_hit, sevens, other_fp, glyphs - sevens))
+
+    # ---- 2. 实时屏幕：冻结一帧真机画面，新旧两版跑同一帧 ----
     if not args.no_live:
         g = winio.find_game()
         if not g:
             P("== 实时屏幕：游戏未运行，跳过 ==")
         else:
-            P("== 实时屏幕（真实分辨率/缩放）==")
-            scr = winio.Screen()
-            a2 = old.Perc(scr)
-            b2 = NEW.Perc(scr)
-            for i in range(3):
-                st_o = a2.observe()
-                st_n = b2.observe()
-                # 两次抓屏之间画面可能变（动效），只比稳定字段
-                ok_all &= cmp_state("live #%d" % (i + 1), st_o, st_n, keys)
+            P("== 实时屏幕（冻结一帧，真实分辨率/缩放）==")
+            frozen = FakeScreen.capture_live(winio.Screen())
+            if frozen is None:
+                P("  抓屏失败，跳过")
+            else:
+                P("     客户区 %s  缩放 %s"
+                  % (frozen.client_size, tuple(round(v, 3) for v in frozen._scale)))
+                a2 = old.Perc(frozen)
+                b2 = NEW.Perc(frozen)
+                for name in ("音速犬", None):
+                    a2.my_name = b2.my_name = name
+                    ok_all &= cmp_state("live my_name=%s" % name,
+                                        a2.observe(), b2.observe(), keys)
 
     P("")
     P("结果：%s" % ("ALL OK" if ok_all else "有差异"))
