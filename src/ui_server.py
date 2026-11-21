@@ -471,6 +471,94 @@ _ESP_OFFLINE = re.compile(r"link down|cached->.*failed|scan->.*failed|"
                           r"was not found|daemon down")
 
 
+# ============================================================ 游戏窗口
+#
+# 为什么 UI 要报这个（2026-11-21）
+# ---------------------------------
+# 机器人能不能干活有两道门：输入链路（板子）和**游戏窗口**。
+# 板子那条已经做了（`board`），窗口这条完全没有 —— 而实测现在就
+# 正好处于"游戏在跑、控制台看不出来"的状态：窗口 hwnd=262818 存在，
+# 但尺寸是 1037x804，和标定基准 2560x1600 的比例完全不同（1.29 vs 1.60）。
+#
+# `Screen.scale()` 是**按 x/y 分别**算比例的，非等比窗口会让所有固定
+# ROI 变形 —— 血条被压扁、技能栏错位，识别率无声下降。用户看到的是
+# "今天怎么老读错"，实际原因是窗口被拉过。
+#
+# 这里只读 HWND 和 rect，不抓屏（不抢 mss，也不碰 DPI）。
+
+_GAME_TITLE = "\u6d1b\u514b\u738b\u56fd"      # config.TITLE
+_BASE_W, _BASE_H = 2560, 1600                # winio.BASE_CLIENT_W/H
+_ASPECT_TOL = 0.04                           # 4% 以内算等比
+
+
+def _find_game_window():
+    """按标题 + Unreal 类名找游戏主窗口。返回 dict 或 None。
+
+    和 `winio.find_game()` 同一判据，但这里只取窗口矩形，
+    不构造 Screen（不碰 mss / DPI / 缓存）。
+    """
+    import ctypes
+    import ctypes.wintypes as wt
+    UD = ctypes.windll.user32
+    hits = []
+
+    @ctypes.WINFUNCTYPE(wt.BOOL, wt.HWND, wt.LPARAM)
+    def cb(hwnd, _lp):
+        n = ctypes.create_unicode_buffer(256)
+        UD.GetWindowTextW(hwnd, n, 256)
+        if _GAME_TITLE in n.value and UD.IsWindowVisible(hwnd):
+            cls = ctypes.create_unicode_buffer(256)
+            UD.GetClassNameW(hwnd, cls, 256)
+            if "Unreal" in cls.value:
+                r = wt.RECT()
+                UD.GetWindowRect(hwnd, ctypes.byref(r))
+                hits.append({
+                    "hwnd": int(hwnd),
+                    "title": n.value.strip(),
+                    "w": r.right - r.left,
+                    "h": r.bottom - r.top,
+                    "iconic": bool(UD.IsIconic(hwnd)),
+                })
+        return True
+
+    try:
+        UD.EnumWindows(cb, 0)
+    except Exception:
+        return None
+    return hits[0] if hits else None
+
+
+def game_status():
+    """游戏窗口 + 分辨率是否和标定基准匹配。
+
+    `scale_ok=False` 表示窗口长宽比偏离基准 4% 以上 —— 那时所有
+    按窗口比例换算的 ROI 都会变形，识别率会无声下降，必须提示用户
+    把游戏切回标定分辨率（或等比缩放）。
+    """
+    g = _find_game_window()
+    if not g:
+        return {"found": False, "hwnd": None, "w": None, "h": None,
+                "aspect": None, "base": [_BASE_W, _BASE_H],
+                "scale_ok": None, "iconic": None,
+                "note": "没找到游戏窗口（标题含「洛克王国」且类名含 Unreal）"}
+
+    w, h = g["w"], g["h"]
+    aspect = round(w / float(h), 3) if h else None
+    base_aspect = _BASE_W / float(_BASE_H)
+    scale_ok = None
+    if aspect:
+        scale_ok = abs(aspect - base_aspect) <= _ASPECT_TOL * base_aspect
+    note = None
+    if not scale_ok:
+        note = ("窗口 %dx%d（比例 %.2f）与标定基准 %dx%d（比例 %.2f）不一致，"
+                "固定 ROI 会变形" % (w, h, aspect, _BASE_W, _BASE_H, base_aspect))
+    elif g["iconic"]:
+        note = "游戏窗口最小化了"
+    return {"found": True, "hwnd": g["hwnd"], "w": w, "h": h,
+            "aspect": aspect, "base": [_BASE_W, _BASE_H],
+            "scale_ok": scale_ok, "iconic": g["iconic"], "note": note}
+
+
 def board_status():
     """ESP32 输入链路状态。只读日志，不碰硬件（不会抢 BLE）。
 
@@ -554,6 +642,7 @@ def bot_status():
     running = bool(robot)
     act = bot_activity()
     board = board_status()
+    game = game_status()
 
     # phase：在原来的 stopped / stale / live 之外，把"卡在哪一步"也说出来。
     # 优先级：进程没跑 > 输入/焦点问题 > 数据新鲜度。
@@ -588,6 +677,8 @@ def bot_status():
         "activity": act,
         # 输入链路（ESP32）。只读日志，不碰硬件。
         "board": board,
+        # 游戏窗口 + 分辨率是否和标定基准匹配（只读 HWND/rect，不抓屏）
+        "game": game,
     }
 
 

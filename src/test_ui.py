@@ -90,7 +90,7 @@ def test_api(port):
     print("\n[1] ui_server API")
     endpoints = [
         ("/api/health", ("ok",)),
-        ("/api/bot", ("running", "phase", "activity", "board")),
+        ("/api/bot", ("running", "phase", "activity", "board", "game")),
         ("/api/stats", ("wins", "losses", "decided",
                         "season", "badge_stuck", "primary")),
         ("/api/matches?limit=3", ("items", "total", "offset")),
@@ -1219,6 +1219,25 @@ def test_phase_infer():
             os.remove(mix_path)
         except OSError:
             pass
+
+    # 游戏窗口：只读 HWND/rect。这里验证的是"算得对"，不是"能找到窗口"——
+    # 测试机可能没开游戏，所以两种情况都要能通过。
+    try:
+        g = U.game_status()
+        ok(isinstance(g, dict) and "found" in g, "game_status 结构",
+           str(list(g.keys())))
+        if g.get("found"):
+            ok(g.get("aspect") is not None, "算出窗口长宽比",
+               "%.3f" % (g.get("aspect") or 0))
+            ok(isinstance(g.get("scale_ok"), bool), "scale_ok 是布尔",
+               str(g.get("scale_ok")))
+            if g.get("scale_ok") is False:
+                ok(bool(g.get("note")), "比例不一致时给出说明",
+                   str(g.get("note"))[:40])
+        else:
+            ok(g.get("note"), "找不到窗口时说明原因", str(g.get("note"))[:40])
+    except Exception as e:
+        ok(False, "game_status", str(e)[:60])
 
     old_esp = U.ESP_LOG
     fd, esp_path = tempfile.mkstemp(suffix=".log")

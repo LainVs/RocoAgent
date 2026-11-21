@@ -177,6 +177,26 @@ async function refreshBot() {
     }
   }
 
+  // 分辨率小标：窗口比例和标定基准不一致时所有固定 ROI 都会变形，
+  // 识别率无声下降。这个必须比 PID 更显眼。
+  const res = $('botRes');
+  if (res) {
+    const g = b.game || {};
+    if (!g.found) {
+      res.hidden = false;
+      res.className = 'top-link bad';
+      res.textContent = '无游戏窗口';
+      res.title = g.note || '';
+    } else if (g.scale_ok === false) {
+      res.hidden = false;
+      res.className = 'top-link warn';
+      res.textContent = `${g.w}×${g.h}`;
+      res.title = g.note || '';
+    } else {
+      res.hidden = true;
+    }
+  }
+
   $('btnStart').disabled = b.running;
   $('btnStop').disabled = !b.running;
 
@@ -250,6 +270,27 @@ async function refreshHealth() {
       : '';
     items.push(healthItem('机器人', `PID ${b.pid}${sub}`,
       stuck ? 'warn' : 'ok', sub ? 'has-sub' : ''));
+  }
+
+  // 1b. 游戏窗口 + 分辨率
+  //
+  // 2026-11-21 实测：窗口在跑，但尺寸 2074x1607（比例 1.29），标定基准是
+  // 2560x1600（比例 1.60）。`Screen.scale()` 按 x/y 分别缩放，非等比窗口
+  // 会让所有固定 ROI 变形 —— 血条被压扁、技能栏错位，识别率无声下降。
+  // 界面以前对此完全无感知，用户只会觉得"今天怎么老读错"。
+  const gm = b && b.game;
+  if (!b) {
+    items.push(healthItem('游戏窗口', '—', ''));
+  } else if (!gm || gm.found !== true) {
+    items.push(healthItem('游戏窗口', '未找到', 'bad'));
+  } else if (gm.scale_ok === false) {
+    items.push(healthItem('分辨率',
+      `${gm.w}×${gm.h} <small>基准 ${gm.base[0]}×${gm.base[1]}</small>`,
+      'warn', 'has-sub'));
+  } else if (gm.iconic) {
+    items.push(healthItem('游戏窗口', '已最小化', 'warn'));
+  } else {
+    items.push(healthItem('游戏窗口', `${gm.w}×${gm.h}`, 'ok'));
   }
 
   // 2. 状态推送新鲜度
