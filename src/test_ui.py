@@ -1452,6 +1452,53 @@ def test_phase_infer():
         except OSError:
             pass
 
+    # /api/log 按字节 offset 增量拉：中文日志被切在多字节字符中间时，
+    # 旧实现会少推进 2~3 字节 -> 下次重复输出同一行（或丢行）。
+    # 这个项目的日志全是中文，几乎每次都会命中。
+    import io as _io
+    old_log = U.BOT_LOG
+    fd, logp = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    try:
+        U.BOT_LOG = logp
+        with _io.open(logp, "w", encoding="utf-8", newline="\n") as f:
+            for i in range(120):
+                f.write("23:%02d 中文日志测试第 %d 行 —— 音速犬 出招 SKILL\n"
+                        % (i % 60, i))
+        size = os.path.getsize(logp)
+        whole = U.log_chunk(0, max_bytes=size)
+        ok(len(whole["lines"]) == 120, "整文件一次读完 120 行",
+           str(len(whole["lines"])))
+        ok(whole["offset"] == size, "offset 到达 EOF")
+
+        with open(logp, "rb") as f:
+            raw = f.read()
+        cut = 401
+        while raw[cut - 1:cut] == b"\n":
+            cut += 1
+        with open(logp, "wb") as f:
+            f.write(raw[:cut])
+        part = U.log_chunk(0, max_bytes=cut)
+        with open(logp, "rb") as f:
+            f.seek(part["offset"] - 1)
+            on_nl = f.read(1) == b"\n"
+        ok(on_nl, "中文字符中间切断后 offset 落在换行边界",
+           "offset=%d cut=%d" % (part["offset"], cut))
+
+        with open(logp, "wb") as f:
+            f.write(raw)
+        rest = U.log_chunk(part["offset"], max_bytes=size - part["offset"])
+        joined = part["lines"] + rest["lines"]
+        ok(len(joined) == len(set(joined)), "续拉不重复",
+           "%d 行 / %d 唯一" % (len(joined), len(set(joined))))
+        ok(len(joined) == 120, "续拉后总行数不变", str(len(joined)))
+    finally:
+        U.BOT_LOG = old_log
+        try:
+            os.remove(logp)
+        except OSError:
+            pass
+
     # 游戏窗口：只读 HWND/rect。这里验证的是"算得对"，不是"能找到窗口"——
     # 测试机可能没开游戏，所以两种情况都要能通过。
     #
