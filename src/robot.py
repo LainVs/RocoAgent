@@ -82,7 +82,7 @@ from config import (  # noqa: F401
     ACTION_BTN_BAND, CONFIRM_BAND, RESULT_BAND, RESULT_LIST_BAND,
     STUCK_S, CLICK_COOLDOWN_S, ADVANCE_COOLDOWN_S, RESULT_HOLD,
     SWITCH_ROW_ABS, log, acquire_lock, _stdout_is_log, _log_exception,
-    STALL_EXIT_S,
+    STALL_EXIT_S, LOBBY_HOLD_S,
 )
 
 # 感知与 IO 层已拆分，re-export 保持兼容。
@@ -242,6 +242,8 @@ class Bot:
         # botsup 的 p.poll() 拿到退出码后正常重启。
         self._heartbeat = time.time()
         self._watchdog_started = False
+        # 回大厅后等待开下一局的计时起点（见 _idle_tick）
+        self._lobby_since = None
 
     def connect(self):
         return self.loop.run_until_complete(self.ble.connect())
@@ -585,6 +587,8 @@ class Bot:
             if st["battle"]:
                 self.last_battle_at = now
                 self.battle_false_since = None
+                # 进入战斗 -> 清掉"在大厅"的计时，下次回大厅重新计
+                self._lobby_since = None
                 if self.match_started is None:
                     if live:
                         self.match_started = now
@@ -2950,7 +2954,24 @@ class Bot:
                     pass
         except Exception as e:
             log("ladder read failed: %s" % e)
-        log("lobby -> \u5f00\u59cb\u6311\u6218")
+        # 回大厅后先等一会儿再开下一局。
+        #
+        # 实测（2026-11-21 09:35，用户报"点得太快，进去对局了"）：
+        # 原来判定在大厅就立刻点开始挑战，结算页 -> 大厅 -> 又进对局
+        # 中间没有缓冲，用户根本看不清上一局结果。
+        #
+        # 这里用 _lobby_since 记录"第一次确认在大厅的时刻"，
+        # 等满 LOBBY_HOLD_S 才点。同时给读战绩留出窗口。
+        if self._lobby_since is None:
+            self._lobby_since = now
+            log("lobby detected, waiting %.0fs before next match"
+                % LOBBY_HOLD_S)
+            return
+        waited = now - self._lobby_since
+        if waited < LOBBY_HOLD_S:
+            return
+        log("lobby -> 开始挑战 (waited %.0fs)" % waited)
+        self._lobby_since = None
         self.ensure_focus()
         self.click_rel(*LOBBY_BTN_REL)
         # VS splash + battle intro cinematic: 特?banners, no HP bars yet.

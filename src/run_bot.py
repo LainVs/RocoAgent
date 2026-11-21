@@ -106,32 +106,62 @@ def start_supervisor(minutes=0, no_input=False):
 
 
 def stop():
-    pids = running("robot\\.py") + running("botsup\\.py")
-    pids = sorted(set(pids))
+    # 必须按依赖顺序停：keepalive -> botsup -> robot。
+    #
+    # 踩过的坑（2026-11-21 09:30，用户报"停了又被拉起来"）
+    # ------------------------------------------------
+    # 原来这里只停 robot 和 botsup，**不知道 keepalive 的存在**：
+    #     --stop -> robot 停了、botsup 停了
+    #     -> keepalive 还活着，60 秒后发现 botsup 不在 -> 拉起
+    #     -> botsup 拉起 robot -> 机器人又活了
+    # 用户看到的现象就是"怎么停都停不掉"。
+    #
+    # 而且必须先停 keepalive：如果先停 robot，keepalive 会立刻
+    # 发现并拉起，形成"杀了又活"的循环。
+    keep = running("keepalive\\.py")
+    sup = running("botsup\\.py")
+    rob = running("robot\\.py")
+    pids = sorted(set(keep + sup + rob))
     if not pids:
         print("没有在跑")
         return 0
-    # 先停看门狗，再停 bot，免得它把刚杀掉的 bot 又拉起来
-    sup = running("botsup\\.py")
+
+    # 1) keepalive 先死（它会拉起 botsup）
+    for pid in keep:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, creationflags=NO_WINDOW)
+    if keep:
+        time.sleep(0.5)
+
+    # 2) botsup 再死（它会拉起 robot）
     for pid in sup:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                        capture_output=True, creationflags=NO_WINDOW)
-    for pid in running("robot\\.py"):
+    if sup:
+        time.sleep(0.5)
+
+    # 3) robot 最后
+    for pid in rob:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
                        capture_output=True, creationflags=NO_WINDOW)
+
     print("已停止: %s" % pids)
-    try:
-        os.remove(PIDF)
-    except OSError:
-        pass
+    for fn in (PIDF, os.path.join(LOGS, "robot.lock"),
+               os.path.join(LOGS, "keepalive.pid")):
+        try:
+            os.remove(fn)
+        except OSError:
+            pass
     return 0
 
 
 def status():
     bots = running("robot\\.py")
     sups = running("botsup\\.py")
+    keep = running("keepalive\\.py")
     print("robot: %s" % (bots if bots else "未运行"))
     print("supervisor: %s" % (sups if sups else "未运行"))
+    print("keepalive: %s" % (keep if keep else "未运行"))
     for name in ("bot_stdout.log", "supervisor_restarts.log", "crash.log"):
         try:
             age = time.time() - os.path.getmtime(os.path.join(LOGS, name))

@@ -108,6 +108,16 @@ ADVANCE_COOLDOWN_S = 2.5
 # 看不见胜负画面；而且读记录要 2~3 秒，会和推进点击抢同一块屏幕。
 RESULT_HOLD = 8.0
 
+# 回到大厅后等多久才点"开始挑战"。
+#
+# 为什么需要（2026-11-21 09:35，用户报"点得太快，进去对局了"）：
+# 原来只要判定"在大厅"就立刻点开始挑战，中间没有任何缓冲。
+# 用户看到的是：结算页一闪 -> 大厅一闪 -> 又进对局，根本看不清结果。
+#
+# 另外读战绩也需要时间（点"历史战绩" -> OCR -> 关闭面板），
+# 这个等待给那段流程留出窗口。
+LOBBY_HOLD_S = 6.0
+
 # Forced-switch panel: the five replacement rows down the left edge (physical
 # pixels), measured off a live frame at 1:1.
 SWITCH_ROW_ABS = [
