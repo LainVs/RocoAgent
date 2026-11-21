@@ -21,8 +21,11 @@ import os
 import re
 import sqlite3
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+import paths
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DB = os.path.join(ROOT, "data", "roco.sqlite3")
@@ -30,6 +33,10 @@ LOG = os.path.join(ROOT, "logs", "bot_stdout.log")
 
 # 先验强度：每个可学技能给 α0，观测一条 +1
 ALPHA0 = 0.35
+# rocoarena 真实阵容命中一次加多少权重。
+# 命中 1 次 = 3.0，约等于 8.5 个"威力加权单位"，
+# 足以让真实配招压过"高威力技能更可能带"的朴素先验。
+ARENA_W = 3.0
 
 
 def _db():
@@ -166,6 +173,47 @@ def observed(log_path=LOG, max_age=60.0):
     return out
 
 
+_ARENA_CACHE = {"at": 0.0, "data": None}
+
+
+def arena_prior(species_name):
+    """从 rocoarena 天梯样本库学到的"这只实际带什么技能"。
+
+    数据来源：data/arena_teams.json（15 套高分段阵容 × 6 只，每只 4 技能）。
+    这是**真实玩家配招**，比"威力加权"的先验准得多：
+      · 恶魔狼：火焰切割×3、蝙蝠×3、惊吓盒子×2、先发制人×2
+      · 飞飞钥：风隐×4、飞羽×4、拟寄生×2、倾泻×2
+
+    返回 {skill_name: count}，没有数据返回 {}。
+    """
+    import json
+    import os
+    now = time.time()
+    if now - _ARENA_CACHE["at"] > 300.0:
+        p = os.path.join(str(paths.DATA), "arena_teams.json")
+        try:
+            with open(p, encoding="utf-8") as f:
+                teams = json.load(f)
+        except Exception:
+            teams = []
+        idx = collections.defaultdict(collections.Counter)
+        for t in teams:
+            for m in t.get("members") or []:
+                for s in m.get("moves") or []:
+                    idx[m["name"]][s] += 1
+        _ARENA_CACHE["data"] = dict(idx)
+        _ARENA_CACHE["at"] = now
+    data = _ARENA_CACHE["data"] or {}
+    # 名字带括号的（"卡瓦重（雪山附近的样子）"）也要能匹配到主名
+    if species_name in data:
+        return dict(data[species_name])
+    base = re.split(r"[（(]", species_name or "")[0].strip()
+    for k, v in data.items():
+        if re.split(r"[（(]", k)[0].strip() == base:
+            return dict(v)
+    return {}
+
+
 def distribution(species_name, top=8):
     """技能分布（混合先验与观测），返回 [(skill, p, power, type_id)] 按概率降序。"""
     pool = learnable(species_name)
@@ -181,6 +229,12 @@ def distribution(species_name, top=8):
     for p in pool:
         w0 = ALPHA0 * ((int(p["power"] or 0) / 100.0) ** 1.5)
         weights[p["name"]] = max(0.02, w0)
+    # 真实阵容先验：命中过 rocoarena 样本库的技能，权重直接拉高一个数量级。
+    # 这是"高分段玩家实际怎么配"的直接证据，比威力加权可靠。
+    arena = arena_prior(species_name)
+    for name, cnt in arena.items():
+        if name in weights:
+            weights[name] = weights[name] + ARENA_W * cnt
     for name, n in obs.items():
         if name in by_name:
             weights[name] = weights.get(name, ALPHA0) + n
