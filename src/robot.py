@@ -749,17 +749,45 @@ class Bot:
             else:
                 if self.battle_false_since is None:
                     self.battle_false_since = now
-                # a match only counts as over after a clear pause, so a single
-                # flicker in the HP-bar border check cannot split one match in two.
-                # 6 s was far too short: a faint -> forced switch -> send-out hides
-                # both HP bars for 10-20 s, so the bot ended the match mid-battle
-                # and started a "new" one when the bars came back. Last night that
-                # produced 332 matches in 5 h (median 66 s, 3 actions) and the
-                # ladder badge never moved.
+                # ---- 对局是否真的结束：只认**正面证据**（2026-11-22）
+                #
+                # 原来只要 battle=False 持续 25 秒就 `_end_match()`。但 4:3 下
+                # `battle` 依赖血条白框判据（my_ui/foe_ui），**对面上回合/
+                # 动画期间本来就不画技能栏、白框也常判不出来** —— 实测
+                # 26~27 秒、0~1 actions 的"对局"就是这么来的：
+                #
+                #   00:24:38 MATCH START
+                #   00:24:55 state battle=False bar=False me=None foe=64.1
+                #   00:25:05 MATCH END (27s, 1 actions)   <- 其实是弃权
+                #
+                # 机器人以为打完了，回大厅点开始挑战；真正的那一场没人出招，
+                # 游戏判负（战绩面板连续三个「败」）。
+                #
+                # 现在只有看到"确实已经不在对局里"的界面才结束：
+                #   · 大厅的"开始挑战"按钮
+                #   · 结算页的"退出"按钮（排除 VS 准备页，它也有白胶囊）
+                # 两者都没有 = 只是对面的回合，**什么都不做**（也绝不点按钮）。
                 if (self.match_started is not None
-                        and now - self.battle_false_since > 25.0):
-                    self._end_match()
-                self._idle_tick(now)
+                        and now - self.battle_false_since > 6.0
+                        and now - getattr(self, "_end_probe_at", 0.0) > 1.0):
+                    self._end_probe_at = now
+                    ended = None
+                    try:
+                        import ui_probe as _UP
+                        if _UP.has_start_button(self.screen):
+                            ended = "lobby"
+                        elif (_UP.has_exit_button(self.screen)
+                              and not _UP.has_vs_screen(self.screen)):
+                            ended = "result"
+                    except Exception:
+                        ended = None
+                    if ended:
+                        log("match over (%s)" % ended)
+                        self._end_match()
+                # 只有确认不在对局里才走 idle。否则会对着一场还在进行的
+                # 对局点"开始挑战"/"跳过"，等于自己把对局点掉。
+                if self.match_started is None:
+                    self._idle_tick(now)
 
             # ---- the result screen keeps the HP bars drawn, so the branch above
             # never runs. Without this check the bot sits on the summary screen
@@ -790,6 +818,29 @@ class Bot:
                     self.result_seen_at = None
             else:
                 self.result_seen_at = None
+
+            # ---- 正面证据：结算页的"退出"按钮（2026-11-22）
+            #
+            # 上面那条依赖 `not st["bar"]` + `is_result_screen` + `turn>=3`，
+            # 条件太严：结算页有时血条还画着（bar=True），turn 也可能 <3
+            # （弃权/掉线）。这里用最直接的信号 —— 底部"退出"按钮。
+            #
+            # 实测 RESULT_BTN band 的白色像素：
+            #     真实战斗帧 = 0
+            #     结算页     = 8372
+            #     VS 准备页  = 13824  <- 必须排除，否则会点"取消准备"
+            if (self.match_started is not None
+                    and now - self.match_started > 8.0
+                    and now - getattr(self, "_exit_probe_at", 0.0) > 1.0):
+                self._exit_probe_at = now
+                try:
+                    import ui_probe as _UP
+                    if (_UP.has_exit_button(self.screen)
+                            and not _UP.has_vs_screen(self.screen)):
+                        log("result screen (exit button) -> ending match")
+                        self._end_match()
+                except Exception:
+                    pass
 
             # ---- 脱困：卡在结算页但没有 turn >= 3（2026-11-21 实盘死锁）
             #
@@ -3440,6 +3491,11 @@ class Bot:
         """
         import subprocess
         try:
+            # started 可能是 None（脱困/掉线路径在没有登记比赛时就结束）
+            # 原来直接 `started - 2` 抛 TypeError，日志只剩
+            # "review spawn failed: unsupported operand type(s) ..."。
+            if not started:
+                return
             t0 = time.strftime("%H%M%S", time.localtime(started - 2))
             t1 = time.strftime("%H%M%S", time.localtime(ended + 2))
             stem = "review_%s_%s" % (t0, t1)
