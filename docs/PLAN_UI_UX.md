@@ -345,6 +345,7 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U30 | 「感知耗时」在过期帧上显示绿色 67ms（漏掉的最后一格假绿灯） | 渲染实测：`stale_green` 为空数组 |
 | U31 | 9 处空态各写各的，多数只说"缺什么"不说"该做什么" | 渲染实测：搜不存在的精灵会给出"试试更短的词" |
 | U32 | `/api/log` 的 offset 按解码后的字符串长度推算，中文日志被切断时会重复/丢行 | 单测：切在中文字符中间，offset 落在换行边界，续拉 120 行 0 重复 |
+| U33 | 控制台测试混在 1642 行的 `test_ui.py` 里，三个会话同时改 | 新文件 `test_console.py` 80 项独立跑通，与 `test_ui.py` 共用 `test_ui_common.py` |
 
 **验证基线**：`python src/test_ui.py` → 175 项全过（原 62）；
 `--no-dom` 125 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
@@ -359,8 +360,9 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 125 项，约 5 秒
-python src\test_ui.py                 # 175 项，约 90 秒，含真实渲染
+python src\test_console.py            # 80 项，控制台，约 20 秒，不需要 pywebview
+python src\test_ui.py --no-dom        # 49 项，悬浮窗（无渲染），约 5 秒
+python src\test_ui.py                 # 103 项，含真实渲染，约 90 秒
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -368,8 +370,13 @@ python src\test_ui.py                 # 175 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 175 项、`--no-dom` 125 项、
-其余三个脚本 ALL PASS。
+**基线（本轮结束）**：`test_console.py` 80 项、`test_ui.py --no-dom` 49 项、
+`test_ui.py` 全量 103 项；`test_record.py` / `test_imports.py` /
+`test_policy_cost.py` ALL PASS。
+
+> **注意**：`test_ui.py` 目前仍含控制台那五组（共 129 项 `--no-dom`），
+> 因为删除那一步被工作区竞态回滚了两次。按 `docs/PLAN_TEST_SPLIT.md`
+> 的 `ui-m84` 删掉后，`--no-dom` 会降到 49 项，`49 + 80 = 129` 与原数一致。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
 > 子进程偶尔在 WebView2 初始化阶段崩掉，报 `Failed to unregister class
