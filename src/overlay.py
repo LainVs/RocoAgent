@@ -1341,17 +1341,42 @@ def _run(args):
     def enter_embedded():
         """让页面知道"我在真悬浮窗里"，并让窗口贴合内容高度。
 
-        实测面板内容只需约 360~420 CSS px，但默认窗口给 620，
-        底部会留一大片透明空白 —— 透明区域虽然看不见，但会挡住鼠标。
+        实测面板内容只需约 325 CSS px（展开）/ 149（折叠），
+        但默认窗口给 620，底部会留一大片透明空白 —— 透明区域虽然
+        看不见，但会挡住鼠标。
 
         注意：SetWindowPos 只改尺寸，**不要动位置**（SWP_NOMOVE）。
         之前传 (0,0) 把窗口挪到屏幕左上角，和初始位置不一致，
         导致外部截图工具按旧坐标抓，看起来"面板被切"。
+
+        ★ 折叠态必须在这里恢复（2026-11-21）
+        ------------------------------------
+        config/overlay.json 里的 folded 之前只写进 state，**从没告诉前端**。
+        而前端 bindFold 是从 localStorage 读的 —— 两套存储不同步，
+        所以重启后永远按展开态开（实测配置 folded=true 但窗口 329 高，
+        那是展开态的 325，不是折叠态的 149）。
         """
         try:
             win.evaluate_js("document.body.classList.add('embedded')")
         except Exception:
             return
+
+        # 把原生侧记住的折叠态同步给页面
+        if state.get("folded"):
+            try:
+                win.evaluate_js("""
+                  (() => {
+                    const ov = document.getElementById('overlay');
+                    const btn = document.getElementById('btnFold');
+                    if (ov) ov.classList.add('folded');
+                    if (btn) btn.textContent = '展开';
+                    try { localStorage.setItem('overlay.folded', '1'); } catch (e) {}
+                  })()
+                """)
+                _log("enter_embedded: 恢复折叠态")
+            except Exception as e:
+                _log("enter_embedded: 恢复折叠态失败 %s" % e)
+
         time.sleep(0.6)
         if api.fit_window():
             print("  窗口已贴合内容")

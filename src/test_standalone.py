@@ -114,7 +114,9 @@ def main():
         check(sk[0]["dmg"] == 175, "卡1 伤害 175", str(sk[0]["dmg"]))
         check(sk[0]["name"] is None, "卡1 名字是 None（不编造）")
         check(sk[0]["_text"] == "175", "保留原始读数", sk[0]["_text"])
-        check(sk[2]["usable"] is True, "dash 卡可用")
+        check(sk[2]["usable"] is False,
+              "dash 卡 usable=False（无伤害数字，不是伤害卡）",
+              str(sk[2]["usable"]))
         check(sk[3]["usable"] is False, "未点亮的卡 usable=False")
         check(sk[0]["pct"] is None,
               "pct 是 None（没有对面最大血量，算不出百分比）")
@@ -192,6 +194,11 @@ def main():
         try:
             PO.available = lambda: True
             PO.predict_region = fake_pred
+            # ★ 必须同时替换 _get()，否则 identify() 会拿真实 Screen
+            # （游戏开着时真的去读屏，测试结果被真实识别污染 —— 实测踩过：
+            #   期望"水灵"却得到"月牙雪熊"，因为读的是真屏幕）
+            real_get = standalone._get
+            standalone._get = lambda: (FakeScreen(), None)
             standalone._screen = FakeScreen()
             standalone._perc = standalone._perc  # 保持不变
 
@@ -226,6 +233,7 @@ def main():
                   str(r3.get("foe")))
         finally:
             PO.available, PO.predict_region = real_avail, real_pred
+            standalone._get = real_get
     finally:
         standalone._ident.clear()
         standalone._ident.update(old3)

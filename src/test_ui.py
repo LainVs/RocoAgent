@@ -692,6 +692,9 @@ def test_resilience(port):
 
     env = dict(os.environ)
     env["ROCO_LOGS"] = iso
+    # 关掉独立感知：它会读真实屏幕，把测试的假数据源盖掉
+    # （实测 /api/state 超时、状态显示"战斗中"而不是测试期望的值）
+    env["ROCO_NO_STANDALONE"] = "1"
     srv = subprocess.Popen(
         [sys.executable, os.path.join(SRC, "ui_server.py"),
          "--port", str(iso_port)],

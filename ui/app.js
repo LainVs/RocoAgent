@@ -330,6 +330,68 @@ function render(st) {
     order.textContent = '数据不足';
     order.className = '';
   }
+
+  // ★ 内容高度变了就通知原生侧重算窗口尺寸
+  //
+  // 踩过的坑（2026-11-21）：fit_window 只在启动时跑一次。
+  // 技能卡从"未识别占位"（65px）变成 4 张真卡（约 180px）时，
+  // 窗口不会自动变高 —— 实测内容 438 但视口只有 365，**被裁 73px**。
+  //
+  // 为什么不用 ResizeObserver：面板是 flex 容器，窗口高度会反过来
+  // 影响内容高度，形成正反馈。改成"测一次内容高度，变了才调"。
+  scheduleFit();
+}
+
+// 内容高度自适应：变化超过 6px 才通知原生侧。
+//
+// 防抖 250ms：render 每秒可能跑 10 次（10Hz 轮询），
+// 每次都量高度会让 IPC 变成新的瓶颈。
+let _fitTimer = 0;
+let _lastFitH = 0;
+
+function scheduleFit() {
+  if (!hasNative()) return;
+  if (_fitTimer) return;
+  _fitTimer = setTimeout(() => {
+    _fitTimer = 0;
+    try {
+      const h = measureContentHeight();
+      if (h > 0 && Math.abs(h - _lastFitH) > 6) {
+        _lastFitH = h;
+        callNative('fit_window', true);
+      }
+    } catch (_) {}
+  }, 250);
+}
+
+// 量"内容需要多高"：临时解除 min-height:100% 的约束。
+//
+// 不解除的话量到的是**当前窗口高度**（因为 panel 是 min-height:100%），
+// 永远等于视口，永远不会触发 resize —— 这是之前的死循环。
+function measureContentHeight() {
+  const p = document.getElementById('panel');
+  if (!p) return 0;
+  const prevMin = p.style.minHeight;
+  const prevH = p.style.height;
+  const prevFlex = p.style.flex;
+  p.style.minHeight = '0';
+  p.style.height = 'auto';
+  p.style.flex = '0 0 auto';
+
+  let sum = 0;
+  for (const el of p.children) {
+    const st = getComputedStyle(el);
+    if (st.display === 'none') continue;
+    sum += el.getBoundingClientRect().height;
+  }
+  const cs = getComputedStyle(p);
+  sum += parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+  sum += parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+
+  p.style.minHeight = prevMin;
+  p.style.height = prevH;
+  p.style.flex = prevFlex;
+  return Math.round(sum);
 }
 
 /* ================================================================
@@ -440,6 +502,8 @@ function renderEmpty() {
   $('vOrder').textContent = '—';
 
   setAccent('even');
+  // 空态也要贴合：从"有 4 张卡"退回空态时窗口要缩回去
+  scheduleFit();
 }
 
 /* ================================================================
