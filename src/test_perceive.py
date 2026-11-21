@@ -203,10 +203,16 @@ def cmp_state(tag, a, b, keys):
         for i, (x, y) in enumerate(zip(sa, sb)):
             recovered = bool(y and y.get("recovered"))
             rejected = bool(y and y.get("rejected"))
+            # 有意差异（2026-11-22）：借用/取念 的卡面读出伤害数字时，
+            # NEW 保留成 num（复制到的技能），OLD 一律强制 dash。
+            # 这是用户要的"借用技能借到的技能的识别"，不是回归。
+            copied = bool(y and y.get("copied"))
             check = ("kind", "color", "plate", "lit", "skill_name", "skill_kind")
-            if not recovered and not rejected:
+            if not recovered and not rejected and not copied:
                 check = check + ("text", "value", "score")
             for kk in check:
+                if copied and kk in ("kind", "color", "value"):
+                    continue
                 xv = None if x is None else x.get(kk)
                 yv = None if y is None else y.get(kk)
                 if xv != yv:
@@ -264,13 +270,22 @@ def main():
         ok_all &= cmp_state("合成帧 my_name=%s" % name, st_old, st_new, keys)
         P("     读到: %s"
           % [(s or {}).get("text") for s in st_new["skills"]])
-    # 明确验证 dash 纠正真的生效（音速犬 槽位 1 power=0）
+    # 借用/取念（音速犬 槽位 1，power=0）的卡面如果读出伤害数字，
+    # 说明它已经复制到了一个攻击技能 -> 必须保留成 num 并标 copied。
     b = NEW.Perc(fs)
     b.my_name = "音速犬"
     st = b.observe()
-    ok_all &= (st["skills"][0] or {}).get("kind") == "dash"
-    P("  音速犬 槽位1 被判 dash：%s"
-      % ((st["skills"][0] or {}).get("kind")))
+    s1 = st["skills"][0] or {}
+    ok_all &= s1.get("kind") == "num" and s1.get("copied") is True
+    P("  音速犬 槽位1（借用）读成 num+copied：kind=%s copied=%s"
+      % (s1.get("kind"), s1.get("copied")))
+    # 普通变化技能（力量增效，self_buff）仍然必须强制成 dash
+    b2 = NEW.Perc(fs)
+    b2.my_name = "银月狼王"
+    st2 = b2.observe()
+    ok_all &= all((s or {}).get("kind") == "num" for s in st2["skills"] if s)
+    P("  银月狼王 四个伤害技能保持 num：%s"
+      % [(s or {}).get("kind") for s in st2["skills"]])
     P("     bar=%s npills=%s battle=%s"
       % (st["bar"], st["npills"], st["battle"]))
 

@@ -877,9 +877,26 @@ def _fix_status_kinds(slots, my_name):
                 if (meta["powers"].get(slot - 1) or 0) <= 0:
                     s = slots[slot - 1]
                     if s is not None:
-                        s["kind"] = "dash"
-                        s["value"] = None
-                        s["color"] = None
+                        # ---- 借用 / 取念：power=0 但会**复制对面技能** ----
+                        #
+                        # 配置里 借用 的 power 是 0，但用出去之后卡面会变成
+                        # 随机复制来的技能，**会画伤害数字**。
+                        # 原来这里无条件按"无伤害"处理，把复制到的伤害丢掉，
+                        # policy 于是永远不敢用这张卡（用户要的
+                        # "借用技能借到的技能的识别"就是这个）。
+                        name = meta["names"].get(slot - 1) or ""
+                        try:
+                            import skill_kind as _SK
+                            is_copy = _SK.classify(name) == "copy"
+                        except Exception:
+                            is_copy = False
+                        if is_copy and s.get("value"):
+                            s["copied"] = True
+                            s["kind"] = "num"
+                        else:
+                            s["kind"] = "dash"
+                            s["value"] = None
+                            s["color"] = None
         else:
             # 路线 2：队伍没配 -> 用这只精灵的"变化技能耗能集合"推断
             dash_costs = meta.get("dash_costs")

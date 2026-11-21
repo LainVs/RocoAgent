@@ -624,6 +624,25 @@ class Bot:
                 time.sleep(0.5)
                 continue
             self.last_state = st
+            # ---- 大厅误判成战斗（2026-11-22 实测）
+            #
+            # 大厅的段位横幅正好压在 FOE_BAR 上，会读出一个红色的 24.5%；
+            # "限时试用系别 5天0小时"又会被当成倒计时。于是：
+            #     battle=True bar=False me=59.0 foe=29.8
+            #     T18 SKILL 2 (bar never drew, blind)     <- 在大厅里盲出招
+            #
+            # 硬闸：只要"开始挑战"按钮在，就绝对不是战斗。
+            # 每秒最多探一次（has_start_button 是一次小区域抓屏）。
+            if (st.get("battle") and not st.get("bar")
+                    and now - getattr(self, "_lobby_probe_at", 0.0) > 1.0):
+                self._lobby_probe_at = now
+                try:
+                    import ui_probe as _UP
+                    if _UP.has_start_button(self.screen):
+                        log("BATTLE false positive on lobby -> cleared")
+                        st["battle"] = False
+                except Exception:
+                    pass
             # ---- 技能卡读数稳定化
             #
             # 实测（2026-11-21 06:51）：同一只音速犬、同一个对手、血量全程
@@ -808,12 +827,14 @@ class Bot:
                             ended = "result"
                     except Exception:
                         ended = None
-                    # ---- 技能栏 25 秒没画：主判据（2026-11-22）
+                    # ---- 技能栏 40 秒没画：主判据（2026-11-22）
                     #
-                    # 一局里每个我方回合都会画技能栏。25 秒没画，只可能是
+                    # 一局里每个我方回合都会画技能栏。40 秒没画，只可能是
                     # 已经不在对局里（结算页/大厅/奖励页）。
-                    if not ended and now - getattr(self, "_last_bar_at", now) > 25.0:
-                        ended = "no bar 25s"
+                    # 25 秒实测偏短：对面思考 + 动画能超过 25 秒，会把
+                    # 一场还在进行的对局判死（01:46:17 "no bar 25s"）。
+                    if not ended and now - getattr(self, "_last_bar_at", now) > 40.0:
+                        ended = "no bar 40s"
                     # ---- HUD 消失兜底（40 秒）
                     # 4:3 下血条会连续读不到，所以只当长兜底，不能当主判据
                     # （12 秒版实测把一场还在进行的对局误判结束了）。
