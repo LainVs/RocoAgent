@@ -78,14 +78,28 @@ git 约定：
 
 ---
 
-### P4 · 下一轮（本轮不做，先记录）
+### P4 · 后续（U13/U14 已在本轮追加完成）
 
-| # | 内容 | 依赖 |
+| # | 内容 | 状态 |
 |---|---|---|
-| U13 | 对局表行点击 → 右侧抽屉渲染 `match_detail`（`/api/match` 已实现但前端从未调用） | 无 |
-| U14 | 日志页按 `classifyLine` 的分类做筛选 chips | 无 |
-| U15 | 悬浮窗显示 `plan{action,why}`（需要改 `robot.py` 的 `_publish_state`） | A 会话 |
-| U16 | `docs/FRONTEND.md` 里 `data.html` 段落与实现对齐 | 无 |
+| U13 | 对局表行点击 → 右侧抽屉渲染 `match_detail`（`/api/match` 早就实现但前端从未调用） | ✅ `b38e42a` |
+| U14 | 日志页按 `classifyLine` 分类做筛选 chips（全部/决策/异常，带计数） | ✅ `789d8a0` |
+| U15 | 悬浮窗显示 `plan{action,why}`（需要改 `robot.py` 的 `_publish_state`） | ⬜ 依赖 A 会话 |
+| U16 | `docs/FRONTEND.md` 里 `data.html` 段落与实现对齐 | ✅ `3394cbb` |
+| U17 | `bot_stdout.log` 被 `standalone` 的日志污染：48KB 尾部 0 条机器人事件 | ⬜ 待定（属 standalone/ config 层） |
+
+**U17 的现场**（2026-11-21 20:30）：
+
+```
+Get-Content logs/bot_stdout.log | 取最后 48KB | 匹配 BLE/GATE/SKILL => 0 条
+```
+
+尾部全是 `[standalone] FOE -> ...` 和 `WINDOW client 0x0 -> 1280x800`。
+`standalone.py` 用的是 `config.log()`，和机器人写同一个文件。
+后果：控制台的日志页在 UI 服务常驻时会被感知日志刷掉，看不到机器人的
+`GATE/SKILL/BLE` 行。修法要么 standalone 写自己的 `logs/standalone.log`，
+要么在 `/api/log` 里按前缀过滤 —— 两者都要动 A 会话的文件，所以先记录。
+
 
 ---
 
@@ -120,13 +134,15 @@ git 约定：
 | U10 | `record.save_state()` 追加 `record_snapshots.jsonl` | 单测：无快照时 `progress=None` |
 | U11 | `ui_server._progress()` + `stats().progress` | 单测：2 胜 1 负 = 66.7% |
 | U12 | `console.js refreshStats()` 两格 | 战绩页 5→7 格 |
+| U13 | `console.js openMatch()` + `console.html #matchDrawer` | 渲染实测：点行打开抽屉、含回合表 |
+| U14 | `console.js renderLog()` + `#logFilter` chips | 渲染实测：全部 887 行 → 异常 0 行 |
 | U16 | `docs/FRONTEND.md` §3.1 / §3.2 / §4.2 / §4.3 | — |
 
-**验证基线**：`python src/test_ui.py --no-dom` → 70 项全过（原 62）；
-`python src/test_ui.py` DOM 部分沿用原有断言。
+**验证基线**：`python src/test_ui.py` → 88 项全过（原 62）；
+`--no-dom` 75 项；`test_record.py` / `test_imports.py` ALL PASS。
 
-**未做（下一轮）**：U13（对局表点开复盘）、U14（日志筛选 chips）、
-U15（悬浮窗显示 plan/why —— 依赖 A 会话的 `robot.py`）。
+**未做（下一轮）**：U15（悬浮窗显示 plan/why —— 依赖 A 会话的 `robot.py`）、
+U17（`bot_stdout.log` 被 standalone 日志污染）。
 
 ---
 
