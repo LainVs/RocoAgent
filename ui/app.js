@@ -510,38 +510,78 @@ const ALPHA_MIN = 40;
 function bindAlpha() {
   const slider = $('alpha');
   const label = $('alphaVal');
-  if (slider) slider.min = String(ALPHA_MIN);
+
+  // ★ slider 可能不存在（比如抽屉被裁掉/DOM 改动）。
+  //   以前这里直接 slider.min = ... 会抛 TypeError，
+  //   然后整个 DOMContentLoaded 回调挂掉 —— 连带 bindDrag / poll 全部不执行。
+  //   表现就是"透明度完全无效果"（因为 poll 也没跑，页面看起来是死的）。
+  if (!slider) {
+    console.warn('[alpha] slider 不存在，跳过绑定');
+    applyAlphaValue(currentAlpha());
+    return;
+  }
+  slider.min = String(ALPHA_MIN);
 
   // 一次性把整窗 alpha 钉死在不透明。之后滑块不再碰它。
   if (hasNative()) {
     callNative('set_opacity', 255);
   }
 
-  const apply = () => {
-    let v = +slider.value;
-    if (v < ALPHA_MIN) v = ALPHA_MIN;
-    const a = v / 100;
-    root.style.setProperty('--alpha', a.toFixed(2));
-    label.textContent = v + '%';
-
-    // 低透明度下图形元素（血条底槽、分隔线）没有描边会一起消失，
-    // 所以它们要**反向补偿**：面板越淡，底槽越实。
-    const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
-    root.style.setProperty('--well-a', (0.10 * boost).toFixed(3));
-    root.style.setProperty('--line-a', (0.09 * boost).toFixed(3));
-    root.style.setProperty('--line-soft-a', (0.055 * boost).toFixed(3));
-
-    try { localStorage.setItem('overlay.alpha', String(v)); } catch (_) {}
-  };
-  slider.addEventListener('input', apply);
-  slider.addEventListener('change', apply);
+  slider.addEventListener('input', () => applyAlphaValue(+slider.value));
+  slider.addEventListener('change', () => applyAlphaValue(+slider.value));
 
   try {
     const saved = localStorage.getItem('overlay.alpha');
     if (saved) slider.value = Math.max(ALPHA_MIN, +saved);
   } catch (_) {}
-  apply();
+  applyAlphaValue(+slider.value || 92);
 }
+
+function currentAlpha() {
+  try {
+    const s = localStorage.getItem('overlay.alpha');
+    if (s) return Math.max(ALPHA_MIN, +s);
+  } catch (_) {}
+  return 92;
+}
+
+// 纯函数：只负责把 alpha 应用到 CSS 变量。与 slider 解耦，
+// 这样即使 UI 控件缺失，透明度逻辑本身仍然可测、可用。
+function applyAlphaValue(v) {
+  let val = +v;
+  if (!isFinite(val)) val = 92;
+  if (val < ALPHA_MIN) val = ALPHA_MIN;
+  if (val > 100) val = 100;
+
+  const a = val / 100;
+  root.style.setProperty('--alpha', a.toFixed(2));
+
+  const label = $('alphaVal');
+  if (label) label.textContent = val + '%';
+
+  // 低透明度下图形元素（血条底槽、分隔线）没有描边会一起消失，
+  // 所以它们要**反向补偿**：面板越淡，底槽越实。
+  const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
+  root.style.setProperty('--well-a', (0.10 * boost).toFixed(3));
+  root.style.setProperty('--line-a', (0.09 * boost).toFixed(3));
+  root.style.setProperty('--line-soft-a', (0.055 * boost).toFixed(3));
+
+  try { localStorage.setItem('overlay.alpha', String(val)); } catch (_) {}
+  // 启动自检：把实际生效的 alpha 打到控制台。
+  // 排查"透明度没反应"时，先看这行有没有输出 —— 没有就是 bindAlpha
+  // 没跑到（DOMContentLoaded 里被别的 bind 拖挂了）。
+  if (!window.__alphaLogged) {
+    window.__alphaLogged = true;
+    const bg = getComputedStyle(document.getElementById('panel'))
+      .backgroundColor;
+    console.log('[alpha] 初始 %d%% -> --alpha=%s  panel=%s',
+      val, a.toFixed(2), bg);
+  }
+  return val;
+}
+
+// 暴露给调试：window.__setAlpha(40)
+window.__setAlpha = applyAlphaValue;
 
 function bindDrawer() {
   const btn = $('btnSet');
@@ -851,18 +891,36 @@ function bindTheme() {
 }
 
 /* ================================================================ */
-document.addEventListener('DOMContentLoaded', () => {
-  bindTheme();
-  bindAlpha();
-  bindDrawer();
-  bindPass();
-  bindFold();
-  bindDrag();
-  bindHotkeys();
-  bindStartBot();
+// ★ 每个 bind 独立 try/catch
+//
+// 踩过的坑（2026-11-21，用户报"透明度完全无效果"）：
+// 以前这里是平铺调用。任何一个 bind 抛异常（比如 bindAlpha 里
+// slider 为 null 时 slider.min = ...），后面的全部不执行 ——
+// 包括 poll()。于是整个页面看起来"是死的"：
+//   透明度没反应、数据不刷新、拖动也不跟手。
+// 而控制台可能只有一条不起眼的 TypeError。
+//
+// 现在逐个隔离，并在控制台打印哪个 bind 失败。
+function safe(name, fn) {
+  try {
+    fn();
+  } catch (e) {
+    console.error('[init] ' + name + ' 失败:', e);
+  }
+}
 
-  renderEmpty();
-  poll();
+document.addEventListener('DOMContentLoaded', () => {
+  safe('theme', bindTheme);
+  safe('alpha', bindAlpha);
+  safe('drawer', bindDrawer);
+  safe('pass', bindPass);
+  safe('fold', bindFold);
+  safe('drag', bindDrag);
+  safe('hotkeys', bindHotkeys);
+  safe('startBot', bindStartBot);
+
+  safe('renderEmpty', renderEmpty);
+  safe('poll', poll);
   pollTimer = setInterval(poll, 100);
 
   document.addEventListener('visibilitychange', () => {

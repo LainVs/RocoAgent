@@ -898,16 +898,46 @@ def _run(args):
             _log("fit_window(force=%s) in, rect=%s"
                  % (force, _rect_str(hwnd)))
             try:
+                # ★ 测量前必须临时解除"面板撑满视口"的约束
+                #
+                # 踩过的坑（2026-11-21，用户报"透明度无效果"+ 内容被裁）：
+                # body.embedded .panel 是 { min-height:100%; display:flex;
+                # flex-direction:column }，而且 .side/.skills/.verdict 都设了
+                # flex:none —— 但 panel 的 min-height:100% 会让它**跟着窗口高度**。
+                #
+                # 于是形成死循环：
+                #   窗口矮 -> panel 只有那么高 -> 子元素被压扁 -> 量出 327
+                #   -> 窗口保持 327 -> 下次还是 327
+                #
+                # 必须先把 panel 的高度约束去掉、改成 auto，让它按内容自然撑开，
+                # 量到的才是"内容真实需要多高"。
                 h = win.evaluate_js("""
                   (() => {
                     const p = document.getElementById('panel');
                     if (!p) return 0;
+                    // 临时解除约束
+                    const prevMin = p.style.minHeight;
+                    const prevH = p.style.height;
+                    const prevFlex = p.style.flex;
+                    p.style.minHeight = '0';
+                    p.style.height = 'auto';
+                    p.style.flex = '0 0 auto';
+
                     let sum = 0;
                     for (const el of p.children) {
                       const st = getComputedStyle(el);
                       if (st.display === 'none') continue;
                       sum += el.getBoundingClientRect().height;
                     }
+                    // 加上 panel 自己的 padding/border（当前是 0，但别假设）
+                    const cs = getComputedStyle(p);
+                    sum += parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
+                    sum += parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
+
+                    // 还原
+                    p.style.minHeight = prevMin;
+                    p.style.height = prevH;
+                    p.style.flex = prevFlex;
                     return Math.round(sum);
                   })()
                 """)
@@ -918,12 +948,17 @@ def _run(args):
                       (() => {
                         const p = document.getElementById('panel');
                         if (!p) return 0;
+                        const prevMin = p.style.minHeight;
+                        p.style.minHeight = '0';
+                        p.style.height = 'auto';
                         let sum = 0;
                         for (const el of p.children) {
                           const st = getComputedStyle(el);
                           if (st.display === 'none') continue;
                           sum += el.getBoundingClientRect().height;
                         }
+                        p.style.minHeight = prevMin;
+                        p.style.height = '';
                         return Math.round(sum);
                       })()
                     """)
