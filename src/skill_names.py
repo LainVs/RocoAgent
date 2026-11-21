@@ -297,7 +297,11 @@ def main(argv):
     import perceive as P
 
     if args.frame:
-        img = cv2.imread(args.frame)
+        import imgio
+        img = imgio.read(args.frame)
+        if img is None:
+            print("读不到截图：%s" % args.frame)
+            return 1
         rgb = img[:, :, ::-1]
         h, w = rgb.shape[:2]
         slots = P._slots(rgb, (0, 0, w, h), dr.find_pills(rgb, (0, 0, w, h)))

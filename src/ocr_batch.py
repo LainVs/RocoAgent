@@ -118,7 +118,9 @@ def _clean_name(txt):
 def ocr_one(reader, path):
     """识别一张名字条。返回 (text, conf) 或 (None, 0)。"""
     import cv2
-    img = cv2.imread(path)
+    import imgio
+    # 头像文件名是精灵名（中文），cv2.imread 在 Windows 上读不了
+    img = imgio.read(path)
     if img is None:
         return None, 0.0
     h, w = img.shape[:2]

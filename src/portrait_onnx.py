@@ -186,52 +186,77 @@ def predict_region(screen, side="foe", topk=3):
 
 # ------------------------------------------------------------------ 双通道融合
 
+# 立绘通道（ONNX）的"可以直接压过模板通道"阈值。
+#
+# 依据（2026-11-21 定标，src/portrait_calib.py --compare）：
+#   145 张已标注敌方头像，两条通道在同一批数据上对比（模板通道留一验证）
+#
+#     立绘 ONNX   Top-1 82.8%    conf>=0.90 时 93.2%（覆盖 81%）
+#     模板匹配     Top-1 42.1%    score>=0.85 时 94.6%（但只覆盖 26%）
+#
+# 所以"模板通道更权威"这个旧结论是反的。取 0.92 比 0.90 更保守一点，
+# 和下面"已有认定时改用新答案"的门槛保持一致。
+ONNX_OVERRIDE_CONF = 0.92
+
+
 def identify_fused(hud_result, portrait_result, hud_conf=0.0,
-                   prev=None, stable_count=0):
-    """融合 HUD 头像通道与立绘通道的结果。
+                   prev=None, stable_count=0, onnx_override=None):
+    """融合两条通道的结果。
+
+    ⚠ 命名先说清楚（旧的注释有误解）
+    ---------------------------------
+    `hud_result` **不是**读游戏界面上的名字，而是 `portraits.identify()`
+    对着 `assets/portraits_foe/` 这个**自己收集的头像库**做模板匹配的结果。
+    日志里写成 "hud" 是历史遗留。
+
+    所以"游戏界面显示的，绝对正确"这个理由不成立 —— 实测留一验证
+    Top-1 只有 42.1%（同库里的帧除外，那些会被自己以 1.00 匹配到）。
 
     hud_result      : portraits.identify() 返回的名字或 None
     portrait_result : predict_region() 返回的 [(name, conf), ...]
-    hud_conf        : HUD 通道的相似度分（0~1）
+    hud_conf        : 模板通道的相似度分（0~1）
     prev            : 当前已认定的名字（防抖用）
     stable_count    : 立绘通道连续给出同一答案的次数
 
     实测教训（2026-11-21 01:12）
     ---------------------------
-    原策略"立绘 >=0.50 就覆盖 HUD"导致每 2 秒抖动：
-        FOE -> 绿草精灵(0.83, 立绘) -> 白瑟(0.72) -> 燃薪虫(0.96) ...
-    因为立绘框里混了背景和 NPC，模型在相邻帧给出不同答案。
-    foe_name 一直变，决策全错。
+    原策略"立绘 >=0.50 就覆盖"导致每 2 秒抖动：
+        FOE -> 绿草精灵(0.83) -> 白瑟(0.72) -> 燃薪虫(0.96) ...
+    因为立绘框里混了背景和 NPC，相邻帧答案不同。所以必须要求"连续 2 帧"。
 
-    新策略（稳定优先 + HUD 权威）
+    当前策略（2026-11-21 定标后）
     ----------------------------
-    实测（01:19）：HUD 说「绒光优优 42%」（游戏界面显示的，绝对正确），
-    立绘通道却给出「铂金独角兽 1.00」——模型对这个形态不准。
-    所以 **HUD 一旦给出名字，就是权威，立绘不得覆盖**。
-
-      1. HUD 有结果（>=0.60）-> 用 HUD，立绘只记日志
-      2. HUD 无结果 -> 立绘要 置信>=0.85 且 连续 2 帧同一答案
-      3. 已有认定(prev) 时，除非新答案 >=0.92 否则不改
+      1. 立绘 conf >= 0.92 且连续 2 帧 -> 用立绘（定标 93.2%）
+      2. 否则模板通道 conf >= 0.60  -> 用模板
+      3. 否则立绘 conf >= 0.85 且连续 2 帧 -> 用立绘
       4. 都不满足 -> 保持 prev（绝不抖）
     """
     top = portrait_result[0] if portrait_result else (None, 0.0)
     p_name, p_conf = top
+    auth = ONNX_OVERRIDE_CONF if onnx_override is None else onnx_override
     out = {"name": None, "conf": 0.0, "source": None, "conflict": False,
            "hud": hud_result, "hud_conf": round(hud_conf, 3),
            "portrait": p_name, "portrait_conf": round(p_conf, 3),
            "kept": False}
 
-    # 1. HUD 有名字 -> 权威，立绘不覆盖（只记录冲突供复盘）
+    # 1. 立绘高置信 + 稳定 -> 优先（定标 93.2%，比模板通道高一个量级）
+    if p_name and p_conf >= auth and stable_count >= 2:
+        out.update(name=p_name, conf=p_conf, source="portrait")
+        if hud_result and hud_result != p_name:
+            out["conflict"] = True
+        return out
+
+    # 2. 模板通道有结果 -> 用它（立绘不够自信时）
     if hud_result and hud_conf >= 0.60:
         out.update(name=hud_result, conf=hud_conf, source="hud")
         if p_name and p_name != hud_result and p_conf >= 0.85:
             out["conflict"] = True
         return out
 
-    # 2. HUD 没有 -> 立绘要"高置信 + 稳定"才敢用
+    # 3. 模板没有 -> 立绘要"高置信 + 稳定"才敢用
     if p_name and p_conf >= 0.85 and stable_count >= 2:
-        # 3. 已有认定时，除非显著更高，否则不改
-        if prev and prev != p_name and p_conf < 0.92:
+        # 已有认定时，除非显著更高，否则不改
+        if prev and prev != p_name and p_conf < auth:
             out.update(name=prev, conf=0.0, source="kept", kept=True)
             return out
         out.update(name=p_name, conf=p_conf, source="portrait")

@@ -766,7 +766,10 @@ def _looks_like_nameplate(path):
     try:
         import cv2
         import numpy as np
-        img = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
+        import imgio
+        # cv2.imread 在 Windows 上读不了中文路径（头像文件名就是精灵名），
+        # 走 imgio.read 才能拿到 _unknown 之外的文件。
+        img = imgio.read(path, cv2.IMREAD_GRAYSCALE)
         if img is None:
             return False
         h, w = img.shape[:2]
@@ -835,7 +838,8 @@ def portraits_pending(side="foe", limit=60, offset=0):
         try:
             import cv2
             import numpy as np
-            img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+            import imgio
+            img = imgio.read(p, cv2.IMREAD_GRAYSCALE)
             if img is None:
                 return None
             small = cv2.resize(img, (16, 4), interpolation=cv2.INTER_AREA)
