@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ctypes
 import ctypes.wintypes as wt
+import threading
 import time
 import mss
 import numpy as np
@@ -19,6 +20,32 @@ from config import (  # noqa: F401
 
 # ------------------------------------------------------------------ window
 _UD = ctypes.windll.user32
+
+# 窗口几何缓存（rect / hwnd / client_size / client_off）。
+#
+# 为什么需要：`standalone` 在 HTTP 服务里按线程各建一个 Screen，
+# 而 HTTP 是秒级轮询 —— 等于每秒探测好几次窗口，甚至 ShowWindow。
+# 对一个独占全屏的 UE 游戏反复做这些是危险的。
+#
+# 缓存后重复构造 Screen 变成纯读内存，不再碰游戏窗口。
+_GEOM = {"at": 0.0, "rect": None, "hwnd": None,
+         "client_size": (0, 0), "client_off": (0, 0)}
+_GEOM_TTL = 1.0
+
+_SCT_LOCAL = threading.local()
+
+
+def _thread_sct():
+    """每线程一个 mss 实例。
+
+    mss 的对象绑定在创建它的线程上，跨线程用会报
+    `ScreenShotError: BitBlt: 系统找不到指定的文件`。
+    """
+    s = getattr(_SCT_LOCAL, "sct", None)
+    if s is None:
+        s = mss.mss()
+        _SCT_LOCAL.sct = s
+    return s
 
 
 class _PT(ctypes.Structure):
@@ -124,7 +151,6 @@ class Screen:
     """
 
     def __init__(self):
-        self.sct = mss.mss()
         self.rect = None
         self.hwnd = None
         # client_size / client_off 必须**先给默认值**。
@@ -143,13 +169,52 @@ class Screen:
         self.last_refresh = 0.0
         self.refresh()
 
-    def refresh(self):
+    # ---- mss 实例必须是线程本地的
+    #
+    # mss 的对象绑定在创建它的线程上。`ui_server` 是 ThreadingHTTPServer，
+    # 每个请求在**不同线程**里跑，跨线程用同一个 mss 会报：
+    #
+    #     ScreenShotError: Windows graphics function failed:
+    #     BitBlt: 系统找不到指定的文件。
+    #
+    # 所以这里用 property + threading.local，调用方写法保持不变。
+    @property
+    def sct(self):
+        return _thread_sct()
+
+    def refresh(self, force=False):
+        """探测窗口几何。
+
+        为什么要 rate limit（2026-11-21）
+        --------------------------------
+        `standalone` 原来按线程各建一个 Screen，而 HTTP 是秒级轮询 ——
+        等于每秒钟探测好几次窗口：GetWindowRect + GetClientRect，
+        甚至 IsIconic 时会 ShowWindow(RESTORE)。
+
+        对一个**独占全屏的 UE 游戏**反复做这些操作是危险的（设备丢失/被打断）。
+        实测那段时间游戏在 3 分钟内重启了 3 次（gamelet 日志）。
+
+        现在几何信息放进模块级缓存，最多每秒探一次，重复构造 Screen 变成
+        纯读缓存（几乎零成本，也不碰游戏窗口）。
+        """
+        global _GEOM
+        now = time.time()
+        if not force and _GEOM["at"] and (now - _GEOM["at"]) < _GEOM_TTL:
+            self.rect = _GEOM["rect"]
+            self.hwnd = _GEOM["hwnd"]
+            self.client_size = _GEOM["client_size"]
+            self.client_off = _GEOM["client_off"]
+            self.last_refresh = _GEOM["at"]
+            return
+
         g = find_game()
         if not g:
             self.rect = None
             self.hwnd = None
             self.client_size = (0, 0)
             self.client_off = (0, 0)
+            _GEOM.update(at=now, rect=None, hwnd=None,
+                         client_size=(0, 0), client_off=(0, 0))
             return
         self.hwnd, x, y, w, h = g
         # A minimised game reports a tiny placeholder rect, so every window-
@@ -181,7 +246,9 @@ class Screen:
             except Exception:
                 pass
         self.client_size = new_size
-        self.last_refresh = time.time()
+        self.last_refresh = now
+        _GEOM.update(at=now, rect=self.rect, hwnd=self.hwnd,
+                     client_size=self.client_size, client_off=self.client_off)
     def grab(self, box):
         """box 用**窗口坐标**（含边框/标题栏），按原始分辨率抓，不缩放。"""
         if self.rect is None or time.time() - self.last_refresh > 2.0:
