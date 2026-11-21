@@ -190,8 +190,7 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 `summarize(limit)` 和 `summarize()` **两遍**，每遍都要把三份 jsonl
 全量过一遍（517 场 / 3181 条回合）。现在只跑一遍再切片。
 
-#### U24：游戏窗口在跑，控制台却看不见 —— 而且分辨率是错的
-这条是本轮最值钱的发现。机器人能不能干活有两道门：**输入链路**和
+#### U24：游戏窗口在跑，控制台却看不见 —— 而且分辨率是错的这条是本轮最值钱的发现。机器人能不能干活有两道门：**输入链路**和
 **游戏窗口**。上一轮只补了板子那条，窗口这条完全没有。
 
 实测现场（2026-11-21 21:5x）：
@@ -254,6 +253,45 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 回归断言从"能算比例"加强到"读到的必须是物理像素"（宽度 > 1200），
 这样以后谁再动 import 顺序都会立刻被抓到。
 
+#### U27：图鉴 857 条里 103 个重名
+
+库里 `implemented=1` 有 857 条，其中 **103 个名字重复**，最多一个名字 9 条：
+
+```
+圣光迪莫 x9
+   id=3126  portrait_key=shuangqiudingding                 total=602
+   id=3458  portrait_key=shuangqiudingding_yingtaocaomei   total=616
+   id=3459  portrait_key=shuangqiudingding_yingtaomocha    total=617
+   ...
+```
+
+它们不是重复录入，是**同族的皮肤/口味变体**，只靠 `portrait_key` 后缀区分。
+对战里玩家认的是名字，所以图鉴显示 9 张同名卡只会让人以为数据脏了。
+
+修法：按**名字**分组，每组保留 `total` 最大的那条（并列取最小 id），
+857 → 683。去重放在 SQL 里做，否则 `total` 和 `offset` 分页都会算错。
+
+**不能按 `portrait_key` 基名分组** —— 实测会把「水灵 / 圣水守护」
+「火神 / 烈火战神」这类进化链并到一组（93 个族、281 条），
+误合并比重复更糟。
+
+#### U28：机器人停了，健康面板还在报绿
+
+`live_state.json` 在机器人退出后**不会被删**，里面存着最后一帧：
+`bar=True` / `blind=0` / `gate=None`。原逻辑照读，于是健康面板显示
+
+```
+血条   正常        ← 绿
+盲打   0 次 每手都看清了  ← 绿
+决策门 畅通        ← 绿
+```
+
+而机器人根本没在跑。这和"绿灯骗人"是同一类问题。
+
+修法：`_stale` 为真时，三个检测器 / 盲打 / 决策门一律显示琥珀色
+「数据过期」。渲染实测：过期时只剩「板子已连 6min前」一个绿
+（那个是真的，6 分钟内确实连过）。
+
 
 ---
 
@@ -302,9 +340,11 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U24 | `ui_server.game_status()` + `console.js` 顶栏 `#botRes` + 健康第 1b 格 | 单测：`aspect=1.290`、`scale_ok=False` 并给出说明；渲染：顶栏 `2074×1607`（`top-link warn`），健康格 9→10 |
 | U25 | `ui_server._ensure_dpi_aware()` —— 不 import `winio` 就读到逻辑坐标（差 2 倍） | 单测：读到 2074×1607（物理），不是 1037×804（逻辑） |
 | U26 | 分辨率报的是窗口矩形（2074×1607），不是客户区（2048×1536） | 单测：`w/h` 是客户区且 `client <= window`；渲染顶栏 `2048×1536` |
+| U27 | 图鉴 857 条里 103 个重名（「圣光迪莫」9 条），显示成重复卡 | 单测：683 条名字全唯一、分页不重叠、搜索也去重 |
+| U28 | 机器人停后 `live_state` 仍是旧的，健康面板照出绿色「正常/畅通」 | 渲染实测：过期时只剩板子一个绿 |
 
-**验证基线**：`python src/test_ui.py` → 134 项全过（原 62）；
-`--no-dom` 97 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 167 项全过（原 62）；
+`--no-dom` 120 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -316,8 +356,8 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 96 项，约 5 秒
-python src\test_ui.py                 # 133 项，约 90 秒，含真实渲染
+python src\test_ui.py --no-dom        # 120 项，约 5 秒
+python src\test_ui.py                 # 167 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -325,7 +365,7 @@ python src\test_ui.py                 # 133 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 133 项、`--no-dom` 96 项、
+**基线（本轮结束）**：`test_ui.py` 167 项、`--no-dom` 120 项、
 其余三个脚本 ALL PASS。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
