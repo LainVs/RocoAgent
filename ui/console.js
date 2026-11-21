@@ -333,8 +333,15 @@ async function refreshHealth() {
   // 所以非我方回合 bar=False / countdown=False 是正常现象 ——
   // 把它们标红是过去控制台"一直红"的来源之一。
   // 真正代表"看不清局面"的是下面第 7 格的「盲打」次数。
+  //
+  // ★ 但**过期数据不能判绿**（2026-11-21）：
+  //   机器人停了以后 live_state.json 还在，里面存着最后一次的
+  //   bar=True / blind=0 / gate=None。照原逻辑会显示
+  //   「血条 正常」「盲打 0 次 每手都看清了」「决策门 畅通」——
+  //   全是绿灯，而机器人根本没在跑。这和"绿灯骗人"是同一类问题。
   const dets = (st && st.system && st.system.detectors) || {};
-  const inBattle = !!(st && st.mode === 'battle');
+  const stale = !!(st && st._stale);
+  const inBattle = !!(st && st.mode === 'battle') && !stale;
   const DET_LABEL = {
     bar: '血条',
     skillbar: '技能栏',
@@ -343,6 +350,10 @@ async function refreshHealth() {
   Object.keys(DET_LABEL).forEach((k) => {
     if (!st) {
       items.push(healthItem(DET_LABEL[k], '—', ''));
+      return;
+    }
+    if (stale) {
+      items.push(healthItem(DET_LABEL[k], '数据过期', 'warn'));
       return;
     }
     if (!inBattle) {
@@ -359,7 +370,9 @@ async function refreshHealth() {
 
   // 7. 盲打次数（本局累计）
   const blind = st && st.system ? st.system.blind : null;
-  if (blind == null) {
+  if (stale) {
+    items.push(healthItem('盲打', '数据过期', 'warn'));
+  } else if (blind == null) {
     items.push(healthItem('盲打', '—', ''));
   } else if (blind === 0) {
     items.push(healthItem('盲打', '0 次 <small>每手都看清了</small>', 'ok'));
@@ -372,6 +385,8 @@ async function refreshHealth() {
   const gate = st && st.system ? st.system.gate : null;
   if (!st) {
     items.push(healthItem('决策门', '—', ''));
+  } else if (stale) {
+    items.push(healthItem('决策门', '数据过期', 'warn'));
   } else {
     items.push(healthItem('决策门', gate || '畅通', gate ? 'warn' : 'ok'));
   }
