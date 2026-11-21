@@ -19,6 +19,9 @@ from sim.skill_db import get_skill
 from sim.effect_models import E, Timing
 from sim.effect_engine import EffectExecutor, _apply_permanent_mod, _adjust_cost_delta
 
+# roco-cal 引擎（damage_v2，见 src/damage_v2.py），取代 NRC_AI 的伤害公式
+import damage_v2  # noqa: E402
+
 
 def _iter_flat_tags(effects):
     """从 List[SkillEffect] 或 List[EffectTag] 中提取所有 EffectTag（平铺）。"""
@@ -266,9 +269,6 @@ class DamageCalculator:
         atk = base_atk * ability_level
         dfn = max(1.0, float(base_def))
 
-        # 基础伤害 = (攻击/防御) × 威力 × 0.9
-        base = (atk / dfn) * power * 0.9
-
         # 属性克制
         eff = get_type_effectiveness(skill.skill_type, defender.pokemon_type)
 
@@ -278,23 +278,34 @@ class DamageCalculator:
         if getattr(defender, "ability_state", {}).get("barrel_active"):
             eff = 1.0
 
-        # 本系加成 1.5x
-        stab = 1.5 if skill.skill_type == attacker.pokemon_type else 1.0
-
-        # 天气修正
+        # 天气修正（damage_v2 没有天气参数；天气只对水系在雨天有 1.5x 威力修正，
+        # 按原式语义乘进 power，效果与原 `base ... * weather_mult` 完全等价）
         weather_mult = 1.0
         if weather:
             wm = DamageCalculator._WEATHER_MULT.get(weather, {})
             skill_type_val = skill.skill_type.value if hasattr(skill.skill_type, "value") else str(skill.skill_type)
             weather_mult = wm.get(skill_type_val, 1.0)
+        if weather_mult != 1.0:
+            power = power * weather_mult
 
         # 连击
         hits = hit_count_override or skill.hit_count
 
-        # 威力提升 buff（独立乘法层）
+        # 威力提升 buff（独立乘法层）→ damage_v2 的 trait（映射到最终伤害乘区）
         power_mult_buff = getattr(attacker, "power_multiplier", 1.0)
 
-        damage = base * eff * stab * weather_mult * hits * power_mult_buff
+        # 伤害用 roco-cal 引擎（src/damage_v2.py）：保留上面的 atk/dfn 能力等级、
+        # eff 克制、hits 连击、power_mult_buff，只把最后的乘法换掉。
+        # 关键差异：NRC 的 STAB 写死 1.5，roco-cal 是 1.25。
+        damage = damage_v2.damage(
+            atk=int(atk),
+            dfn=int(dfn),
+            power=power,
+            type_eff=eff,
+            stab=1.25 if (skill.skill_type == attacker.pokemon_type) else 1.0,
+            hits=hits,
+            trait=power_mult_buff,
+        )
         # 保存属性克制到攻击方临时状态，供前端事件使用
         attacker.ability_state["_last_effectiveness"] = eff
         return max(1, int(damage))
