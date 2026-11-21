@@ -496,6 +496,15 @@ def _find_game_window():
 
     和 `winio.find_game()` 同一判据，但这里只取窗口矩形，
     不构造 Screen（不碰 mss / DPI / 缓存）。
+
+    **同时返回窗口矩形和客户区矩形**（2026-11-21）：
+    分辨率告警必须按**客户区**判断，因为 `Screen.scale()` 用的是
+    `client_size`，不是 `GetWindowRect`。实测这台机器：
+
+        GetWindowRect  -> 2074x1607   （含边框）
+        GetClientRect  -> 2048x1536   （纯客户区，识别真正吃的）
+
+    两个数字混用会让告警报出用户无法对照的尺寸。
     """
     import ctypes
     import ctypes.wintypes as wt
@@ -510,13 +519,17 @@ def _find_game_window():
             cls = ctypes.create_unicode_buffer(256)
             UD.GetClassNameW(hwnd, cls, 256)
             if "Unreal" in cls.value:
-                r = wt.RECT()
-                UD.GetWindowRect(hwnd, ctypes.byref(r))
+                wr = wt.RECT()
+                UD.GetWindowRect(hwnd, ctypes.byref(wr))
+                cr = wt.RECT()
+                UD.GetClientRect(hwnd, ctypes.byref(cr))
                 hits.append({
                     "hwnd": int(hwnd),
                     "title": n.value.strip(),
-                    "w": r.right - r.left,
-                    "h": r.bottom - r.top,
+                    "w": wr.right - wr.left,
+                    "h": wr.bottom - wr.top,
+                    "cw": cr.right,
+                    "ch": cr.bottom,
                     "iconic": bool(UD.IsIconic(hwnd)),
                 })
         return True
@@ -564,32 +577,40 @@ _ensure_dpi_aware()
 
 
 def game_status():
-    """游戏窗口 + 分辨率是否和标定基准匹配。
+    """游戏窗口 + **客户区**分辨率是否和标定基准匹配。
 
-    `scale_ok=False` 表示窗口长宽比偏离基准 4% 以上 —— 那时所有
+    `scale_ok=False` 表示客户区长宽比偏离基准 4% 以上 —— 那时所有
     按窗口比例换算的 ROI 都会变形，识别率会无声下降，必须提示用户
     把游戏切回标定分辨率（或等比缩放）。
+
+    用客户区而不是窗口矩形：`Screen.scale()` 的分母是 `client_size`，
+    窗口边框（实测 26x71）不参与缩放。报窗口矩形会让用户对不上号 ——
+    主会话说"2048x1536"，我第一版报"2074x1607"，其实是同一个窗口。
     """
     g = _find_game_window()
     if not g:
         return {"found": False, "hwnd": None, "w": None, "h": None,
-                "aspect": None, "base": [_BASE_W, _BASE_H],
+                "win": None, "aspect": None, "base": [_BASE_W, _BASE_H],
                 "scale_ok": None, "iconic": None,
                 "note": "没找到游戏窗口（标题含「洛克王国」且类名含 Unreal）"}
 
-    w, h = g["w"], g["h"]
-    aspect = round(w / float(h), 3) if h else None
+    cw, ch = g["cw"], g["ch"]
+    aspect = round(cw / float(ch), 3) if ch else None
     base_aspect = _BASE_W / float(_BASE_H)
     scale_ok = None
     if aspect:
         scale_ok = abs(aspect - base_aspect) <= _ASPECT_TOL * base_aspect
     note = None
     if not scale_ok:
-        note = ("窗口 %dx%d（比例 %.2f）与标定基准 %dx%d（比例 %.2f）不一致，"
-                "固定 ROI 会变形" % (w, h, aspect, _BASE_W, _BASE_H, base_aspect))
+        note = ("客户区 %dx%d（比例 %.2f）与标定基准 %dx%d（比例 %.2f）不一致，"
+                "固定 ROI 会变形" % (cw, ch, aspect, _BASE_W, _BASE_H, base_aspect))
     elif g["iconic"]:
         note = "游戏窗口最小化了"
-    return {"found": True, "hwnd": g["hwnd"], "w": w, "h": h,
+    return {"found": True, "hwnd": g["hwnd"],
+            # w/h = 客户区（真正影响识别的尺寸，和 Screen.scale() 同口径）
+            "w": cw, "h": ch,
+            # win = 含边框的窗口矩形，仅供排查，不参与判断
+            "win": [g["w"], g["h"]],
             "aspect": aspect, "base": [_BASE_W, _BASE_H],
             "scale_ok": scale_ok, "iconic": g["iconic"], "note": note}
 

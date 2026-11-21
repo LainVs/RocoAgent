@@ -1240,6 +1240,13 @@ def test_phase_infer():
             ok(int(g.get("w") or 0) > 1200 or int(g.get("h") or 0) > 900,
                "读到的是物理像素（DPI 已声明）",
                "%sx%s" % (g.get("w"), g.get("h")))
+            # w/h 必须是**客户区**，和 Screen.scale() 同口径。
+            # 实测这台机器：客户区 2048x1536，窗口矩形 2074x1607（含边框）。
+            # 报窗口矩形会让用户按错误尺寸去调游戏。
+            win = g.get("win") or [None, None]
+            ok(win[0] is not None and int(g["w"]) <= int(win[0]),
+               "w/h 是客户区（不大于窗口矩形）",
+               "client=%sx%s win=%sx%s" % (g["w"], g["h"], win[0], win[1]))
             if g.get("scale_ok") is False:
                 ok(bool(g.get("note")), "比例不一致时给出说明",
                    str(g.get("note"))[:40])
