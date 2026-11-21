@@ -1391,6 +1391,13 @@ def _run(args):
         except Exception:
             return
 
+        # ★ 折叠态必须打日志（2026-11-21 排查教训）
+        # ------------------------------------------
+        # 折叠态只显示头部，`measureContentHeight()` 量出 131~151 是**正确的**。
+        # 但排查"窗口长不高"时完全看不出是折叠态导致的，一度以为是
+        # flex 布局 / 测量函数的问题，绕了一大圈。
+        _log("enter_embedded: folded=%s" % bool(state.get("folded")))
+
         # 把原生侧记住的折叠态同步给页面
         if state.get("folded"):
             try:
