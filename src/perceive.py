@@ -467,13 +467,34 @@ def _is_skillbar(crop, region, pills=None, slots=None):
     # column is x=228..321, which broke the pitch test and made the whole bar
     # read as "not drawn" for four minutes).
     xs = sorted(s["box"][0] for s in filled)
-    if xs[-1] - xs[0] > 220:
+    # x 跨度也改成相对 crop 宽度的比例（原来是写死 220）
+    #
+    # 基准下 220/780 = 0.282。但实测 2048x1536 的帧上跨度是 192/530 = 0.362，
+    # 用 0.35 会判死（192 > 185）。取 0.45 留足余量 —— 这个判据只是用来
+    # 排除"slot 横向漂移"的坏情况（实测那种情况跨度会到 0.6+）。
+    w_crop = max(1, crop.shape[1])
+    if xs[-1] - xs[0] > 0.45 * w_crop:
         return False, len(pills)
     ys = sorted((s["box"][1] + s["box"][3]) / 2.0 for s in filled)
     gaps = [b - a for a, b in zip(ys, ys[1:])]
     # gaps are multiples of the card pitch (one card may be missed entirely).
-    # A gap below 120 means two slots collapsed onto the same card.
-    ok = all(120 <= g <= 420 for g in gaps)
+    #
+    # 判据改成**相对 crop 高度的比例**（2026-11-21）
+    # --------------------------------------------
+    # 原来写死 `120 <= g <= 420`，那是基准 2560x1600 下量的（卡片间距 ~180）。
+    # 换到 2048x1536（4:3）后卡片整体缩小，实测间距：
+    #
+    #     gaps = [106.0, 192.0, 226.0]
+    #     旧判据 -> [False, True, True]      <- 第一个 106 直接判死
+    #
+    # 于是 `bar` 永远是 False，技能卡伤害数字和倒计时全都读不到
+    # （用户反馈"技能栏一直是未识别状态"）。
+    #
+    # 改成比例：crop 高 1040，基准 180/1040 = 0.173。
+    # 取 0.05~0.30（0.30 x 1040 = 312，和原来的 420 同量级）。
+    h_crop = max(1, crop.shape[0])
+    lo, hi = 0.05 * h_crop, 0.30 * h_crop
+    ok = all(lo <= g <= hi for g in gaps)
     return bool(ok), len(pills)
 
 
