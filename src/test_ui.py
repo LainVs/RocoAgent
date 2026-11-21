@@ -110,6 +110,33 @@ def test_api(port):
         except Exception as e:
             ok(False, path, str(e)[:60])
 
+    # /api/dex 按名字去重：库里 857 条 implemented，但 103 个名字重复
+    # （「圣光迪莫」9 条，是同族皮肤变体）。图鉴显示 9 张同名卡会让人
+    # 以为数据脏了。去重后应 683 条且名字全唯一。
+    try:
+        d = get(port, "/api/dex?limit=1000")
+        items = d.get("items") or []
+        names = [x.get("name") for x in items]
+        ok(len(names) == len(set(names)), "图鉴名字唯一（已去重）",
+           "%d 条 / %d 个名字" % (len(names), len(set(names))))
+        ok(d.get("total") == len(items), "total 与去重后条数一致",
+           "%s vs %s" % (d.get("total"), len(items)))
+        ok(d.get("deduped") is True, "标记 deduped", str(d.get("deduped")))
+        # 分页不能重叠（去重是在 SQL 里做的，分页才对）
+        a = get(port, "/api/dex?limit=50&offset=0")
+        b = get(port, "/api/dex?limit=50&offset=50")
+        ia = {x.get("id") for x in (a.get("items") or [])}
+        ib = {x.get("id") for x in (b.get("items") or [])}
+        ok(not (ia & ib), "图鉴分页不重叠", "%d / %d" % (len(ia), len(ib)))
+        # 搜索同样去重
+        s = get(port, "/api/dex?q=%s&limit=50"
+                % urllib.request.quote("圣光迪莫"))
+        sn = [x.get("name") for x in (s.get("items") or [])]
+        ok(len(sn) == len(set(sn)), "搜索也去重",
+           "%s -> %d 条" % ("圣光迪莫", len(sn)))
+    except Exception as e:
+        ok(False, "/api/dex 去重", str(e)[:60])
+
     # /api/matches 分页：offset 必须真的切片，不能忽略
     try:
         a = get(port, "/api/matches?limit=3&offset=0")

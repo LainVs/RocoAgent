@@ -1016,33 +1016,58 @@ def _db():
 
 
 def dex(q="", limit=60, offset=0):
-    """精灵图鉴。q 匹配名字（支持前缀/包含）。"""
+    """精灵图鉴。q 匹配名字（支持前缀/包含）。
+
+    **按名字去重**（2026-11-21 修）
+    ----------------------------
+    库里 `implemented=1` 有 857 条，其中 **103 个名字重复**，最多一个名字
+    9 条（「圣光迪莫」）。它们不是重复录入，而是**同族的皮肤/口味变体**：
+
+        portrait_key=shuangqiudingding                 total=602
+        portrait_key=shuangqiudingding_yingtaocaomei   total=616
+        portrait_key=shuangqiudingding_lanmeimocha     total=633
+        ...
+
+    对战里玩家认的是**名字**，不是 portrait_key，所以图鉴显示 9 张同名卡
+    只会让人以为数据脏了。这里按名字分组，每组保留 **total 最大**的那条
+    （并列取 id 最小 = 原始条目），857 → 683。
+
+    注意**不能**按 portrait_key 的基名分组：那会把「水灵 / 圣水守护」
+    「火神 / 烈火战神」这类进化链并到一组（实测 93 个族、281 条），
+    误合并比重复更糟。
+    """
     try:
         db = _db()
     except Exception as e:
         return {"error": str(e), "items": [], "total": 0}
     try:
-        where = "WHERE implemented=1"
-        args = []
-        if q:
-            where += " AND name LIKE ?"
-            args.append("%" + q + "%")
+        # 去重必须在 SQL 里做，否则 total 和分页都会算错。
+        # 子查询取每个名字里 total 最大的 id（并列取最小 id）。
+        sql_ids = (
+            "SELECT s.id FROM species s "
+            "WHERE s.implemented=1 "
+            + ("AND s.name LIKE ? " if q else "")
+            + "AND s.id = (SELECT s2.id FROM species s2 "
+            "  WHERE s2.name = s.name AND s2.implemented=1 "
+            "  ORDER BY COALESCE(s2.total,0) DESC, s2.id ASC LIMIT 1) "
+        )
+        args = ["%" + q + "%"] if q else []
         total = db.execute(
-            "SELECT COUNT(*) FROM species " + where, args).fetchone()[0]
+            "SELECT COUNT(*) FROM (%s)" % sql_ids, args).fetchone()[0]
         rows = db.execute(
             "SELECT id,name,type_names,hp,atk,spa,def,spd,spe,total,"
-            "max_energy,is_leader,implemented FROM species " + where +
-            " ORDER BY total DESC LIMIT ? OFFSET ?",
-            args + [limit, offset]).fetchall()
+            "max_energy,is_leader,implemented FROM species "
+            "WHERE id IN (%s) ORDER BY total DESC, id ASC LIMIT ? OFFSET ?"
+            % sql_ids, args + [limit, offset]).fetchall()
         items = []
         for r in rows:
             d = dict(r)
             try:
                 d["types"] = json.loads(d.pop("type_names") or "[]")
-            except Exception:
+            except (ValueError, TypeError):
                 d["types"] = []
             items.append(d)
-        return {"items": items, "total": total}
+        return {"items": items, "total": total, "deduped": True}
     except Exception as e:
         return {"error": str(e), "items": [], "total": 0}
 
