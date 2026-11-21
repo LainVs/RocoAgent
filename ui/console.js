@@ -450,8 +450,74 @@ async function refreshLive() {
 }
 
 /* ================================================================
-   战绩
+   机器人这一手（/api/decision）
+   ----------------------------------------------------------------
+   live_state 只有"看到什么"，没有"要做什么"。决策在 turns.jsonl 里，
+   服务端把它捞出来（/api/decision），这里做成一句话 + 一行依据。
    ================================================================ */
+const ACTION_CN = {
+  skill: '出招', switch: '换人', energy: '聚能',
+  heal: '治疗', charge: '聚能', wait: '等待',
+};
+
+function fmtDecision(d) {
+  if (!d) return null;
+  const a = d.action;
+  if (Array.isArray(a)) {
+    const kind = String(a[0] || '');
+    const slot = a[1];
+    return {
+      kind,
+      label: (ACTION_CN[kind] || kind) + (slot != null ? ' ' + slot : ''),
+    };
+  }
+  return { kind: String(a), label: ACTION_CN[a] || String(a) };
+}
+
+async function refreshDecision() {
+  const body = $('decBody');
+  if (!body) return;
+  let d;
+  try {
+    d = await get('/api/decision');
+  } catch (e) {
+    return;
+  }
+
+  const ageEl = $('decAge');
+  const info = fmtDecision(d);
+  if (!info) {
+    if (ageEl) ageEl.textContent = '';
+    body.innerHTML = `
+      <div class="empty"><b>还没有决策记录</b>
+        <span>机器人打过一局后，这里显示它选了哪张卡、为什么</span></div>`;
+    return;
+  }
+
+  // 超过 3 分钟说明这不是"当前这一手"，必须标出来，否则会被当成现在
+  const old = d.age != null && d.age > 180;
+  if (ageEl) {
+    ageEl.innerHTML = d.age == null ? ''
+      : old ? `<span style="color:var(--warn)">${fmtAge(d.age)}前</span>`
+            : `${fmtAge(d.age)}前`;
+  }
+
+  body.style.opacity = old ? '0.55' : '1';
+  const cls = info.kind === 'skill' ? 'accent'
+    : info.kind === 'switch' ? 'warn'
+    : info.kind === 'energy' ? 'info' : '';
+
+  body.innerHTML = `
+    <div class="dec">
+      <div class="dec-main">
+        <span class="dec-act ${cls}">${esc(info.label)}</span>
+        ${d.turn != null ? `<span class="dec-turn">T${d.turn}</span>` : ''}
+        <span class="grow"></span>
+        <span class="dec-hp">${fmtPct(d.my_pct)} / ${fmtPct(d.foe_pct)}</span>
+      </div>
+      <div class="dec-why">${esc(d.why || '（没有记录理由）')}</div>
+    </div>`;
+}
 function metricHtml(label, value, unit, note, cls) {
   return `<div class="metric">
     <div class="metric-label">${label}</div>
@@ -1229,7 +1295,7 @@ function bindPurge() {
    ================================================================ */
 const REFRESH = {
   overview: [['health', refreshHealth, 1500], ['live', refreshLive, 1000],
-             ['stats', refreshStats, 8000]],
+             ['dec', refreshDecision, 2000], ['stats', refreshStats, 8000]],
   logs: [['log', pollLog, 700]],
   stats: [['stats', refreshStats, 8000], ['matches', refreshMatches, 8000]],
   team: [['team', refreshTeam, 30000]],

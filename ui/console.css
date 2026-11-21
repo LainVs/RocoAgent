@@ -880,6 +880,42 @@ button, input, select {
   .brand small { display: none; }
 }
 
+/* ── 机器人这一手 ───────────────────────────────────────── */
+.dec-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+.dec-act {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink-0);
+  font-family: var(--font-num);
+}
+.dec-act.accent { color: var(--accent); }
+.dec-act.warn   { color: var(--warn); }
+.dec-act.info   { color: var(--info); }
+.dec-turn {
+  font-family: var(--font-num);
+  font-size: 11px;
+  color: var(--ink-3);
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-2);
+}
+.dec-hp {
+  font-family: var(--font-num);
+  font-size: 11.5px;
+  color: var(--ink-2);
+}
+.dec-why {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  padding-left: 1px;
+}
+
 /* ── 对局详情抽屉 ───────────────────────────────────────── */
 .drawer {
   position: fixed;

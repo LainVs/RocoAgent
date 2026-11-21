@@ -96,6 +96,7 @@ def test_api(port):
         ("/api/matches?limit=3", ("items", "total")),
         ("/api/team", ("slots",)),
         ("/api/turns?limit=2", ("items",)),
+        ("/api/decision", ()),
         ("/api/rounds?limit=2", ("items",)),
         ("/api/dex?limit=2", ("items", "total")),
         ("/api/log?offset=0", ("offset", "lines")),
@@ -136,8 +137,14 @@ def test_api(port):
         ok(False, "/api/stats 口径", str(e)[:60])
 
     # /api/state 允许为 null（机器人没跑）
+    #
+    # ★ 超时要给足（2026-11-21）
+    # -------------------------
+    # 这个接口在独立模式下要现场抓屏 + 识别，**首次请求还会冷加载 ONNX 模型**
+    # （实测 4~6 秒）。默认 6s 超时会偶发失败，而失败原因跟被测代码无关
+    # —— 只是这一次恰好赶上了冷启动。给 25 秒，把"慢"和"坏"区分开。
     try:
-        st = get(port, "/api/state")
+        st = get(port, "/api/state", timeout=25)
         ok(True, "/api/state", "null（机器人没跑）" if st is None else "有数据")
     except Exception as e:
         ok(False, "/api/state", str(e)[:60])
@@ -651,6 +658,70 @@ def worker():
         write_state(9, 30.0, 2)
         time.sleep(2.0)
         result["d_restored"] = snap()
+
+        # ---- 空帧判定 + DOM 折叠（2026-11-21）
+        #
+        # 直接调 app.js 里的 render()，不依赖 /api/state ——
+        # 这样测的是前端逻辑本身，不受独立感知耗时影响。
+        result["e_empty"] = win.evaluate_js("""
+        (function () {
+          const mk = (o) => Object.assign({
+            mode: 'battle',
+            system: { detectors: { bar: true, skillbar: true,
+                                   countdown: true } },
+            me: {}, foe: {}, skills: [],
+          }, o);
+
+          const judge = {
+            allEmpty: isEmptyFrame(mk({ standalone: true,
+              system: { detectors: { bar: false, skillbar: false,
+                                     countdown: false } } })),
+            hpOnly: isEmptyFrame(mk({ me: { hp_pct: 78, name: null } })),
+            nameOnly: isEmptyFrame(mk({ me: { hp_pct: null, name: 'A' } })),
+            skillOnly: isEmptyFrame(mk({
+              skills: [{ i: 1, dmg: 245, pct: 58 }] })),
+            skillNa: isEmptyFrame(mk({
+              skills: [{ i: 1, dmg: null, pct: null }] })),
+            foeHp: isEmptyFrame(mk({ foe: { hp_pct: 45, name: null } })),
+          };
+
+          // 空帧渲染
+          render({
+            mode: 'battle', standalone: true, seq: 9001,
+            system: { detectors: { bar: false, skillbar: false,
+                                   countdown: false } },
+            me: {}, foe: {}, skills: [],
+          });
+          const panel = document.getElementById('panel');
+          const box = document.getElementById('noDataBox');
+          const selfSec = document.querySelector('.side.self');
+          judge.emptyFlag = panel.dataset.empty || '';
+          judge.boxText = box ? box.textContent : '';
+          judge.selfHidden = selfSec
+            ? getComputedStyle(selfSec).display === 'none' : null;
+          judge.stateText = document.getElementById('sysState').textContent;
+
+          // 数据回来后恢复
+          render({
+            mode: 'battle', seq: 9002, turn: 5,
+            system: { detectors: { bar: true, skillbar: true,
+                                   countdown: true } },
+            me: { name: '音速犬', hp_pct: 78, types: ['龙'],
+                  hp_abs: 382, hp_max: 490, energy: 6, buffs: [] },
+            foe: { name: '圆环鲸羽', hp_pct: 45, types: ['水'] },
+            skills: [{ i: 1, dmg: 245, pct: 58, name: null,
+                       element: null, cost: null, usable: true,
+                       note: null }],
+            matchup: { out: 3.0, in: 0.5, tag: '克制' },
+          });
+          judge.emptyFlagAfter = panel.dataset.empty || '';
+          judge.selfShownAfter = selfSec
+            ? getComputedStyle(selfSec).display !== 'none' : null;
+          judge.nameAfter = document.getElementById('meName').textContent;
+          judge.pctAfter = document.getElementById('mePct').textContent;
+          return judge;
+        })()
+        """)
     except Exception:
         import traceback
         result["error"] = traceback.format_exc()
@@ -805,6 +876,45 @@ def test_resilience(port):
     ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
 
 
+    # ---- 空帧判定（2026-11-21）
+    #
+    # 独立模式下服务在跑、屏幕能抓，但游戏黑屏/加载/不在战斗时，
+    # 每个字段各自兜底成 '—'，面板会变成 12 个破折号 + 4 个「未知」。
+    # 用户看到的第一反应是"这东西坏了"，而不是"现在不在战斗"。
+    #
+    # 判定要**保守**：只有血条没有名字是很常见的状态（刚进战斗还没
+    # 识别出身份），那种情况必须照常渲染，否则用户会以为血条也坏了。
+    e = r.get("e_empty") or {}
+    if not isinstance(e, dict) or not e:
+        ok(False, "空帧测试有结果", repr(e)[:70])
+        return
+
+    ok(e.get("allEmpty") is True, "全空 -> 判为空帧")
+    ok(e.get("hpOnly") is False,
+       "只有血条 -> 不算空帧（血条是真数据）")
+    ok(e.get("nameOnly") is False, "只有名字 -> 不算空帧")
+    ok(e.get("skillOnly") is False, "有技能伤害 -> 不算空帧")
+    ok(e.get("skillNa") is True, "技能全是占位 -> 算空帧")
+    ok(e.get("foeHp") is False, "对面有血条 -> 不算空帧")
+
+    ok(e.get("emptyFlag") == "1", "空帧时 panel 打上 data-empty",
+       str(e.get("emptyFlag")))
+    box = e.get("boxText") or ""
+    ok("没有对战画面" in box or "等待画面" in box,
+       "空态文案说清原因", box[:40])
+    ok(e.get("selfHidden") is True, "我方区块被折叠",
+       str(e.get("selfHidden")))
+    ok(e.get("stateText") not in ("状态未知",),
+       "状态栏不是「状态未知」", str(e.get("stateText")))
+
+    ok(e.get("emptyFlagAfter") == "", "数据回来后 data-empty 被移除",
+       str(e.get("emptyFlagAfter")))
+    ok(e.get("selfShownAfter") is True, "我方区块恢复显示",
+       str(e.get("selfShownAfter")))
+    ok(e.get("nameAfter") == "音速犬", "名字恢复", str(e.get("nameAfter")))
+    ok(e.get("pctAfter") == "78", "血量恢复", str(e.get("pctAfter")))
+
+
 # ============================================================ 3c. 对比度
 def test_contrast():
     """设计 token 的对比度回归。
@@ -944,6 +1054,40 @@ def test_phase_infer():
         U.ESP_LOG = old_esp
         try:
             os.remove(esp_path)
+        except OSError:
+            pass
+
+    # decision：从 turns.jsonl 尾部捞"最后一条真的出招"
+    old_turns = U.TURNS
+    fd, turn_path = tempfile.mkstemp(suffix=".jsonl")
+    os.close(fd)
+    try:
+        U.TURNS = turn_path
+        U.CACHE.invalidate()
+        ok(U.last_decision() is None, "无回合记录时 decision=None")
+
+        with open(turn_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"ts": "10:00:01", "turn": 1,
+                                "action": ["skill", 1], "why": "first",
+                                "my_pct": 100.0, "foe_pct": 100.0}) + "\n")
+            # 只有轮询行（action 为空）不该被当成决策
+            f.write(json.dumps({"ts": "10:00:02", "turn": 1,
+                                "action": [], "why": None}) + "\n")
+            f.write(json.dumps({"ts": "10:00:03", "turn": 2,
+                                "action": ["switch", 3],
+                                "why": "dying this turn",
+                                "my_pct": 12.0, "foe_pct": 40.0}) + "\n")
+        U.CACHE.invalidate()
+        d = U.last_decision() or {}
+        ok(d.get("action") == ["switch", 3], "取最后一条真决策", str(d.get("action")))
+        ok(d.get("turn") == 2 and d.get("why") == "dying this turn",
+           "带回合号和理由", str(d.get("why")))
+        ok(isinstance(d.get("age"), float), "算出 age（秒）", str(d.get("age")))
+    finally:
+        U.TURNS = old_turns
+        U.CACHE.invalidate()
+        try:
+            os.remove(turn_path)
         except OSError:
             pass
 

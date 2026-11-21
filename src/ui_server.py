@@ -29,6 +29,7 @@ API
     GET  /api/log?offset=N    增量日志（返回 {offset, lines}）
     GET  /api/stats           战绩统计
     GET  /api/turns?limit=N   回合明细（尾部 N 条）
+    GET  /api/decision        机器人最近一次决策（action + why）
     GET  /api/rounds?limit=N  对局记录
     GET  /api/dex?q=&limit=   精灵图鉴
     GET  /api/team            我方队伍
@@ -768,6 +769,56 @@ def stats():
 
 def turns(limit=100):
     return CACHE.tail_jsonl(TURNS, limit)
+
+
+def last_decision():
+    """机器人最近一次"真的要出招"的决策。
+
+    为什么要单独一个接口（2026-11-21）：
+    `live_state.json` 只有"我看到什么"（血量/卡面/克制），没有"我要做什么"。
+    控制台因此只能当仪表盘 —— 用户看不出机器人打算按哪张卡、为什么。
+    决策本来就在 `turns.jsonl` 里（`action` + `why`），这里把它捞出来。
+
+    **只读日志，不改 robot.py**：`_publish_state` 加字段需要动机器人主循环，
+    而那份文件同时被另一个会话在改；日志是现成的、带时间戳的、不会冲突。
+
+    返回 None 表示还没有任何决策记录（机器人没打过）。
+    """
+    rows = CACHE.tail_jsonl(TURNS, 40)
+    if not rows:
+        return None
+    # 尾部可能混着上一场；取"最后一条 action 非空"的即可，
+    # 前端会自己判断它是否过期（`age` 字段）。
+    for r in reversed(rows):
+        act = r.get("action")
+        if not act:
+            continue
+        # 时间戳只有 HH:MM:SS，按今天的日期还原
+        age = None
+        ts = r.get("ts") or ""
+        if len(ts) >= 8:
+            try:
+                lt = time.localtime()
+                t = time.mktime((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                                 int(ts[0:2]), int(ts[3:5]), int(ts[6:8]),
+                                 0, 0, -1))
+                age = round(time.time() - t, 1)
+                if age < -300:
+                    age += 86400
+            except (TypeError, ValueError, OverflowError):
+                age = None
+        return {
+            "action": act,
+            "why": r.get("why"),
+            "turn": r.get("turn"),
+            "ts": ts,
+            "age": age,
+            "mid": r.get("mid"),
+            "my_pct": r.get("my_pct"),
+            "foe_pct": r.get("foe_pct"),
+            "energy": r.get("energy"),
+        }
+    return None
 
 
 def rounds(limit=50):
@@ -1556,6 +1607,9 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/turns":
             return self._json({"items": turns(int(q.get("limit") or 100))})
+
+        if path == "/api/decision":
+            return self._json(last_decision())
 
         if path == "/api/rounds":
             return self._json({"items": rounds(int(q.get("limit") or 50))})
