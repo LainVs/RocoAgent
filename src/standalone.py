@@ -516,10 +516,20 @@ def observe(force=False):
             # 被别的窗口盖住时屏幕抓取只能抓到上层窗口，识别全是垃圾。
             # 明确报"遮挡"比返回一堆假数据好 —— 用户能立刻知道是自己
             # 把编辑器盖在游戏上面了。
+            #
+            # 为什么不在代码里自动解决（2026-11-21 实测）：
+            #   1. `focus()` / SetForegroundWindow 抢不到前台 —— Windows 的
+            #      前台锁会拒绝后台进程抢焦点，实测返回 False
+            #   2. PrintWindow 对这个游戏无效 —— UE4 用 DXGI flip swapchain，
+            #      PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT) 返回 0 且整图全黑
+            # 所以只能由人来点一下游戏窗口（人的点击永远能拿到前台）。
             if _scr is not None and hasattr(_scr, "is_covered") \
                     and _scr.is_covered():
-                return {"error": "游戏窗口被其他窗口遮挡（屏幕抓取只能抓到上层窗口）",
-                        "standalone": True, "covered": True}
+                return {
+                    "error": "游戏窗口被其他窗口遮挡。屏幕抓取看不到被盖住的窗口，"
+                             "请点一下游戏窗口把它切到前台（按 Alt+Tab 也行）。",
+                    "standalone": True, "covered": True,
+                }
             raw = perc.observe()
         except Exception as e:
             return {"error": "%s: %s" % (type(e).__name__, e),
