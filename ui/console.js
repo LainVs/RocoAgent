@@ -63,6 +63,31 @@ function fmtPct(v) {
   return v == null ? '—' : Math.round(v) + '%';
 }
 
+// 空态统一构造器。
+//
+// 为什么需要（2026-11-21）：原来 9 处 empty 各写各的，措辞不一致
+// （"还没有…" / "没有…" / "…是空的"），而且**多数没告诉用户下一步**。
+// 空态是最需要指路的地方 —— 用户看到空白时唯一想知道的是"我该做什么"。
+function emptyBlock(title, hint, icon) {
+  // hint 里允许 <code>，其余一律转义。空态里出现代码块是最常见的"下一步"，
+  // 全转义会让 `--set 1` 这种命令变成不可读的一坨。
+  const safeHint = hint
+    ? String(hint)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/&lt;code&gt;/g, '<code>').replace(/&lt;\/code&gt;/g, '</code>')
+    : '';
+  return `<div class="empty">
+    ${icon === false ? '' : `<svg width="26" height="26" viewBox="0 0 26 26"
+      fill="none" aria-hidden="true">
+      <rect x="3" y="3" width="20" height="20" rx="4"
+            stroke="currentColor" stroke-width="1.6"/>
+      <path d="M8 13h10" stroke="currentColor" stroke-width="1.6"
+            stroke-linecap="round"/></svg>`}
+    <b>${esc(title)}</b>
+    ${safeHint ? `<span>${safeHint}</span>` : ''}
+  </div>`;
+}
+
 /* ---------------------------------------------------------------- 反馈 */
 // toast：右下角堆叠，可手动关。ms <= 0 表示不自动消失。
 function toast(msg, kind = 'ok', ms = 4200) {
@@ -796,19 +821,24 @@ async function openMatch(mid) {
   if (!box || !body) return;
   box.hidden = false;
   $('drawerTitle').textContent = '对局 ' + String(mid || '').replace(/^.*-/, '');
-  body.innerHTML = '<div class="empty"><b>加载中…</b></div>';
+  body.innerHTML = emptyBlock('加载中…', '', false);
 
   let d;
   try {
     d = await get('/api/match?mid=' + encodeURIComponent(mid));
   } catch (e) {
-    body.innerHTML = `<div class="empty"><b>读取失败</b>
-      <span>${esc(e.message || '')}</span></div>`;
+    // 别把 `HTTP 500` 这种内部错误直接甩给用户 —— 说清"哪一步失败、能做什么"。
+    body.innerHTML = emptyBlock(
+      '读取这一场失败',
+      `本地服务没有响应（${esc(e.message || '未知错误')}）。`
+      + '检查控制台是否还在运行，然后重试。');
     return;
   }
   if (!d || d.ok === false) {
-    body.innerHTML = `<div class="empty"><b>没有这一场</b>
-      <span>${esc((d && d.msg) || mid || '')}</span></div>`;
+    body.innerHTML = emptyBlock(
+      '找不到这一场',
+      `${esc((d && d.msg) || mid || '')} —— 老记录可能没有场次 id，`
+      + '只能从列表里看时长和手数。');
     return;
   }
 
@@ -1077,8 +1107,10 @@ async function refreshTeam() {
   const grid = $('teamGrid');
 
   if (!slots.length) {
-    grid.innerHTML = `<div class="empty"><b>队伍是空的</b>
-      <span>用 python src\\team_db.py --set 1 --species 音速犬 添加</span></div>`;
+    grid.innerHTML = emptyBlock(
+      '队伍是空的',
+      '在命令行录入：<code>python src\\team_db.py --set 1 --species 音速犬</code>'
+      + ' —— 每只都要填 4 个技能，否则机器人查不到耗能。');
     return;
   }
 
@@ -1174,7 +1206,14 @@ async function loadDex(q, append) {
   $('dexSub').textContent = `${dexShown} / ${d.total || 0} 只`;
 
   if (!dexShown) {
-    grid.innerHTML = `<div class="empty"><b>没有匹配的精灵</b></div>`;
+    // 搜索无结果时告诉用户"换个词"比干说"没有"有用 ——
+    // 库里是精确名字（如「音速犬」），用户常打成"音速"或"速度犬"。
+    grid.innerHTML = q
+      ? emptyBlock('没有匹配的精灵',
+                   `「${esc(q)}」在 683 只里查不到。试试只输名字的一部分，`
+                   + '比如「音速」而不是「音速犬世界」。')
+      : emptyBlock('图鉴是空的',
+                   '数据库里没有 implemented=1 的精灵，检查 data/roco.sqlite3。');
     renderDexMore(0);
     return;
   }
@@ -1301,8 +1340,10 @@ async function refreshLabel(keepOffset) {
 
   const grid = $('labelGrid');
   if (!items.length) {
-    grid.innerHTML = `<div class="empty"><b>没有待标注的头像</b>
-      <span>跑几局机器人后，未识别的头像会自动存到这里</span></div>`;
+    grid.innerHTML = emptyBlock(
+      '这一边没有待标注的头像',
+      '跑几局机器人后，未识别的头像会自动存到这里；'
+      + '另一侧可能还有积压，切换上方的「敌方 / 我方」看看。');
     return;
   }
 
