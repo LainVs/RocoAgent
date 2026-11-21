@@ -94,6 +94,13 @@ CONFIRM_BAND = (820, 1350, 1000, 220)      # the on-screen "Space" confirm plate
 RESULT_BAND = (2050, 1250, 480, 260)       # "观战人数 / 奖励总数" block
 RESULT_LIST_BAND = (120, 330, 420, 900)    # the six "我方战况" rows
 STUCK_S = 60.0                         # no progress for this long => force an action
+
+# 主循环看门狗：超过这么久没有心跳就硬退出（让 OS 释放 robot.lock）。
+#
+# 实测（2026-11-21 08:28）：robot 僵死后 robot.lock 一直被持有，
+# botsup 的 p.wait() 永远不返回，新实例因拿不到锁而退出，整条链卡死。
+# 180 秒 = 正常一轮（1~20 秒）的 9 倍余量，不会误杀。
+STALL_EXIT_S = 180.0
 CLICK_COOLDOWN_S = 6.0
 ADVANCE_COOLDOWN_S = 2.5
 # 结算后锁定多少秒：这段时间只判胜负，不点任何"推进"。

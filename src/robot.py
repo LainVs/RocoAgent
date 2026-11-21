@@ -82,6 +82,7 @@ from config import (  # noqa: F401
     ACTION_BTN_BAND, CONFIRM_BAND, RESULT_BAND, RESULT_LIST_BAND,
     STUCK_S, CLICK_COOLDOWN_S, ADVANCE_COOLDOWN_S, RESULT_HOLD,
     SWITCH_ROW_ABS, log, acquire_lock, _stdout_is_log, _log_exception,
+    STALL_EXIT_S,
 )
 
 # 感知与 IO 层已拆分，re-export 保持兼容。
@@ -227,10 +228,53 @@ class Bot:
         self.last_state = None
         self.focused_at = 0.0
         self._titlebar_at = 0.0
+        # 主循环心跳：看门狗线程用它判断"是否真的还活着"。
+        #
+        # 为什么需要（2026-11-21 08:28 事故）：
+        #   robot 进程僵死（未退出、但不再写日志），robot.lock 被它一直持有。
+        #   botsup 的 p.wait() 永远不返回（进程句柄还在），于是既不重启也不报错。
+        #   新实例启动时 acquire_lock() 返回 False -> 退出，整条链彻底卡死。
+        #
+        #   实测：日志停在 08:28:23，到 08:33 仍无动作，机器人静默 5 分钟以上。
+        #
+        # 对策：主循环每轮更新 _heartbeat，看门狗线程发现超过 STALL_EXIT_S
+        # 没更新就 os._exit(1) —— 进程一死，OS 立刻释放 robot.lock，
+        # botsup 的 p.poll() 拿到退出码后正常重启。
+        self._heartbeat = time.time()
+        self._watchdog_started = False
 
     def connect(self):
         return self.loop.run_until_complete(self.ble.connect())
 
+    # ---- 主循环看门狗 ------------------------------------------------
+    #
+    # 目的：进程僵死时主动退出，让 OS 释放 robot.lock，botsup 才能重启。
+    # 详见 __init__ 里 _heartbeat 的注释（2026-11-21 08:28 事故）。
+    def _start_watchdog(self):
+        if self._watchdog_started:
+            return
+        self._watchdog_started = True
+        import threading
+
+        def _loop():
+            # 正常一轮主循环约 1~20 秒（OCR 抖动时更久）。
+            # 180 秒没心跳 = 卡在抓屏/BLE/死锁里，退出比干等强。
+            while True:
+                time.sleep(15)
+                age = time.time() - self._heartbeat
+                if age > STALL_EXIT_S:
+                    # 用 os._exit 而不是 sys.exit：主线程可能卡在 C 调用里，
+                    # 只有硬退出才能保证进程真的结束、锁真的释放。
+                    try:
+                        log("STALL %.0fs without heartbeat -> hard exit "
+                            "(releases robot.lock)" % age)
+                    except Exception:
+                        pass
+                    os._exit(9)
+
+        t = threading.Thread(target=_loop, name="watchdog", daemon=True)
+        t.start()
+        log("watchdog started (STALL_EXIT_S=%.0f)" % STALL_EXIT_S)
     def _gate(self, now, reason):
         """Explain, at most once a second, why the decision gate stayed shut.
 
@@ -455,7 +499,11 @@ class Bot:
         self.match_started = None
         self.match_count = 0
         self.deadline = (time.time() + self.args.seconds) if self.args.seconds else None
+        # 看门狗：进程僵死时硬退出，释放 robot.lock（见 _start_watchdog）
+        self._start_watchdog()
         while True:
+            # 主循环心跳：看门狗线程用它判断是否还活着
+            self._heartbeat = time.time()
             if self.deadline and time.time() > self.deadline:
                 log("deadline reached, exiting")
                 # 干净地断一个BLE：直接退进程会让板子只看到链路突然消失，

@@ -85,6 +85,98 @@ def _sup_alive():
     return bool(_pids("botsup.py"))
 
 
+# 日志新鲜度阈值：超过这么久没新行 = 整条链卡住了
+STALE_S = 200
+
+# 连续多少次检查都发现日志不新鲜才动手（避免 OCR 慢时误杀）
+STALE_STRIKES = 2
+
+_stale_count = 0
+
+
+def _log_age():
+    """bot_stdout.log 距今多少秒。文件不存在返回 None。"""
+    try:
+        return time.time() - os.path.getmtime(os.path.join(
+            LOGS, "bot_stdout.log"))
+    except OSError:
+        return None
+
+
+def _kill_pid(pid, why):
+    """按 PID 精确杀（绝不按进程名批量杀）。"""
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, timeout=20)
+        _log("已杀 pid=%d（%s）" % (pid, why))
+        return True
+    except Exception as e:
+        _log("杀 pid=%d 失败: %s: %s" % (pid, type(e).__name__, e))
+        return False
+
+
+def _supervise():
+    """一次完整的守护检查。
+
+    三层判断（按严重程度递进）：
+        1. botsup 不在 -> 拉起
+        2. botsup 在但 robot 不在 -> 等它自己拉（botsup 有重试逻辑）
+        3. botsup 和 robot 都在，但日志 200 秒没更新 -> 整条链僵死
+           -> 杀掉 bot 和 sup，重新拉起（这是 2026-11-21 08:28 事故的形态）
+    """
+    global _stale_count
+
+    sup = _pids("botsup.py")
+    rob = _pids("robot.py")
+
+    # 1) botsup 不在 -> 拉起
+    if not sup:
+        _start_sup()
+        _stale_count = 0
+        return
+
+    # 2) 有 bot 进程，检查日志新鲜度
+    if rob:
+        age = _log_age()
+        if age is not None and age > STALE_S:
+            _stale_count += 1
+            _log("日志 %.0fs 没更新（strike %d/%d），bot=%s sup=%s"
+                 % (age, _stale_count, STALE_STRIKES, rob, sup))
+            if _stale_count >= STALE_STRIKES:
+                # 整条链僵死：先杀 bot（它可能占着 robot.lock），再杀 sup，
+                # 最后重新拉起 sup（sup 会拉起新 bot）。
+                #
+                # 只杀 PID，不按名字批量杀 —— 本机还有 ui_server 在并行开发。
+                for pid in rob:
+                    _kill_pid(pid, "日志 %.0fs 未更新" % age)
+                for pid in sup:
+                    _kill_pid(pid, "连带重启整条链")
+                # 清掉可能残留的锁文件（OS 锁随进程退出已释放，
+                # 但文件内容还写着旧 PID，留着会误导诊断）
+                try:
+                    os.remove(os.path.join(LOGS, "robot.lock"))
+                except OSError:
+                    pass
+                _stale_count = 0
+                _start_sup()
+            return
+        # 日志新鲜 -> 一切正常
+        if _stale_count:
+            _log("日志恢复正常，strike 清零")
+        _stale_count = 0
+        return
+
+    # 3) botsup 在、robot 不在 -> botsup 应该自己重试，但连续两次都没起来
+    #    说明 botsup 也卡住了（p.wait() 不返回），同样重启整条链
+    _stale_count += 1
+    if _stale_count >= STALE_STRIKES * 2:
+        _log("botsup 在但 robot 连续 %d 次未起 -> 重启整条链" % _stale_count)
+        for pid in sup:
+            _kill_pid(pid, "robot 一直没起来")
+        _stale_count = 0
+        _start_sup()
+
+
 def _start_sup():
     # botsup.py 在 paths.TOOLS（外部目录 D:\Tools），不在项目里。
     # 实测 2026-11-21 06:00：拼成 ROOT/tools/botsup.py 会一直
@@ -115,8 +207,12 @@ def main():
     if "--status" in sys.argv:
         sup = _pids("botsup.py")
         rob = _pids("robot.py")
+        age = _log_age()
         print("botsup: %s" % (sup or "未运行"))
         print("robot : %s" % (rob or "未运行"))
+        print("日志  : %s" % (
+            "读不到" if age is None else "%.0fs 前更新%s" % (
+                age, "  (陈旧!)" if age > STALE_S else "")))
         return 0
 
     if "--once" in sys.argv:
@@ -154,8 +250,7 @@ def main():
     _log("keepalive 启动 pid=%d 间隔=%ds" % (os.getpid(), CHECK_S))
     while True:
         try:
-            if not _sup_alive():
-                _start_sup()
+            _supervise()
         except Exception as e:
             _log("检查异常: %s: %s" % (type(e).__name__, e))
         time.sleep(CHECK_S)
