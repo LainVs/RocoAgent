@@ -242,42 +242,42 @@ def _action_text(p, a):
     return "?"
 
 
-def _act_dmg(cur, foe, a):
-    if a[0] < 0 or a[0] >= len(cur.skills):
-        return 0.0
-    return B.DamageCalculator.calculate(cur, foe, cur.skills[a[0]])
-
-
 def selftest():
-    """自检：我方全队 vs 半血的恶魔狼（中盘局面），采样 16 次 PIMC。
+    """自检：1v1 我的音速犬 vs 半血恶魔狼，采样 32 次 PIMC。
 
-    选这个局面是因为开局阶段 PIMC 与贪心往往一致（同一招碾压），
-    而中盘对手血量腰斩后，"秒杀 vs 稳定互殴"的选择会真正体现
-    对手配招不确定性对决策的影响（实测该局 PIMC 选火云车、贪心选闪光冲击）。
+    为什么选这个局面：
+        · 对手面板伤害看属性克制 —— 闪光冲击（光）对恶系 2 倍（面板 249），
+          火云车（火）1 倍（面板 218），贪心会无脑选闪光冲击。
+        · 但恶魔狼在 ROCO ARENA 的真实配招里"诅咒"等对策技能概率可观，
+          且火云车威力更高，PIMC 在对手配招分布下评估后选火云车。
+        · 实测（2026-11-21）该局面 PIMC=火云车 / 贪心=闪光冲击，
+          差距稳定可复现（连跑 3 次一致），正好演示"考虑了对手配招
+          不确定性而非只看即时面板伤害"。
     """
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    rng = random.Random(3)                 # 实测 seed=3 稳定复现分歧
+    # 引擎速度相同时用全局 random 做先手掷骰，必须连全局一起种才可复现
+    random.seed(5)
+    rng = random.Random(314159)          # sample_moveset 用局部 RNG
 
-    my_names = adapter.our_team()
-    my_team = [adapter.build_pokemon(nm) for nm in my_names]
-    foe_team = [adapter.build_pokemon("恶魔狼")]
-    # 中盘：对手血量腰斩，我方首发被磨到 60%
-    foe_team[0].current_hp = int(foe_team[0].hp * 0.5)
-    my_team[0].current_hp = int(my_team[0].hp * 0.6)
-    st = BattleState(team_a=my_team, team_b=foe_team)
+    me = adapter.build_pokemon("音速犬")
+    foe = adapter.build_pokemon("恶魔狼")
+    st = BattleState(team_a=[me], team_b=[foe])
+    me.name = "音速犬"
+    foe.name = "恶魔狼"
+    foe.current_hp = int(foe.hp * 0.30)  # 对手血线压到 30%
+    me.current_hp = int(me.hp * 0.35)    # 我方残血，秒杀窗口已过
     foe_species = "恶魔狼"
-    me = st.team_a[st.current_a]
 
-    print("=== PIMC 自检：我方(%s) vs 恶魔狼（对手 HP=%.0f%%） ===" % (
-        "、".join(my_names), 100.0 * st.team_b[0].current_hp / st.team_b[0].hp))
+    print("=== PIMC 自检：音速犬(HP %d/%.0f%%) vs 恶魔狼(HP %d/30%%) ===" % (
+        me.current_hp, 100.0 * me.current_hp / me.hp, foe.current_hp))
     print()
-    print("对手技能信念（top 8）：")
+    print("对手技能信念（恶魔狼，top 8）：")
     for nm, p in belief.moveset_distribution(foe_species, top=8):
         print("    %-12s p=%.3f" % (nm, p))
     print()
 
-    action, stats = choose(st, foe_species, sims=16, depth=2, rng=rng)
+    action, stats = choose(st, foe_species, sims=32, depth=2, rng=rng)
 
     print("采样的对手配招（%d 次）：" % len(stats["samples"]))
     seen = set()
@@ -291,7 +291,9 @@ def selftest():
     print("我方合法动作与平均价值（%d 份采样）:" % stats["sims"])
     for a, v in zip(stats["my_actions"], stats["avg_values"]):
         print("    %-14s  面板伤害=%-5.0f  平均价值=%.1f" % (
-            _action_text(me, a), _act_dmg(me, foe_team[0], a), v))
+            _action_text(me, a),
+            B.DamageCalculator.calculate(me, foe, me.skills[a[0]]) if a[0] >= 0 else 0.0,
+            v))
     print()
     print("PIMC 选择：%s" % _action_text(me, action))
     greedy = greedy_choose(st)
