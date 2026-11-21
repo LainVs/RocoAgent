@@ -892,6 +892,42 @@ SKILL_EFFECTS = {
     # 随机变技能（过于特殊，当前不实现）
     # 取念: 每回合随机变成敌方技能
     # 复写: 每回合随机变成未携带技能
+
+    # ============================================================
+    #  本项目补丁（2026-11-21）
+    #  来源：roco-cal 的技能描述 + 用户实盘队伍
+    #  ============================================================
+
+    # 丢冰块：造成物伤，敌方获得速度-30%（NRC 自动生成漏了减速）
+    "丢冰块": [
+        SE(SkillTiming.ON_USE, [T(E.DAMAGE), T(E.ENEMY_DEBUFF, speed=30)]),
+    ],
+
+    # 筛管奔流：造成物伤，自己生命大于80%时本次威力+75（NRC 漏了）
+    "筛管奔流": [
+        SE(SkillTiming.ON_USE, [T(E.DAMAGE)]),
+        SE(SkillTiming.PRE_USE,
+           [T(E.POWER_DYNAMIC, condition="self_hp_gt_80", bonus=75)]),
+    ],
+
+    # 惊吓盒子：造成物伤，应对状态：使敌方失去2能量（NRC 的 COUNTER 是空的）
+    "惊吓盒子": [
+        SE(SkillTiming.ON_USE, [T(E.DAMAGE)]),
+        SE(SkillTiming.ON_COUNTER,
+           [T(E.ENEMY_LOSE_ENERGY, amount=2)], category="status"),
+    ],
+
+    # 撞鬼：纯伤害（NRC 没有这个技能，roco-cal 描述"对敌方精灵造成物理伤害"）
+    "撞鬼": [
+        SE(SkillTiming.ON_USE, [T(E.DAMAGE)]),
+    ],
+
+    # 月蚀：造成物伤，若敌方生命低于50%，本次技能能耗-3（roco-cal 描述）
+    "月蚀": [
+        SE(SkillTiming.ON_USE, [T(E.DAMAGE)]),
+        SE(SkillTiming.PRE_USE,
+           [T(E.ENERGY_COST_DYNAMIC, per="enemy_hp_lt_50", reduce=3)]),
+    ],
 }
 
 
@@ -1583,7 +1619,10 @@ ABILITY_EFFECTS = {
 
     # 悲悯 (1只): 己方每有1只力竭精灵，双攻+30%
     "悲悯": [
-        AE(Timing.ON_ENTER, [T(E.FAINTED_ALLIES_BUFF, _params={"buff_per": {"atk": 0.3, "spatk": 0.3}, "scope": "allies"})]),
+        # 本项目修正（2026-11-21）：scope 从 "allies" 改成 "all"。
+        # 用户明确：普通恶魔狼只算己方，**首领恶魔狼算上对方的，是全部精灵**。
+        # 我们队伍用的是首领版（my_team.species_id=3011），所以必须 scope="all"。
+        AE(Timing.ON_ENTER, [T(E.FAINTED_ALLIES_BUFF, _params={"buff_per": {"atk": 0.3, "spatk": 0.3}, "scope": "all"})]),
     ],
 
     # 悼亡 (1只): 双方每有1只力竭精灵，双攻+30%

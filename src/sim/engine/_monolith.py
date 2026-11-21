@@ -912,6 +912,11 @@ def _h_energy_cost_dynamic(tag: EffectTag, ctx: Ctx) -> None:
     if per == "enemy_poison":
         stacks = ctx.target.poison_stacks
         ctx.result["_energy_refund"] = stacks * reduce
+    # ── 本项目新增（2026-11-21）：月蚀「敌方生命低于50%时能耗-3」──
+    elif per == "enemy_hp_lt_50":
+        hp_pct = ctx.target.current_hp / max(1, ctx.target.hp)
+        if hp_pct < 0.5:
+            ctx.result["_energy_refund"] = reduce
 
 
 def _h_power_dynamic(tag: EffectTag, ctx: Ctx) -> None:
@@ -969,6 +974,19 @@ def _h_power_dynamic(tag: EffectTag, ctx: Ctx) -> None:
         ctx.result["final_damage"] = DamageCalculator.calculate(
             ctx.user, ctx.target, ctx.skill, power_override=new_power, weather=weather,
         )
+    # ── 本项目新增（2026-11-21，移植时上游没有这两个）──────────────
+    elif condition == "self_hp_gt_80":
+        # 筛管奔流：自己生命 > 80% 时本次威力 +N
+        hp_pct = ctx.user.current_hp / max(1, ctx.user.hp)
+        if hp_pct > 0.8:
+            ctx.result["_power_bonus"] = (
+                ctx.result.get("_power_bonus", 0) + int(tag.params.get("bonus", 0)))
+    elif condition == "enemy_hp_lt_50":
+        # 通用：敌方生命 < 50% 时本次威力 +N
+        hp_pct = ctx.target.current_hp / max(1, ctx.target.hp)
+        if hp_pct < 0.5:
+            ctx.result["_power_bonus"] = (
+                ctx.result.get("_power_bonus", 0) + int(tag.params.get("bonus", 0)))
 
 def _h_permanent_mod(tag: EffectTag, ctx: Ctx) -> None:
     _apply_permanent_mod(ctx.user, ctx.skill, tag.params)

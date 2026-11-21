@@ -125,6 +125,11 @@ def build_skill(skill_id):
 
         但 NRC 的**效果配置**（DAMAGE/LIFE_DRAIN/应对…）是它独有的资产，
         所以：数值覆盖 + 效果保留。
+
+    另外（同样实测）：
+        「月蚀」「撞鬼」在 nrc.db 的 skill 表里**完全不存在**，
+        所以 get_skill 返回 None。这种情况要自己构造 Skill，
+        再从 effect_data 手动挂效果（否则会退化成"无效果的纯伤害"）。
     """
     _SD.load_skills()
     row = _skill_row(skill_id)
@@ -136,23 +141,41 @@ def build_skill(skill_id):
     ours_type = _type_of(row["type_name"])
 
     sk = _SD.get_skill(name)
-    if sk is not None:
-        # 数值以我们库为准
-        if sk.power != ours_power or sk.energy_cost != ours_cost:
-            sk.power = ours_power
-            sk.energy_cost = ours_cost
-        sk.skill_type = ours_type
+    if sk is None:
+        # sim 技能库里没有：自己造，并从 effect_data 取效果
+        sk = Skill(
+            name=name,
+            skill_type=ours_type,
+            category=(SkillCategory.PHYSICAL if ours_power > 0
+                      else SkillCategory.STATUS),
+            power=ours_power,
+            energy_cost=ours_cost,
+        )
+        sk._base_energy_cost = ours_cost
+        try:
+            from sim.effect_data import SKILL_EFFECTS as _MANUAL
+            sk.effects = _MANUAL.get(name, [])
+        except Exception:
+            sk.effects = []
         return sk
 
-    # sim 里没有这个技能：退回裸数据（无效果）
-    return Skill(
-        name=name,
-        skill_type=ours_type,
-        category=(SkillCategory.PHYSICAL if ours_power > 0
-                  else SkillCategory.STATUS),
-        power=ours_power,
-        energy_cost=ours_cost,
-    )
+    # 数值以我们库为准
+    if sk.power != ours_power or sk.energy_cost != ours_cost:
+        sk.power = ours_power
+        sk.energy_cost = ours_cost
+        sk._base_energy_cost = ours_cost
+    sk.skill_type = ours_type
+
+    # 关键：NRC 的 skill 表里有些技能存在但 effects 为空
+    # （实测：「月蚀」「撞鬼」power=40 cost=2 effects=[]）。
+    # 这种情况要用手动配置补上，否则它们会退化成"无效果的纯伤害"。
+    if not sk.effects:
+        try:
+            from sim.effect_data import SKILL_EFFECTS as _MANUAL
+            sk.effects = _MANUAL.get(name, [])
+        except Exception:
+            pass
+    return sk
 
 
 def build_pokemon(name):
