@@ -105,7 +105,7 @@ from ui_probe import (  # noqa: F401
     is_result_screen, find_switch_rows,
 )
 from policy_legacy import (  # noqa: F401
-    decide, _heal_slot, my_card_costs, _est_value,
+    decide, _heal_slot, my_card_costs, _est_value, config_best_slot,
     _charge_or_switch, _match_name,
 )
 
@@ -2189,6 +2189,23 @@ class Bot:
         except Exception as e:
             return "err(%s)" % e
 
+    def _config_best_slot(self, st):
+        """读不出数字时的"按配置挑最强"兜底。失败返回 None。
+
+        比硬编码 slot 2 强：配置里 slot 2 未必是最强（卡瓦重 slot 2 最弱）。
+        """
+        try:
+            import perceive as _P
+            name = getattr(self, "my_name", None)
+            meta = _P._skill_meta(name)
+            if not meta or not meta.get("powers"):
+                return None
+            powers = {k + 1: v for k, v in meta["powers"].items()}
+            return config_best_slot(st["skills"], powers,
+                                    my_card_costs(name))
+        except Exception:
+            return None
+
     def _check_leader_confirmed(self):
         """头像变成银白色（wolf_leader / 首领-恶魔狼）就确认已变身。"""
         if self.leader_done:
@@ -2519,6 +2536,18 @@ class Bot:
             "switch_slot": self.next_switch_slot(),
             "switch_streak": self.turn - self.last_switch_turn,
             "charge_streak": self.charge_streak,
+            # 注意：这里**故意不传** card_costs。
+            #
+            # policy_legacy.decide() 里有 "净收益 = 伤害 - λ×耗能" 的算法，
+            # 但 ctx 一直没有 card_costs，所以 λ 项实际恒为 0。
+            #
+            # 2026-11-21 回放 2990 条历史决策：补上 card_costs 会改变
+            # **7.5% 的主路径选择**（224 条）。这是个未经实盘 A/B 验证的
+            # 建模假设（λ=3.0 也只是经验值），不宜和"盲打兜底修正"这种
+            # 逻辑上明确更优的改动混在一起上线。
+            #
+            # 要做的话应该单独起一个 A/B：用 matches.py 的场次统计对比
+            # 开启/关闭的胜率。在那之前保持现状。
         }
         action, why = None, ""
         # Try the expected-value policy first. It is the only decision path that
@@ -2562,14 +2591,21 @@ class Bot:
                 if cached:
                     action, why = cached, "cached plan"
                 else:
-                    # Cards are lit but we cannot tell which one hurts. Slot 2 is
-                    # the main attack on every pet in this team, so default to it;
-                    # only fall back to another lit slot if 2 is known to be dark.
-                    s2 = st["skills"][1] if len(st["skills"]) > 1 else None
-                    slot = 2
-                    if s2 is not None and not s2.get("lit"):
-                        other = [x for x in lit if x["index"] != 1]
-                        slot = other[0]["index"] if other else 1
+                    # 卡面亮着但读不出数字：按**队伍配置**挑最强的那张。
+                    #
+                    # 旧兜底是硬编码 slot 2（注释称"slot 2 是全队主攻"），
+                    # 但配置里并非如此：卡瓦重 slot2 power=60 是最弱的
+                    # （slot4=105），冰钻布鲁斯 slot2=70 也低于 slot1=90。
+                    # 盲目打 slot2 等于这些精灵每回合少打 20~45 点。
+                    slot = self._config_best_slot(st)
+                    if slot is None:
+                        # 配置也查不到（换过队伍 / 名字没认出来）：
+                        # 退回老规则，但只在 slot2 亮着时才用它。
+                        s2 = st["skills"][1] if len(st["skills"]) > 1 else None
+                        slot = 2
+                        if s2 is None or not s2.get("lit"):
+                            other = [x for x in lit if x["index"] != 1]
+                            slot = other[0]["index"] if other else 1
                     action, why = ("skill", slot), "blind fallback: slot %d" % slot
                     self._note_blind("blind fallback")
                     self.miss_streak = 0

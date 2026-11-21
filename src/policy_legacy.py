@@ -105,6 +105,44 @@ def _est_value(s):
     return None
 
 
+def config_best_slot(cards, powers, costs=None, lam=3.0):
+    """读不出卡面数字时，按**队伍配置**挑最该打的那张。返回 1-based 槽位或 None。
+
+    为什么需要
+    ----------
+    数字读不出来时（实测占 6.2% 的决策），robot 的兜底是**硬编码 slot 2**，
+    注释写的是"slot 2 是全队主攻"。但队伍配置里根本不是这样：
+
+        音速犬      power 0 / 140 / 80  / 100    slot2 确实最强
+        银月狼王    power 120 / 130 / 120 / 80   slot2 最强
+        卡瓦重      power 80 / 60  / 90  / 105   slot2 **最弱**
+        冰钻布鲁斯  power 90 / 70  / 75  / 60    slot2 次弱
+
+    盲目打 slot2，卡瓦重每回合少打 45 点、冰钻布鲁斯少打 20 点。
+
+    cards  : perceive 的四个槽位字典（用 index / lit）
+    powers : {1-based 槽位: 技能 power}（来自 perceive._skill_meta）
+    costs  : {1-based 槽位: 耗能}（来自 my_card_costs）
+    lam    : 每点耗能折算多少伤害（和 decide() 里一致）
+    """
+    best, best_s = None, None
+    for s in cards or []:
+        if not s or not s.get("lit", True):
+            continue
+        try:
+            i = int(s.get("index"))
+        except (TypeError, ValueError):
+            continue
+        p = (powers or {}).get(i)
+        if not p or p <= 0:
+            continue
+        c = (costs or {}).get(i, 0) or 0
+        score = float(p) - lam * c
+        if best_s is None or score > best_s:
+            best, best_s = i, score
+    return best
+
+
 def _charge_or_switch(ctx):
     """Out of energy: gather it with F - unless that keeps getting interrupted.
 

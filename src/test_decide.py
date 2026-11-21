@@ -189,6 +189,50 @@ print("%-52s %-6s %s   (%s)" % (
     "OK" if ok else "**FAIL**", why))
 
 print()
+print("--- 读不出数字时按队伍配置挑最强（不再硬编码 slot 2）---")
+# 实测背景：6.2% 的决策是"卡面亮着但数字读不出"，旧兜底硬编码 slot2，
+# 注释称"slot 2 是全队主攻"——但卡瓦重 slot2 power=60 是最弱的（slot4=105）。
+_cards = lambda: [{"index": i, "lit": True, "kind": "num", "value": None}
+                  for i in range(1, 5)]
+_best = robot.config_best_slot(_cards(), {1: 80, 2: 60, 3: 90, 4: 105},
+                               {1: 3, 2: 1, 3: 3, 4: 4})
+ok = _best == 4
+if not ok:
+    fails += 1
+print("%-52s %-6s %s" % (
+    "卡瓦重 80/60/90/105 -> slot 4（旧代码给 2）",
+    str(_best), "OK" if ok else "**FAIL**"))
+
+_best = robot.config_best_slot(_cards(), {1: 0, 2: 140, 3: 80, 4: 100},
+                               {1: 0, 2: 5, 3: 2, 4: 3})
+ok = _best == 2
+if not ok:
+    fails += 1
+print("%-52s %-6s %s" % (
+    "音速犬 0/140/80/100 -> slot 2（借用不可用）",
+    str(_best), "OK" if ok else "**FAIL**"))
+
+_dark = _cards()
+_dark[3]["lit"] = False
+_best = robot.config_best_slot(_dark, {1: 80, 2: 60, 3: 90, 4: 105},
+                               {1: 3, 2: 1, 3: 3, 4: 4})
+ok = _best == 3
+if not ok:
+    fails += 1
+print("%-52s %-6s %s" % (
+    "slot4 暗掉 -> 退回 slot 3",
+    str(_best), "OK" if ok else "**FAIL**"))
+
+for x in _dark:
+    x["lit"] = False
+ok = robot.config_best_slot(_dark, {1: 80}, {}) is None
+if not ok:
+    fails += 1
+print("%-52s %-6s %s" % (
+    "全暗 -> None（调用方走聚能）",
+    "OK" if ok else "**FAIL**", ""))
+
+print()
 if fails:
     print("%d FAILURE(S)" % fails)
     sys.exit(1)
