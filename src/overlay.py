@@ -415,25 +415,25 @@ def set_drag_pos(hwnd, screen_x=None, screen_y=None):
 
         ox, oy = _DRAG["mouse"]
         wx, wy = _DRAG["win"]
-        d = _DRAG.get("dpr") or 1.0
 
-        nx = wx + (sx - ox) * d
-        ny = wy + (sy - oy) * d
-        # 优先用 pywebview 自己的 move()：它会同步内部状态。
-        # 直接 SetWindowPos 有时会被 pywebview 的窗口约束挡住
-        # （实测传 HWND_TOP 和 HWND_TOPMOST 都不动）。
-        moved = False
-        try:
-            w = _WINDOW.get("win")
-            if w is not None:
-                # pywebview 的 move 用 CSS 像素
-                w.move(int(nx / d), int(ny / d))
-                moved = True
-        except Exception:
-            moved = False
-        if not moved:
-            UD.SetWindowPos(hwnd, HWND_TOPMOST, int(nx), int(ny), 0, 0,
-                            SWP_NOSIZE | SWP_NOACTIVATE)
+        # ★ 不做 dpr 换算
+        #
+        # 前端传的是 e.screenX/Y（CSS 像素），窗口 rect 也是同一口径
+        # （实测：SetWindowPos(400) -> GetWindowRect 读回 400，
+        #  两个视角一致；屏幕 1536x960 也是逻辑值）。
+        # 所以位移直接相加即可。
+        #
+        # 以前这里写 `w.move(int(nx / d), int(ny / d))`，除以 dpr=2，
+        # 结果是窗口只走鼠标的一半距离 —— 这也是"拖动诡异"的一部分。
+        nx = wx + (sx - ox)
+        ny = wy + (sy - oy)
+
+        # 直接 SetWindowPos：pywebview 的 move() 会同步内部状态但
+        # 实测在有约束时不动。SetWindowPos 是唯一可靠的方式。
+        # hWndInsertAfter 传 0（HWND_TOP）而不是 HWND_TOPMOST ——
+        # 传 -1 且已是 TOPMOST 时尺寸/位置参数会被忽略。
+        UD.SetWindowPos(hwnd, 0, int(nx), int(ny), 0, 0,
+                        SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)
         return True
     except Exception:
         return False

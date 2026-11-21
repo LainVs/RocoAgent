@@ -601,45 +601,80 @@ function bindFold() {
   } catch (_) {}
 }
 
+// ── 拖动 ────────────────────────────────────────────────────────
+//
+// 踩过的三个坑（2026-11-21，用户报"拖动超级诡异"）：
+//
+// 1. 原生路径**没有 setPointerCapture**
+//    原代码在 hasNative() 分支里直接 return，永远走不到 setPointerCapture。
+//    pointermove/pointerup 都挂在 hdr 上 —— 鼠标一离开标题栏，事件就断了：
+//    窗口卡住不动；在外面松手也收不到 pointerup，dragging 一直是 true，
+//    之后鼠标随便一动窗口就跟着跑。这就是"诡异"的主因。
+//
+// 2. 每个 pointermove 都走一次 pywebview JS 桥
+//    callNative 是 JSON 序列化的跨进程往返。鼠标 120Hz 移动就是每秒
+//    120 次 IPC，窗口跟不上，然后一次性跳过去。
+//    改用 requestAnimationFrame 合并：一帧最多发一次。
+//
+// 3. 坐标被多除了一次 dpr
+//    后端 `w.move(int(nx / d), int(ny / d))` 除以 dpr，但实测
+//    SetWindowPos(400) -> GetWindowRect 读回 400，两者**同口径**。
+//    再除一次等于窗口只走鼠标的一半距离。
+//
+// 另外试过 WM_NCLBUTTONDOWN + HTCAPTION 的原生拖动（Electron 用的就是它），
+// 但这个 layered + toolwindow + noactivate 的窗口上实测**窗口不动**
+// （SendMessage 返回 0，光标移动了窗口没跟）。所以放弃那条路。
 function bindDrag() {
   const overlay = $('overlay');
   const hdr = $('hdr');
-  let sx = 0, sy = 0, ox = 0, oy = 0, dragging = false;
+  let dragging = false;
+  let pending = null;      // 待发送的最新坐标（rAF 合并用）
+  let rafId = 0;
+
+  // 浏览器预览用
+  let bsx = 0, bsy = 0, box = 0, boy = 0;
+
+  const flush = () => {
+    rafId = 0;
+    if (!pending) return;
+    const [x, y] = pending;
+    pending = null;
+    callNative('drag_move', x, y);
+  };
 
   hdr.addEventListener('pointerdown', (e) => {
     if (e.target.closest('button')) return;
+    if (e.button !== 0) return;
 
-    // 真悬浮窗：调原生拖动，窗口真的会动
-    // 传 devicePixelRatio + 按下点坐标 —— 后端用它们做基准，
-    // 少传按下点的话第一帧位移会被吃掉（实测固定偏移 -40,-28）
+    // ★ 无论走哪条路径都必须 capture —— 否则鼠标离开标题栏就丢事件
+    try { hdr.setPointerCapture(e.pointerId); } catch (_) {}
+
+    dragging = true;
+    overlay.classList.add('dragging');
+
     if (hasNative()) {
       callNative('drag', window.devicePixelRatio || 1, e.screenX, e.screenY);
-      dragging = true;
       return;
     }
 
     // 浏览器：只能移动 DOM 元素（预览用）
-    dragging = true;
-    sx = e.clientX; sy = e.clientY;
+    bsx = e.clientX; bsy = e.clientY;
     const r = overlay.getBoundingClientRect();
-    ox = r.left; oy = r.top;
-    overlay.classList.add('dragging');
-    hdr.setPointerCapture(e.pointerId);
+    box = r.left; boy = r.top;
   });
 
   hdr.addEventListener('pointermove', (e) => {
     if (!dragging) return;
 
-    // 真悬浮窗：把 e.screenX/Y（CSS 像素）交给后端，
-    // 后端按位移增量 × dpr 换算成物理像素移动窗口。
-    // 完全不依赖 GetCursorPos —— 那玩意儿会被 DPI 虚拟化。
     if (hasNative()) {
-      callNative('drag_move', e.screenX, e.screenY);
+      // rAF 合并：一帧只发一次，避免 120Hz 的 IPC 洪泛
+      pending = [e.screenX, e.screenY];
+      if (!rafId) rafId = requestAnimationFrame(flush);
       return;
     }
 
-    const nx = ox + (e.clientX - sx);
-    const ny = oy + (e.clientY - sy);
+    const nx = box + (e.clientX - bsx);
+    const ny = boy + (e.clientY - bsy);
     const maxX = window.innerWidth - overlay.offsetWidth;
     const maxY = window.innerHeight - overlay.offsetHeight;
     overlay.style.left = Math.max(0, Math.min(maxX, nx)) + 'px';
@@ -650,13 +685,26 @@ function bindDrag() {
     if (!dragging) return;
     dragging = false;
 
+    // 把最后一帧没发出去的位移补上，否则松手位置会差一点
+    if (rafId) {
+      cancelAnimationFrame(rafId);
+      rafId = 0;
+      if (pending) {
+        const [x, y] = pending;
+        pending = null;
+        callNative('drag_move', x, y);
+      }
+    }
+
+    try { hdr.releasePointerCapture(e.pointerId); } catch (_) {}
+
     if (hasNative()) {
       callNative('drag_end');
+      overlay.classList.remove('dragging');
       return;
     }
 
     overlay.classList.remove('dragging');
-    try { hdr.releasePointerCapture(e.pointerId); } catch (_) {}
     try {
       localStorage.setItem('overlay.pos',
         overlay.style.left + ',' + overlay.style.top);
