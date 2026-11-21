@@ -49,15 +49,93 @@ from collections import Counter, defaultdict
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 TURNS = os.path.join(ROOT, "logs", "turns.jsonl")
+# 对面行为的**权威记录**（opponent_log.py 采集，带 match 和 act 标签）
+ACTIONS = os.path.join(ROOT, "logs", "opponent_actions.jsonl")
 MODEL = os.path.join(ROOT, "data", "opponent_model.json")
 
 # 样本量门槛：低于这个数不给概率（避免噪声当规律）
 MIN_SAMPLES = 12
 
+# 训练假人：不是真实对手，行为固定（只会攻击），混进来会污染统计。
+#
+# 实测（2026-11-21）：`60级水桶模板` 占 13 组对位 / 47 条样本（19%），
+# 而且它的 p_attack=1.00，会把整体概率拉向"对面一定攻击"。
+#
+# 注意名字是「模板」不是「模型」—— 第一次写错字，排除没生效，
+# 数据里实际是 '60级水桶模板'。
+DUMMY_FOES = ("水桶模板", "水桶模型")
+
+# 立绘模板名 -> 种族名。
+#
+# 立绘识别输出的是模板文件名，同一只精灵可能有多个模板：
+#     wolf / wolf_leader  -> 音速犬（旧模板名 + 首领化形态）
+# 不归一化的话，同一只精灵的样本会被切到多个键上。
+#
+# 实测（2026-11-21）：我方名字带 #编号的有 62 组 / 131 条样本（54%），
+# 全被切碎，导致 147 组对位里只有 1 组达到 MIN_SAMPLES。
+ALIASES = {
+    "wolf": "音速犬",
+    "wolf_leader": "音速犬",
+}
+
+
+def _norm_me(name):
+    """把立绘模板名归一成种族名。
+
+    `银月狼王#2` / `银月狼王#7` -> `银月狼王`
+    `wolf` -> `音速犬`
+    """
+    if not name:
+        return name
+    base = str(name).split("#")[0]
+    return ALIASES.get(base, base)
+
+
+def _is_dummy(name):
+    """是不是训练假人。"""
+    if not name:
+        return False
+    return any(d in str(name) for d in DUMMY_FOES)
+
 
 def load_turns():
     out = []
     for line in io.open(TURNS, encoding="utf-8"):
+        try:
+            out.append(json.loads(line))
+        except Exception:
+            pass
+    return out
+
+
+def load_actions():
+    """读 opponent_actions.jsonl —— 对面行为的权威记录。
+
+    为什么不用 turns.jsonl 反推（2026-11-21 实测）
+    ----------------------------------------------
+    turns.jsonl 是轮询日志，而且**多个机器人进程同时写**：
+
+        原始 3110 条，按 ts 排序后 turn 倒退 806 次
+        同一时间戳出现多条的: 54 个时刻
+          03:04:24 x3: [(1, None), (2, None), (3, None)]
+
+    靠 turn==1 切分场次遇到交错数据就完全错位，
+    opponent_action(a, b) 会拿两个不同局的记录做比较 ——
+    结果 p_buff 虚高到 0.50~0.57（相邻记录血量都没变 -> 判成 buff）。
+
+    opponent_actions.jsonl 由 opponent_log.py 专门采集：
+        · 有 match 字段，场次边界明确
+        · act 已经是标签，不需要反推
+        · me 已是种族名（不带 #编号）
+        · 每条只记一次（不是轮询）
+    """
+    out = []
+    if not os.path.exists(ACTIONS):
+        return out
+    for line in io.open(ACTIONS, encoding="utf-8", errors="ignore"):
+        line = line.strip()
+        if not line:
+            continue
         try:
             out.append(json.loads(line))
         except Exception:
@@ -105,6 +183,67 @@ def opponent_action(prev, cur):
     return None
 
 
+def build_from_actions(rows):
+    """从 opponent_actions.jsonl 建行为分布（主路径）。
+
+    与 build() 的区别：
+        · 数据已经有 act 标签，不需要 opponent_action() 反推
+        · 按 match 分组，不靠 turn 序列猜场次
+        · me 已是种族名，归一化只作兜底
+
+    结构（与 build() 保持一致，下游不用改）：
+    {
+      "音速犬|白发路路": {
+         "n": 19, "reliable": true,
+         "p_attack": 0.37, "p_switch": 0.47, "p_buff": 0.16,
+         "switch_top": [["冥古龙", 5], ...],
+         "next_types_top": [...]
+      }
+    }
+    """
+    pairs = defaultdict(lambda: {"n": 0, "actions": Counter(),
+                                 "switch_to": Counter(),
+                                 "next_types": Counter()})
+    matches = set()
+    for r in rows:
+        foe = r.get("foe")
+        me = r.get("me")
+        if not foe or not me:
+            continue
+        # 训练假人不计入（行为固定，会污染概率）
+        if _is_dummy(foe):
+            continue
+        act = r.get("act")
+        if act not in ("attack", "switch", "buff"):
+            continue
+        matches.add(r.get("match"))
+        key = "%s|%s" % (_norm_me(me), foe)
+        e = pairs[key]
+        e["n"] += 1
+        e["actions"][act] += 1
+        if act == "switch" and r.get("switched_to"):
+            e["switch_to"][r["switched_to"]] += 1
+        if r.get("foe_types"):
+            e["next_types"][json.dumps(r["foe_types"],
+                                       ensure_ascii=False)] += 1
+
+    out = {}
+    for key, e in pairs.items():
+        n = e["n"]
+        acts = e["actions"]
+        total = sum(acts.values()) or 1
+        out[key] = {
+            "n": n,
+            "reliable": n >= MIN_SAMPLES,
+            "p_attack": round(acts.get("attack", 0) / total, 3),
+            "p_switch": round(acts.get("switch", 0) / total, 3),
+            "p_buff": round(acts.get("buff", 0) / total, 3),
+            "switch_top": e["switch_to"].most_common(3),
+            "next_types_top": e["next_types"].most_common(3),
+        }
+    return out, len([m for m in matches if m is not None])
+
+
 def build(rows):
     """按 (our_pet, foe_pet) 建行为分布。
 
@@ -133,18 +272,23 @@ def build(rows):
 
     pairs = defaultdict(lambda: {"n": 0, "actions": Counter(),
                                  "switch_to": Counter(),
-                                 "next_types": Counter()})
+                                 "next_types": Counter(),
+                                 "skipped_dummy": 0})
     for m in matches:
         for i in range(len(m) - 1):
             a, b = m[i], m[i + 1]
             me, foe = a.get("our_pet"), a.get("foe_pet")
             if not me or not foe:
                 continue
+            # 训练假人不计入（行为固定，会污染概率）
+            if _is_dummy(foe):
+                continue
             # 只统计"对面这一手"：a 是我们行动后，b 是对面行动后
             act = opponent_action(a, b)
             if not act:
                 continue
-            key = "%s|%s" % (me, foe)
+            # 归一化我方名字：银月狼王#2 / 银月狼王#7 -> 银月狼王
+            key = "%s|%s" % (_norm_me(me), foe)
             e = pairs[key]
             e["n"] += 1
             e["actions"][act] += 1
@@ -173,12 +317,22 @@ def build(rows):
 
 
 def main():
-    rows = load_turns()
-    print("原始记录: %d" % len(rows))
-    rows2 = dedupe(rows)
-    print("去重后: %d" % len(rows2))
+    # 主路径：opponent_actions.jsonl（对面行为的权威记录）
+    acts = load_actions()
+    if acts:
+        print("数据源: opponent_actions.jsonl")
+        model, n_matches = build_from_actions(acts)
+        print("原始记录: %d" % len(acts))
+    else:
+        # 降级：从 turns.jsonl 反推（旧数据 / 文件不存在）
+        print("数据源: turns.jsonl（降级，反推对面行为）")
+        print("!! 警告：turns.jsonl 是多进程轮询日志，场次可能交错，")
+        print("!!       p_buff 会虚高。建议优先积累 opponent_actions.jsonl。")
+        rows = load_turns()
+        print("原始记录: %d" % len(rows))
+        print("去重后: %d" % len(dedupe(rows)))
+        model, n_matches = build(rows)
 
-    model, n_matches = build(rows)
     print("识别出 %d 场对局" % n_matches)
     print("对位组合: %d" % len(model))
 

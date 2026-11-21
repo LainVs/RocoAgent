@@ -55,8 +55,11 @@ def lookup(model, me, foe):
         return None
     # 名字可能带 #N 后缀（我方形态），去掉再查
     me0 = me.split("#")[0]
-    e = model.get("%s|%s" % (me0, foe)) or model.get("%s|%s" % (me, foe))
-    return e
+    # 旧模板名 -> 种族名（与 opponent_model.ALIASES 保持一致）
+    import opponent_model as _OM
+    me0 = _OM.ALIASES.get(me0, me0)
+    return (model.get("%s|%s" % (me0, foe))
+            or model.get("%s|%s" % (me, foe)))
 
 
 def advice(me, foe, my_pct, foe_pct, my_hp, foe_hp,

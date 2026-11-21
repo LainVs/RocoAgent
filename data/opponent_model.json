@@ -1,0 +1,807 @@
+{
+ "音速犬|烈火战神": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.0,
+  "p_buff": 0.5,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "恶魔狼|烈火战神": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "绒光优优",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|绒光优优": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "音速犬|花衣蝶": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "银月狼王|花衣蝶": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.667,
+  "p_switch": 0.333,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "铠甲虫",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|铠甲虫": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.667,
+  "p_switch": 0.333,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "陨星虫",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|画间沉铁兽": {
+  "n": 8,
+  "reliable": false,
+  "p_attack": 0.375,
+  "p_switch": 0.25,
+  "p_buff": 0.375,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ],
+   [
+    "寂灭骨龙",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|雪影冰灵": {
+  "n": 6,
+  "reliable": false,
+  "p_attack": 0.167,
+  "p_switch": 0.833,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "卡瓦重",
+    2
+   ],
+   [
+    "白发路路",
+    2
+   ],
+   [
+    "彩虹独角兽",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|卡瓦重": {
+  "n": 6,
+  "reliable": false,
+  "p_attack": 0.167,
+  "p_switch": 0.833,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    2
+   ],
+   [
+    "彩虹独角兽",
+    1
+   ],
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|彩虹独角兽": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "卡瓦重",
+    1
+   ],
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|白发路路": {
+  "n": 5,
+  "reliable": false,
+  "p_attack": 0.4,
+  "p_switch": 0.6,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "卡瓦重",
+    1
+   ],
+   [
+    "裘卡",
+    1
+   ],
+   [
+    "银月狼王",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|绒光优优": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "银月狼王|裘卡": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "音速犬|龙息帕尔": {
+  "n": 5,
+  "reliable": false,
+  "p_attack": 0.2,
+  "p_switch": 0.2,
+  "p_buff": 0.6,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|雪影冰灵": {
+  "n": 7,
+  "reliable": false,
+  "p_attack": 0.143,
+  "p_switch": 0.857,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "月牙雪熊",
+    2
+   ],
+   [
+    "龙息帕尔",
+    1
+   ],
+   [
+    "海豹船长",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|火羽": {
+  "n": 6,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.5,
+  "p_buff": 0.5,
+  "switch_top": [
+   [
+    "画间沉铁兽",
+    1
+   ],
+   [
+    "白发路路",
+    1
+   ],
+   [
+    "冰钻布鲁斯",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"地\\\", \\\"翼\\\"]\"",
+    2
+   ]
+  ]
+ },
+ "恶魔狼|画间沉铁兽": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "恶魔狼|火羽": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 1.0,
+  "p_switch": 0.0,
+  "p_buff": 0.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "银月狼王|火羽": {
+  "n": 4,
+  "reliable": false,
+  "p_attack": 0.75,
+  "p_switch": 0.0,
+  "p_buff": 0.25,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "恶魔狼|水灵": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "彩蝶鲨",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|彩蝶鲨": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.0,
+  "p_buff": 0.5,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "音速犬|冰钻布鲁斯": {
+  "n": 4,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.75,
+  "p_buff": 0.25,
+  "switch_top": [
+   [
+    "嘟嘟煲",
+    1
+   ],
+   [
+    "火羽",
+    1
+   ],
+   [
+    "卡瓦重",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"地\\\", \\\"翼\\\"]\"",
+    2
+   ]
+  ]
+ },
+ "音速犬|嘟嘟煲": {
+  "n": 7,
+  "reliable": false,
+  "p_attack": 0.143,
+  "p_switch": 0.571,
+  "p_buff": 0.286,
+  "switch_top": [
+   [
+    "友爱星飞",
+    2
+   ],
+   [
+    "冰钻布鲁斯",
+    1
+   ],
+   [
+    "酷拉",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|友爱星飞": {
+  "n": 5,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.4,
+  "p_buff": 0.6,
+  "switch_top": [
+   [
+    "白发路路",
+    1
+   ],
+   [
+    "银月狼王",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|白发路路": {
+  "n": 14,
+  "reliable": true,
+  "p_attack": 0.571,
+  "p_switch": 0.286,
+  "p_buff": 0.143,
+  "switch_top": [
+   [
+    "嘟嘟煲",
+    1
+   ],
+   [
+    "迪莫",
+    1
+   ],
+   [
+    "菊花梨",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|贝古斯": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.333,
+  "p_switch": 0.667,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "白发路路",
+    1
+   ],
+   [
+    "画间沉铁兽",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|海豹船长": {
+  "n": 10,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.2,
+  "p_buff": 0.3,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ],
+   [
+    "卡瓦重",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|月牙雪熊": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "迪莫",
+    2
+   ],
+   [
+    "寂灭骨龙",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|寂灭骨龙": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "翼龙",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|翼龙": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|菊花梨": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "音速犬|迪莫": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.333,
+  "p_buff": 0.667,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|水灵": {
+  "n": 3,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "银月狼王|炽心勇狮": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.0,
+  "p_buff": 1.0,
+  "switch_top": [],
+  "next_types_top": []
+ },
+ "银月狼王|音速犬": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|银月狼王": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "音速犬",
+    1
+   ],
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|音速犬": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "化蝶",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|化蝶": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "友爱星飞",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|冥古龙": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "冰钻布鲁斯",
+    1
+   ],
+   [
+    "白发路路",
+    1
+   ]
+  ],
+  "next_types_top": [
+   [
+    "\"[\\\"幽\\\", \\\"龙\\\"]\"",
+    1
+   ]
+  ]
+ },
+ "音速犬|叮叮卯": {
+  "n": 4,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "绿草精灵",
+    1
+   ],
+   [
+    "彩蝶鲨",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|绿草精灵": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "叮叮卯",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|彩蝶鲨": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.5,
+  "p_buff": 0.5,
+  "switch_top": [
+   [
+    "恶魔狼",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|岚鸟": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "冰钻布鲁斯",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|卡瓦重": {
+  "n": 2,
+  "reliable": false,
+  "p_attack": 0.5,
+  "p_switch": 0.5,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "恶魔狼",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|尖嘴狐仙": {
+  "n": 4,
+  "reliable": false,
+  "p_attack": 0.25,
+  "p_switch": 0.5,
+  "p_buff": 0.25,
+  "switch_top": [
+   [
+    "饮雪狂兽",
+    1
+   ],
+   [
+    "月牙雪熊",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|饮雪狂兽": {
+  "n": 4,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.25,
+  "p_buff": 0.75,
+  "switch_top": [
+   [
+    "尖嘴狐仙",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|绿草精灵": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "彩蝶鲨",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|觅觅蝠": {
+  "n": 5,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 0.2,
+  "p_buff": 0.8,
+  "switch_top": [
+   [
+    "咕咕帽",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|酷拉": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "影狸",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "音速犬|海枝枝": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "海豹船长",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "银月狼王|冥古龙": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "恶魔狼王",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|海豹船长": {
+  "n": 5,
+  "reliable": false,
+  "p_attack": 0.4,
+  "p_switch": 0.4,
+  "p_buff": 0.2,
+  "switch_top": [
+   [
+    "冥古龙",
+    1
+   ],
+   [
+    "雪影冰灵",
+    1
+   ]
+  ],
+  "next_types_top": []
+ },
+ "恶魔狼|白发路路": {
+  "n": 1,
+  "reliable": false,
+  "p_attack": 0.0,
+  "p_switch": 1.0,
+  "p_buff": 0.0,
+  "switch_top": [
+   [
+    "海豹船长",
+    1
+   ]
+  ],
+  "next_types_top": []
+ }
+}
