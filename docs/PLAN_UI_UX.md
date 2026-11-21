@@ -301,9 +301,10 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U23 | `console.js loadDex()` + `#dexMore` | 渲染实测：点一次 120 → 240 张，`还有 737 只` |
 | U24 | `ui_server.game_status()` + `console.js` 顶栏 `#botRes` + 健康第 1b 格 | 单测：`aspect=1.290`、`scale_ok=False` 并给出说明；渲染：顶栏 `2074×1607`（`top-link warn`），健康格 9→10 |
 | U25 | `ui_server._ensure_dpi_aware()` —— 不 import `winio` 就读到逻辑坐标（差 2 倍） | 单测：读到 2074×1607（物理），不是 1037×804（逻辑） |
+| U26 | 分辨率报的是窗口矩形（2074×1607），不是客户区（2048×1536） | 单测：`w/h` 是客户区且 `client <= window`；渲染顶栏 `2048×1536` |
 
-**验证基线**：`python src/test_ui.py` → 133 项全过（原 62）；
-`--no-dom` 96 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 134 项全过（原 62）；
+`--no-dom` 97 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
