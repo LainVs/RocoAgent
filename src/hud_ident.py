@@ -98,12 +98,28 @@ _icon_tpl = None
 
 # ------------------------------------------------------------------ OCR
 def _get_ocr():
-    """惰性建 OCR（初始化 1~2 秒，别放模块级）。"""
+    """惰性建 OCR（初始化 1~2 秒，别放模块级）。
+
+    ⚠ 实测（2026-11-21，本机）：RapidOCR 单次推理 **4.7~6.4 秒**，
+    远超机器人日志里记的"1~2 秒"。引擎初始化另需 2.5 秒。
+
+    所以调用方**必须缓存结果**，绝不能每帧读。`read_name` 的
+    `fast=True` 默认只试基准框就是这个原因。
+    """
     global _ocr
     if _ocr is None:
         import ocr_cn
         _ocr = ocr_cn.Ocr()
     return _ocr
+
+
+# 名字缓存：OCR 单次 5 秒，而名字整场不变，必须缓存。
+#
+# key = (侧, 区域指纹)，value = (text, conf, at)
+# 指纹用名字条的 4x4 灰度粗量化 —— 换人/换局才变。
+_NAME_CACHE = {}
+_NAME_CACHE_MAX = 64
+NAME_TTL = 90.0        # 同一指纹 90 秒内直接复用（战斗一局通常 1~3 分钟）
 
 
 def _species_vocab():
@@ -147,6 +163,17 @@ def read_name(screen, side="foe", vocab=None, exact_box=None, fast=True):
     ocr = _get_ocr()
     base = exact_box or (MY_NAME_BOX if side == "my" else FOE_NAME_BOX)
 
+    # ---- 缓存：OCR 单次 5 秒，名字整场不变
+    import time as _t
+    img0 = _read_box(screen, base)
+    if img0 is None:
+        return ("", 0.0)
+    fp = _name_fingerprint(img0)
+    ck = (side, fp)
+    hit = _NAME_CACHE.get(ck)
+    if hit is not None and (_t.time() - hit[2]) < NAME_TTL:
+        return (hit[0], hit[1])
+
     def _try(box):
         img = _read_box(screen, box)
         if img is None:
@@ -164,22 +191,45 @@ def read_name(screen, side="foe", vocab=None, exact_box=None, fast=True):
             return (raw, float(sc)) if name else ("", 0.0)
         return (raw, ocr_conf)
 
-    hit = _try(base)
-    if hit[1] >= 0.60 or fast:
-        return hit
-
-    x, y, w, h = base
-    best = hit
-    for dy in SEARCH_OFFSETS:
-        for dx in SEARCH_OFFSETS:
-            if dx == 0 and dy == 0:
-                continue
-            got = _try((x + dx, y + dy, w, h))
-            if got[1] > best[1]:
-                best = got
+    result = _try(base)
+    if result[1] < 0.60 and not fast:
+        x, y, w, h = base
+        best = result
+        for dy in SEARCH_OFFSETS:
+            for dx in SEARCH_OFFSETS:
+                if dx == 0 and dy == 0:
+                    continue
+                got = _try((x + dx, y + dy, w, h))
+                if got[1] > best[1]:
+                    best = got
+                if best[1] >= 0.98:
+                    break
             if best[1] >= 0.98:
-                return best
-    return best
+                break
+        result = best
+
+    # 只缓存"读到了"的结果 —— 读不到时不缓存，下次还会再试
+    if result[0]:
+        if len(_NAME_CACHE) >= _NAME_CACHE_MAX:
+            _NAME_CACHE.clear()
+        _NAME_CACHE[ck] = (result[0], result[1], _t.time())
+    return result
+
+
+def _name_fingerprint(img):
+    """名字条的 4x4 灰度粗量化指纹（换人/换局才变）。"""
+    import numpy as np
+    g = np.asarray(img).mean(axis=2) if getattr(img, "ndim", 0) == 3 else np.asarray(img)
+    h, w = g.shape
+    idx = np.linspace(0, h - 1, 4).astype(int)
+    idy = np.linspace(0, w - 1, 4).astype(int)
+    small = g[np.ix_(idx, idy)]
+    return bytes((small / 32).astype(np.uint8).tobytes())
+
+
+def clear_name_cache():
+    """换局时清空名字缓存。"""
+    _NAME_CACHE.clear()
 
 
 # ------------------------------------------------------------------ 属性图标

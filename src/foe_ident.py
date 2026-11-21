@@ -62,6 +62,16 @@ PORTRAIT_MARGIN = 0.06  # 与第二名的分差（防止两个相似头像打架
 ONNX_MIN = 0.92         # 立绘通道：定标 conf>=0.90 时 93.2%，取 0.92 更保守
 NAME_MIN = 0.75         # 名字与词表的相似度
 
+# 图标匹配的耗时缓存。
+#
+# 为什么需要：`hud_ident.read_types` 单侧 165ms（18 模板 x 24 角度 x 3 缩放），
+# 两侧 330ms。而 UI 的 /api/state 是秒级轮询，每次都重算会让响应到 900ms。
+#
+# 图标是**整场不变**的（属性不会中途变），所以按 (侧, 图像指纹) 缓存。
+# 指纹用 8x8 灰度哈希，几乎零成本。
+_ICON_CACHE = {}
+_ICON_CACHE_MAX = 64
+
 
 # ------------------------------------------------------------------ 数据库
 def _db():
@@ -280,6 +290,54 @@ def _onnx_scores(screen, side="foe", topk=5):
 
 
 # ------------------------------------------------------------------ 融合
+def _icon_fingerprint(screen, side):
+    """属性图标区域的极粗指纹（几乎零成本）。
+
+    只取两个图标位置的像素，缩到 4x4 后按 32 级量化。
+    属性不会变，同一场战斗的指纹基本恒定；换人或换局才变。
+
+    量化要够粗：HUD 图标有浮动动画，细指纹会每帧都变，
+    缓存永远不命中（实测 8x8 + /8 量化时命中率接近 0）。
+    """
+    import numpy as np
+    centers = (hud_ident.MY_ICON_CENTERS if side == "my"
+               else hud_ident.FOE_ICON_CENTERS)
+    try:
+        img = screen.grab_client((0, 0, 2560, 1600))
+    except Exception:
+        return None
+    if img is None or getattr(img, "size", 0) == 0:
+        return None
+    parts = []
+    for cx, cy in centers:
+        patch = hud_ident._crop_icon(img, cx, cy)
+        if patch is None:
+            parts.append(b"\0" * 16)
+            continue
+        g = patch.mean(axis=2)
+        h, w = g.shape
+        idx = np.linspace(0, h - 1, 4).astype(int)
+        idy = np.linspace(0, w - 1, 4).astype(int)
+        small = g[np.ix_(idx, idy)]
+        parts.append(bytes((small / 32).astype(np.uint8).tobytes()))
+    return b"|".join(parts)
+
+
+def _read_types_cached(screen, side):
+    """带缓存的 read_types。"""
+    key = _icon_fingerprint(screen, side)
+    if key is not None:
+        hit = _ICON_CACHE.get((side, key))
+        if hit is not None:
+            return list(hit)
+    types = hud_ident.read_types(screen, side)
+    if key is not None:
+        if len(_ICON_CACHE) >= _ICON_CACHE_MAX:
+            _ICON_CACHE.clear()
+        _ICON_CACHE[(side, key)] = tuple(types)
+    return types
+
+
 def identify(screen, prev=None, side="foe"):
     """识别对面是谁。
 
@@ -301,8 +359,11 @@ def identify(screen, prev=None, side="foe"):
     }
 
     # ---- 1. 属性图标（硬约束）
+    #
+    # 带缓存：单侧 165ms，两侧 330ms，而 /api/state 是秒级轮询。
+    # 属性整场不变，所以按 (侧, 图像指纹) 缓存，命中时 <1ms。
     try:
-        types = hud_ident.read_types(screen, side)
+        types = _read_types_cached(screen, side)
     except Exception:
         types = []
     out["types"] = types
