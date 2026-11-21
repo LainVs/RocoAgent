@@ -197,6 +197,7 @@ python -c "import io; s=io.open('src/test_ui.py',encoding='utf-8').read(); \
 
 ---
 
+## UI 控制台会话（2026-11-21 23:05）· `[ui-session]`
 
 ### 我是谁
 
