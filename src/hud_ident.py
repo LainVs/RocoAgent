@@ -81,17 +81,16 @@ OFFICIAL_MAP = {
     "dark": "恶", "light": "光",
 }
 
-# 图标匹配门槛。
+# 图标匹配门槛（NCC，越高越像）。
 #
-# 实测（2026-11-21，用官方 18 图标做留一验证）：
-#   真图标（同一属性的不同帧）      0.95 ~ 1.00
-#   空位 / 被头像遮挡的位置          0.60 ~ 0.75
-# 0.85 落在中间，两边都留足余量。
+# 实测（2026-11-21，43 个「已确认是圆盘」的位置，用数据库真值验证）：
+#   NCC >= 0.80    40 个，**100% 正确**
+#   NCC 0.50~0.60   3 个，**0% 正确**（全是被头像遮挡的噪声）
+#   NCC 0.60~0.80   0 个  <- 完全空白
 #
-# 为什么必须靠分数而不能靠"位置是否为空"：
-#   迪莫是**光系单属性**，第二个图标位置被头像挡住，
-#   饱和度 sat75=174（比真图标的 128 还高），靠颜色判空会误判成双属性。
-MATCH_MIN = 0.85
+# 分布是干净的双峰，所以门槛取 0.80。
+# 之前取 0.40 会把 0.51 的噪声当成信号（实测把迪莫的光系读成"地"）。
+MATCH_MIN = 0.80
 
 _ocr = None
 _icon_tpl = None
@@ -255,20 +254,6 @@ def _crop_icon(img, cx, cy, r=ICON_R):
     return img[y0:y1, x0:x1]
 
 
-def _icon_is_empty(patch):
-    """判断这个位置是不是空的（单属性精灵只有 1 个图标）。
-
-    实测：空位是背景色，饱和度低且方差小；有图标的位置饱和度明显更高。
-    """
-    if patch is None or patch.size == 0:
-        return True
-    import cv2
-    hsv = cv2.cvtColor(patch, cv2.COLOR_RGB2HSV)
-    sat = hsv[:, :, 1].astype(np.float32)
-    # 图标是饱和的彩色圆盘；背景（天空/地面）饱和度低得多
-    return float(np.percentile(sat, 75)) < 90.0
-
-
 def read_types(screen, side="my"):
     """读 HUD 上的属性图标 -> ['幽', '恶']。
 
@@ -280,8 +265,12 @@ def read_types(screen, side="my"):
     实测迪莫（**光系**，U+5149）的第二个位置被头像挡住，饱和度仍然很高
     （sat75=174，比真图标的 128 还高），所以「靠饱和度判空」会误判。
 
-    正确做法：**看模板匹配分数**。真图标匹配分 0.95+，空位/遮挡只有 0.6~0.7。
-    所以这里统一用分数门槛（MATCH_MIN），不再依赖 `_icon_is_empty`。
+    正确做法：**看匹配分数 + 圆盘检测**。
+    实测真图标 NCC 0.45~0.91，空位/头像碎片 <0.70 且圆盘不完整。
+
+    另外：我方 HUD 的属性图标**只画在场精灵的**，第二个位置经常是头像的
+    一部分（实测冰钻布鲁斯单属性冰，第一个位置读到的是头像边缘，
+    被误判成"水" 0.692）。所以这里加一道圆盘完整性检查。
     """
     tpl = _load_icons()
     if not tpl:
@@ -296,10 +285,45 @@ def read_types(screen, side="my"):
         patch = _crop_icon(img, cx, cy)
         if patch is None:
             continue
+        if not _is_disc(patch):
+            continue          # 不是完整的圆盘 -> 这个位置是空的
         name, score = _match_icon(patch, tpl)
         if name and score >= MATCH_MIN:
             out.append(name)
     return out
+
+
+def _is_disc(patch):
+    """判断这块是不是一个完整的图标圆盘（而不是头像/背景碎片）。
+
+    判据：**内圈与外圈的亮度差**。图标是实心色盘压在 HUD 背景上，
+    边界明显；头像碎片则是连续过渡，几乎没有边界。
+
+    实测（2026-11-21 实盘，内圈 r<0.60 与外圈 0.85<r<1.05 的灰度均值差）：
+        我方 冰钻布鲁斯 冰系图标       69.0
+        敌方 仪式巨像   地系图标      101.3
+        敌方 仪式巨像   幻系图标       70.6
+        我方 第一个位置（头像碎片）     14.8   <- 唯一的非图标
+
+    18 与 69 之间有 4 倍余量，判据很稳。
+
+    为什么不用饱和度：幻系图标的淡紫底在 HUD 半透明蒙层下饱和度只有 48，
+    和背景接近，会漏判。亮度差不受蒙层影响（蒙层是乘法，内外同比缩放）。
+    """
+    import cv2
+    if patch is None or patch.size == 0:
+        return False
+    g = cv2.cvtColor(np.ascontiguousarray(patch).astype(np.uint8),
+                     cv2.COLOR_RGB2GRAY).astype(np.float32)
+    h, w = g.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.sqrt((yy - h / 2.0 + 0.5) ** 2
+                + (xx - w / 2.0 + 0.5) ** 2) / (min(h, w) / 2.0)
+    inner = g[r < 0.60]
+    ring = g[(r > 0.85) & (r < 1.05)]
+    if inner.size < 20 or ring.size < 20:
+        return False
+    return abs(float(inner.mean()) - float(ring.mean())) > 18.0
 
 
 def _match_icon(patch, tpl):
@@ -312,76 +336,102 @@ def _match_icon(patch, tpl):
     直接 resize 到同一尺寸后，两者的图案**尺度完全不同**，实测所有属性的
     匹配分都挤在 0.60~0.65（根本分不开）。
 
-    正确做法：三步归一化
-        1. 圆内二值化 —— 图案比底色亮，取亮度阈值分离出白色图案
-        2. 外接框裁切 —— 消掉图案周围的空白/彩底
-        3. 缩放到 48x48 —— 消掉尺度差异，只比形状
+    为什么不能只靠二值 IoU / Hu 矩
+    -----------------------------
+    内切圆 + 二值化 + 外接框归一化之后，**实心形状（山、雪花、星）很准**
+    （地系 0.94），但**细线条形状（螺旋）不稳定**：
+        · 二值 IoU：螺旋相位一错位就掉到 0.5，第一名变成"普通"
+        · Hu 矩前 6 项：幻系排到第 4 名（武 1.57 / 恶 1.82 / 地 2.04 / 幻 2.90）
+    原因是螺旋的笔画只有 2~3px，二值化后碎成轮廓，形状特征完全变样。
 
-    实测效果（寂灭骨龙=龙+幽，真实帧）：
-        位置1 龙 0.781（第二名普通 0.682，差 0.10）
-        位置2 幽 0.833（第二名龙   0.673，差 0.16）
-    区分度从"全部挤在 0.6"变成"第一名明显领先"。
+    最终方案：灰度 NCC + 旋转搜索
+    ---------------------------
+        1. 灰度（不二值化）—— 保留笔画粗细，避免细线条碎裂
+        2. 自适应阈值拉伸到 0~1 —— 抹掉 HUD 半透明蒙层带来的亮度漂移
+        3. 图案外接框 -> 正方形 -> 32x32 —— 消掉尺度差异
+        4. 15° 步长旋转搜索取最大 NCC —— 螺旋/星形对旋转敏感
+
+    实测（2026-11-21 实盘，对面 仪式巨像 = 地+幻）：
+        幻系位置  幻 0.451（第二名普通 0.367）
+        地系位置  地 0.798（第二名武   0.647）
+    两个位置都判对，且第一名领先明显。
+
+    返回的分数是 NCC（-1~1），越高越像。
     """
-    import cv2
     if patch is None or patch.size == 0:
         return (None, -1.0)
 
-    a = _norm_pattern(_pattern_mask(patch))
+    a = _gray_norm(patch)
     if a is None:
         return (None, -1.0)
 
     best = (None, -1.0)
     for name, t in tpl.items():
-        b = _norm_pattern(_pattern_mask(t))
+        b = _gray_norm(t)
         if b is None:
             continue
-        inter = float((a * b).sum())
-        union = float(a.sum() + b.sum() - inter)
-        sc = inter / union if union > 0 else 0.0
+        sc = _ncc_rot(a, b)
         if sc > best[1]:
             best = (name, sc)
     return best
 
 
-def _pattern_mask(im, size=120):
-    """圆内的白色图案 -> 二值掩码。
+def _gray_norm(im, out=32):
+    """灰度归一化：不二值化，只做亮度拉伸 + 图案外接框归一化。
 
-    图案比彩色底亮，所以取圆内亮度的 (中位 + 99 分位)/2 作阈值。
-    用中位和 99 分位的中间值而不是固定阈值，是因为 HUD 会蒙一层半透明，
-    整体亮度会漂。
+    保留笔画粗细是这里的关键 —— 二值化会把 2~3px 宽的螺旋线条切成碎块，
+    形状特征完全失真（实测幻系因此掉到第 4 名）。
     """
     import cv2
     g = cv2.cvtColor(np.ascontiguousarray(im).astype(np.uint8),
                      cv2.COLOR_RGB2GRAY).astype(np.float32)
-    g = cv2.resize(g, (size, size), interpolation=cv2.INTER_LINEAR)
-    h, w = g.shape
-    yy, xx = np.mgrid[0:h, 0:w]
-    rr = np.sqrt((yy - h / 2.0 + 0.5) ** 2 + (xx - w / 2.0 + 0.5) ** 2) / (h / 2.0)
-    inside = rr < 0.92
-    v = g[inside]
-    if v.size == 0:
-        return None
-    thr = (float(np.percentile(v, 50)) + float(np.percentile(v, 99))) / 2.0
-    return ((g > thr) & inside).astype(np.float32)
+    g = cv2.resize(g, (120, 120), interpolation=cv2.INTER_LINEAR)
 
+    v = g.ravel()
+    lo = float(np.percentile(v, 50))
+    hi = float(np.percentile(v, 99))
+    thr = (lo + hi) / 2.0
+    span = max(1.0, hi - thr)
+    gl = np.clip((g - thr) / span, 0.0, 1.0)
 
-def _norm_pattern(mask, out=48):
-    """图案外接框 -> 正方形 -> 缩放到 out x out（消掉尺度差异）。"""
-    import cv2
-    if mask is None:
+    ys, xs = np.nonzero(gl > 0.35)
+    if len(ys) < 10:
         return None
-    ys, xs = np.nonzero(mask)
-    if len(ys) < 8:
-        return None
-    y0, y1 = int(ys.min()), int(ys.max()) + 1
-    x0, x1 = int(xs.min()), int(xs.max()) + 1
-    crop = mask[y0:y1, x0:x1]
+    crop = gl[ys.min():ys.max() + 1, xs.min():xs.max() + 1]
     s = max(crop.shape)
     pad = np.zeros((s, s), np.float32)
     oy = (s - crop.shape[0]) // 2
     ox = (s - crop.shape[1]) // 2
     pad[oy:oy + crop.shape[0], ox:ox + crop.shape[1]] = crop
     return cv2.resize(pad, (out, out), interpolation=cv2.INTER_AREA)
+
+
+def _ncc(a, b):
+    """归一化互相关（零均值）。"""
+    a2 = a - a.mean()
+    b2 = b - b.mean()
+    d = float(np.linalg.norm(a2) * np.linalg.norm(b2))
+    return float((a2 * b2).sum() / d) if d > 0 else 0.0
+
+
+def _ncc_rot(a, b, step=15):
+    """旋转搜索取最大 NCC。
+
+    螺旋、星形这类图案在 HUD 上可能带轻微旋转（图标有浮动动画），
+    15° 步长已能覆盖，24 次旋转 × 18 个模板 = 432 次 NCC，
+    单次约 0.02ms，整帧 10ms 量级，可接受。
+    """
+    import cv2
+    best = _ncc(a, b)
+    h, w = b.shape
+    c = (w / 2.0, h / 2.0)
+    for ang in range(step, 360, step):
+        M = cv2.getRotationMatrix2D(c, ang, 1.0)
+        br = cv2.warpAffine(b, M, (w, h), flags=cv2.INTER_LINEAR)
+        s = _ncc(a, br)
+        if s > best:
+            best = s
+    return best
 
 
 # ------------------------------------------------------------------ 组合

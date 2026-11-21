@@ -49,6 +49,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "src"))
 sys.path.insert(0, r"D:\Tools")
 
+import hud_ident                      # noqa: E402
+
 _lock = threading.Lock()
 _perc = None
 _screen = None
@@ -135,7 +137,41 @@ def identify(now=None, foe_hp_pct=None):
     except Exception as e:
         _log("FOE identify failed: %s: %s" % (type(e).__name__, e))
 
-    # ---- 我方：头像模板优先（队伍已知，只有 4/5 有模板）
+    # ---- 我方：名字直接查 my_team（队伍已知，5 只名字都不同）
+    #
+    # 为什么这条路最可靠（2026-11-21 实盘验证）
+    # ------------------------------------------
+    # 我方队伍是 `my_team` 表里已知的 5 只：音速犬 / 冰钻布鲁斯 / 卡瓦重 /
+    # 银月狼王 / 恶魔狼。HUD 名字条 OCR 实测读到 "冰钻布鲁斯" conf=1.0。
+    #
+    # 比头像模板强：模板只有 4/5 只覆盖，实测匹配分 0.515，还把恶魔狼
+    # 认成了"首领-恶魔狼"（13000152）。而名字只要命中 my_team 就绝不会错
+    # —— 因为**我方不可能出现队伍外的精灵**。
+    #
+    # 注意：这里用名字是安全的，和敌方不同。敌方名字是玩家昵称（不可信），
+    # 但我方是**我们自己的队伍**，名字就那 5 个，且 OCR 能读到。
+    if _ident.get("self") is None:
+        try:
+            name = _self_by_name(_scr)
+            if name:
+                _ident["self"] = name
+                _ident["self_conf"] = 1.0
+                _log("SELF -> %s (名字)" % name)
+        except Exception:
+            pass
+
+    # ---- 我方兜底 1：血条绝对值（"162/345" 的分母）
+    if _ident.get("self") is None:
+        try:
+            name = _self_by_hp_bar(_scr)
+            if name:
+                _ident["self"] = name
+                _ident["self_conf"] = 1.0
+                _log("SELF -> %s (血条绝对值)" % name)
+        except Exception:
+            pass
+
+    # ---- 我方兜底 2：头像模板（只有 4/5 有模板）
     if _ident.get("self") is None:
         try:
             import portraits
@@ -150,14 +186,14 @@ def identify(now=None, foe_hp_pct=None):
                 if stem and sc >= 0.75:
                     sid = P.species_of(stem + ".png", "self")
                     nm = P.species_name(sid) if sid else None
-                    if nm:
+                    if nm and _in_my_team(nm):
                         _ident["self"] = nm
                         _ident["self_conf"] = float(sc)
-                        _log("SELF -> %s (%.2f)" % (nm, sc))
+                        _log("SELF -> %s (头像 %.2f)" % (nm, sc))
         except Exception:
             pass
 
-    # 我方兜底：立绘 ONNX（必须和 my_team 里某只对得上）
+    # 我方兜底 3：立绘 ONNX（必须和 my_team 里某只对得上）
     if _ident.get("self") is None:
         try:
             import portrait_onnx as PO
@@ -185,6 +221,117 @@ def _in_my_team(name):
         return False
 
 
+def _self_by_name(screen):
+    """读我方 HUD 名字，命中 my_team 才返回。
+
+    为什么我方可以用名字而敌方不行
+    ------------------------------
+    敌方名字是**玩家自己改的昵称**（排位里全是"漆黑的冥古龙""黑武士"），
+    所以我方绝不能用名字当身份。
+    但我方是**我们自己的队伍**，就那 5 只，且 HUD 上印的是种族名。
+    实测 2026-11-21 实盘：读到 "冰钻布鲁斯" conf=1.0，正好在队伍里。
+
+    唯一的风险是 OCR 把名字读成队伍外的另一只 —— 所以这里要求
+    **必须命中 my_team**，否则返回 None（宁可认不出，也不认错）。
+    """
+    try:
+        team = _my_team_hp()
+        if not team:
+            return None
+        raw, conf = hud_ident.read_name(screen, "my",
+                                       vocab=hud_ident._species_vocab())
+        if not raw:
+            return None
+        # 名字条可能带 "60级" 之类后缀，先做包含匹配
+        for name in team:
+            if name and name in raw:
+                return name
+        # 再做词表最近邻
+        if conf >= 0.85:
+            for name in team:
+                if raw == name:
+                    return name
+        return None
+    except Exception:
+        return None
+
+
+def _my_team_hp():
+    """我方队伍 {种族名: max_hp}。"""
+    try:
+        import sqlite3
+        import paths
+        db = sqlite3.connect(str(paths.DB))
+        db.row_factory = sqlite3.Row
+        try:
+            out = {}
+            for r in db.execute(
+                    "SELECT sp.name, t.max_hp FROM my_team t "
+                    "JOIN species sp ON sp.id=t.species_id ORDER BY t.slot"):
+                if r["name"] and r["max_hp"]:
+                    out[r["name"]] = int(r["max_hp"])
+            return out
+        finally:
+            db.close()
+    except Exception:
+        return {}
+
+
+def _self_by_hp_bar(screen):
+    """读我方血条上的 "162/345"，用分母反查是哪只精灵。
+
+    为什么这条路最可靠
+    ------------------
+    我方队伍是已知的 5 只，max_hp 分别是 366/345/352/417/417。
+    HUD 血条直接印着绝对值，读到分母就能唯一确定（417 那两只有歧义，
+    交给头像模板区分）。
+
+    比头像模板强的地方：模板只有 4/5 只覆盖，实测匹配分 0.515，
+    还把恶魔狼认成了"首领-恶魔狼"。而血条数字是游戏自己画的，改不了。
+
+    返回种族名或 None。
+    """
+    try:
+        import cv2
+        import numpy as np
+        import digitmat
+        img = screen.grab_client((0, 0, 2560, 1600))
+        if img is None or getattr(img, "size", 0) == 0:
+            return None
+        bgr = np.ascontiguousarray(img[:, :, ::-1])
+        team = _my_team_hp()
+        if not team:
+            return None
+
+        # 血条数字在血条中段，box 比血条本身宽一点容错
+        for box in ((150, 150, 400, 46), (140, 145, 420, 56),
+                    (160, 155, 380, 40)):
+            try:
+                r, text, conf = digitmat.read_bar_digits(bgr, box, "my")
+            except Exception:
+                continue
+            if not text or "/" not in text:
+                continue
+            try:
+                cur, mx = text.split("/", 1)
+                mx_v = int(mx)
+            except (ValueError, TypeError):
+                continue
+            if mx_v <= 0:
+                continue
+            # 精确命中
+            hits = [n for n, hp in team.items() if hp == mx_v]
+            if len(hits) == 1:
+                return hits[0]
+            # 容差 ±2（OCR 偶有 1~2 的偏差）
+            hits = [n for n, hp in team.items() if abs(hp - mx_v) <= 2]
+            if len(hits) == 1:
+                return hits[0]
+        return None
+    except Exception:
+        return None
+
+
 def _log(msg):
     """独立模式也要有日志，否则出问题无从查起。"""
     try:
@@ -210,7 +357,16 @@ def _get():
 
 
 def available():
-    """游戏窗口在不在。不在就别硬跑（会一直返回全空）。"""
+    """游戏窗口在不在。不在就别硬跑（会一直返回全空）。
+
+    ★ 环境变量 ROCO_NO_STANDALONE=1 时强制返回 False。
+    ----------------------------------------------------------------
+    test_ui 用独立端口起服务跑假数据，但 standalone 会去读**真实屏幕**
+    （游戏开着时），把测试数据源盖掉 —— 实测 /api/state 超时。
+    测试必须能明确关掉它。
+    """
+    if os.environ.get("ROCO_NO_STANDALONE"):
+        return False
     try:
         import winio
         return winio.find_game() is not None
@@ -271,15 +427,41 @@ def observe(force=False):
         pass
 
     # ---- 技能卡：有对面最大血量才能算百分比
+    #
+    # 分母用 `hp_band` 的**上限**（对手可能点满 + 生命性格），
+    # 而不是 `max_hp`（iv=60 无性格的默认值）。实测仪式巨像：
+    #     max_hp = 401        hp_band = (401, 461)
+    # 拿 401 作分母会把 330 的伤害算成 82%，实际只有 72%。
+    foe_hp_hi = foe_hp_range[1] if foe_hp_range else foe_max
+
     skills = []
     for i, s in enumerate(raw.get("skills") or [], 1):
         if not s:
             skills.append(None)
             continue
         dmg = s.get("value")
+
+        # 合理性过滤（2026-11-21 实盘踩到）
+        # ---------------------------------
+        # UI 面板遮挡卡片时，`_fill_missing` 会给缺失的槽位猜一个位置，
+        # 从被挡住区域的残留像素里读出一个荒唐的数字。
+        # 实测：卡片 1 被左侧设置面板挡住，读成 752，而对面最大血量只有 461
+        # （仪式巨像 iv60+生命性格的上限），算出 163% 的伤害。
+        #
+        # 判据：伤害超过对面血量上限的 1.2 倍就必然是误读。
+        # 用 1.2 而不是 1.0，是给"双倍克制 + 攻buff"留余量。
+        if dmg is not None and foe_hp_hi and dmg > foe_hp_hi * 1.2:
+            skills.append({
+                "i": i, "name": None, "element": None, "cost": None,
+                "dmg": None, "pct": None, "usable": False,
+                "note": "读数异常（%d > 血量上限 %d）" % (dmg, foe_hp_hi),
+                "_text": s.get("text"), "_kind": s.get("kind"),
+            })
+            continue
+
         pct = None
-        if dmg is not None and foe_max:
-            pct = round(100.0 * dmg / foe_max, 1)
+        if dmg is not None and foe_hp_hi:
+            pct = round(100.0 * dmg / foe_hp_hi, 1)
         skills.append({
             "i": i,
             "name": None,          # 读不出名字（见模块文档）
@@ -287,7 +469,7 @@ def observe(force=False):
             "cost": None,
             "dmg": dmg,
             "pct": pct,
-            "usable": bool(s.get("lit", True)),
+            "usable": bool(s.get("lit", True)) and dmg is not None,
             "note": None,
             # 独立模式特有的原始读数，前端可以显示"卡 N: 175"
             "_text": s.get("text"),

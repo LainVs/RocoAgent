@@ -70,10 +70,25 @@ def _db():
     return db
 
 
-def candidates_by_types(types):
+def candidates_by_types(types, subset=True):
     """属性组合 -> 候选种族名列表。
 
     types 为空时返回 []（表示"属性未知"，不是"无属性"）。
+
+    subset=True（默认）
+    -------------------
+    只用**已读到的属性做包含匹配**，而不是精确相等。
+
+    为什么必须这样（2026-11-21 实盘踩到）
+    ------------------------------------
+    对面「仪式巨像」在库里是 地+毒 双属性，但 HUD 上第二个属性图标
+    被头像/血条挡住了，只读到「地」。如果要求"精确相等"，
+    候选池里就只剩纯地系的 52 只，真正的答案反而不在里面。
+
+    改成"候选的属性必须**包含**已读到的属性"之后：
+        读到 ['地']      -> 地、地+毒、地+翼… 都在候选里
+        读到 ['地','毒'] -> 只剩 地+毒
+    读到的属性越多，池子越小；读漏了也不会把正确答案排除掉。
     """
     if not types:
         return []
@@ -88,7 +103,9 @@ def candidates_by_types(types):
                 ts = set(json.loads(r["type_names"] or "[]"))
             except Exception:
                 continue
-            if ts == want:
+            if not ts:
+                continue
+            if (want <= ts) if subset else (ts == want):
                 out.append(r["name"])
     except Exception:
         pass
@@ -294,13 +311,18 @@ def identify(screen, prev=None, side="foe"):
     out["detail"]["n_candidates"] = len(cands)
 
     def _accept(name):
-        """属性硬否决：候选的属性必须和 HUD 读到的完全一致。"""
+        """属性硬否决：候选的属性必须**包含** HUD 读到的属性。
+
+        用包含而不是相等，是因为 HUD 上第二个图标经常被遮挡
+        （实测对面「仪式巨像」是 地+毒，但只读到「地」）。
+        要求相等会把正确答案排除掉；要求包含则只会放宽，不会误放。
+        """
         if not name:
             return False
         if not types:
             return True          # 属性没读出来，无法否决
         got = set(types_of(name))
-        return got == set(types)
+        return set(types) <= got
 
     # ---- 2. 名字（先当昵称查表）
     try:
