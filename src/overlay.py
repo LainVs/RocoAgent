@@ -332,14 +332,21 @@ def clamp_to_virtual_screen(css_x, css_y, css_w, css_h, scale=None):
         px, py = int(css_x), int(css_y)
         pw = max(1, int(css_w))
         ph = max(1, int(css_h))
+        # 要求窗口至少有 margin×margin 落在屏幕里，**且左上角不能为负太多**
+        #
+        # 只判"有交集"不够：实测配置里存过 (-6,-8)，窗口贴着屏幕左上角
+        # 外面一点点 —— 有交集所以放行，但标题栏被切掉，拖动体验很差。
         margin = 80
         overlap_x = min(px + pw, vx + vw) - max(px, vx)
         overlap_y = min(py + ph, vy + vh) - max(py, vy)
-        if overlap_x >= margin and overlap_y >= margin:
+        # 左上角最多允许露出 -8px（视觉上贴边，但不切标题栏）
+        edge_ok = (px >= vx - 8) and (py >= vy - 8)
+        if overlap_x >= margin and overlap_y >= margin and edge_ok:
             return css_x, css_y
-        _log("pos clamp: (%d,%d) 在屏幕外（逻辑桌面 %dx%d @%d,%d），"
-             "回到左上角" % (px, py, vw, vh, vx, vy))
-        return 40, 40
+        _log("pos clamp: (%d,%d) 不可用（逻辑桌面 %dx%d @%d,%d，"
+             "交集 %dx%d），回到左上角"
+             % (px, py, vw, vh, vx, vy, overlap_x, overlap_y))
+        return max(vx + 40, 40), max(vy + 40, 40)
     except Exception:
         return css_x, css_y
 
@@ -942,15 +949,24 @@ def _run(args):
                 # 窗口越来越宽（实测 509 -> 639 -> … 无限增长）。
                 css_w = state.get("css_w") or args.width
                 css_h = int(h) + 2
-                # 缩放倍数用页面读到的 dpr（dpi_scale 在 overlay 进程里
-                # 实测返回 1.0，不可靠）。
-                # 如果还没拿到（第一次 fit 可能早于 pin size），现读一次。
-                s = state.get("dpr") or 0
+                # 倍率来源优先级（单一事实来源原则）：
+                #   1. winprobe 实测的 device/css（启动时用 CSS 视口标定）
+                #   2. 页面 devicePixelRatio
+                #   3. 1.0
+                #
+                # 为什么不用 dpi_scale()：它在 overlay 进程里实测返回 1.0
+                # （GetDpiForSystem 对非 DPI-aware 进程报 96），不可靠。
+                s = 0.0
+                try:
+                    import winprobe
+                    s = float(winprobe.device_scale(
+                        winprobe.probe(hwnd)) or 0)
+                except Exception:
+                    s = 0.0
                 if s < 1.5:
                     try:
                         s = float(win.evaluate_js(
                             "window.devicePixelRatio || 1") or 1.0)
-                        state["dpr"] = s
                         _log("fit: lazy dpr=%.1f" % s)
                     except Exception:
                         s = 1.0
@@ -1081,24 +1097,44 @@ def _run(args):
         # WebView2 按页面内容"自适应"。而且 win.resize() 在透明+无焦点
         # 窗口上会阻塞。所以用 SetWindowPos 显式钉尺寸。
         #
-        # 缩放倍数必须按**窗口所在显示器**取（GetDpiForWindow），
-        # 不能用 dpi_scale() 的 GetDpiForSystem 兜底 —— 那个对非
-        # DPI-aware 进程返回 96，会算出 1.0，把窗口砍一半。
+        # ★ 尺寸口径由**启动自检**决定，不再猜（winprobe）
+        #
+        # 踩过三次，每次都是"某一层以为是物理、另一层以为是逻辑"：
+        #   1. 存物理、读当 CSS   -> 窗口跑到 4236（屏幕 3072 宽）
+        #   2. 读时又 /scale       -> 窗口跑到 -572
+        #   3. pin size 乘错倍率   -> 窗口砍一半（340x620 变 170x310）
+        #
+        # 关键坑：只做"设 400 读回 400"这个实验**不足以定口径**。
+        # 实测 SetWindowPos(680) -> rect 680，看起来"同口径"，
+        # 但同一时刻页面 innerWidth=340 —— 也就是说 680 设备像素 = 340 CSS。
+        # 必须拿 CSS 视口交叉验证才能算出真实倍率。
         try:
-            # SetWindowPos 尺寸 = 物理像素。create_window 已经给了正确值，
-            # 这里只是把它钉死（防止 WebView2 按内容自适应）。
-            s = dpi_scale(hwnd)
-            _log("pin dpi: GetDpiForWindow=%s -> scale=%.2f"
-                 % (UD.GetDpiForWindow(hwnd), s))
+            import winprobe
+            # reader 会被 probe 调用两次（设尺寸前后各一次），
+            # 所以这里只传一个纯读取函数。
+            def _read_vp():
+                w_css = win.evaluate_js("window.innerWidth || 0")
+                h_css = win.evaluate_js("window.innerHeight || 0")
+                return (int(w_css or 0), int(h_css or 0))
+
             time.sleep(0.8)
+            p = winprobe.probe(hwnd, reader=_read_vp)
+            _log("winprobe: %s" % winprobe.describe(probe_result=p))
+            mul = winprobe.device_scale(p)
+            if p.get("ratio_suspect"):
+                _log("pin: 倍率可疑（%.2f vs dpi %.2f），退回 dpi 比例"
+                     % (mul, p["scale"]))
+                mul = p["scale"]
+            _log("pin: device/css=%.2f（css_viewport=%s）"
+                 % (mul, p.get("css_viewport")))
             cur = ctypes.wintypes.RECT()
             UD.GetWindowRect(hwnd, ctypes.byref(cur))
             UD.SetWindowPos(hwnd, 0, cur.left, cur.top,
-                            int(args.width * s), int(args.height * s),
+                            int(args.width * mul), int(args.height * mul),
                             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)
             time.sleep(0.4)
-            _log("pin size (%dx%d css x%.1f) -> rect=%s"
-                 % (args.width, args.height, s, _rect_str(hwnd)))
+            _log("pin size (%dx%d css, mul=%.2f) -> rect=%s"
+                 % (args.width, args.height, mul, _rect_str(hwnd)))
         except Exception as e:
             _log("initial SetWindowPos FAIL: %s" % e)
 

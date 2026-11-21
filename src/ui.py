@@ -84,9 +84,44 @@ def start_server(port):
 
 
 def open_console(port):
+    """开控制台窗口。
+
+    ★ 不用 webbrowser.open()
+    -----------------------
+    用户反馈："点启动应用就要打开一整个谷歌浏览器，会很卡的"。
+
+    Chrome 一个实例起步几百 MB，还会混进用户自己的浏览会话
+    （关掉时可能连带关掉用户正在看的标签页）。
+
+    改用 WebView2 独立窗口（console_win.py）：系统自带、单独进程、
+    内存低一个量级，而且和悬浮窗同一套渲染引擎。
+    只有 WebView2 也不可用时才退回浏览器。
+    """
     url = "http://127.0.0.1:%d/console.html" % port
     print("  控制台        %s" % url)
+
+    exe = sys.executable
+    try:
+        import importlib.util
+        has_wv = importlib.util.find_spec("webview") is not None
+    except Exception:
+        has_wv = False
+
+    if has_wv:
+        subprocess.Popen(
+            [exe, os.path.join(SRC, "console_win.py"), "--port", str(port)],
+            cwd=ROOT, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=DETACHED | NO_WINDOW)
+        print("                （WebView2 窗口，不占用浏览器）")
+        return True
+
+    # 兜底：当前解释器没有 pywebview
+    print("                当前解释器没有 pywebview，退回浏览器")
+    print("                想用独立窗口请用系统 Python：")
+    print("                  python src\\ui.py")
     webbrowser.open(url)
+    return False
 
 
 def open_overlay(port):

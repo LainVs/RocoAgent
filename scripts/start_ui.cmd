@@ -40,6 +40,7 @@ if errorlevel 1 (
 )
 
 if "%~1"=="" (
+  rem Default: overlay + console, both WebView2 (no browser window).
   "%PY%" src\ui.py --overlay --console
 ) else (
   "%PY%" src\ui.py %*
