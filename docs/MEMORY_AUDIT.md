@@ -181,3 +181,120 @@ Get-Counter '\Memory\Pool Nonpaged Bytes','\Memory\Pool Paged Bytes'
 | `MsMpEng`（0.42 GB） | Windows Defender |
 | `mihomo.exe` | 代理内核，关了断网 |
 | `svchost`（2.9 GB / 103 个） | 系统服务，不能动 |
+
+---
+
+## 八、两个"上 G"的进程怎么优化的（2026-11-21 追加）
+
+用户问："更新程序 和 agent2api 这俩都上 G 了不太对吧，能优化吗"
+
+### 8.1 wetype_update（微信输入法更新程序）
+
+**问题**：清掉后**又自己起来**，而且带 12 个 webview2。
+
+**根因**：
+
+```
+WeType Management Service (wetype_service.exe, StartMode=Auto)
+  ├─ wetype_server.exe    197 MB   输入法本体（关了就打不了中文）
+  ├─ wetype_renderer.exe   55 MB   渲染
+  └─ wetype_update.exe     54 MB   更新程序  <- 每次杀掉都会被 service 重启
+       └─ 12 个 msedgewebview2  ~164 MB
+```
+
+光 `Stop-Process` 没用，service 会立刻拉起。
+
+**解法**（需要管理员权限）：
+
+```powershell
+# 1. 先把 exe 改名（最彻底，service 找不到就无法启动）
+$f = "C:\Program Files\Tencent\WeType\3.0.2.44\wetype_update.exe"
+Get-Process wetype_update -EA SilentlyContinue | Stop-Process -Force
+Rename-Item $f ($f + ".disabled")
+```
+
+用提权方式执行（Program Files 需要 UAC）：
+
+```powershell
+$b = [Text.Encoding]::Unicode.GetBytes($script)
+Start-Process powershell -Verb RunAs -Wait `
+  -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-EncodedCommand',
+                [Convert]::ToBase64String($b)
+```
+
+**效果**：
+
+```
+优化前  wetype 全家桶  480 MB（含 update 54 + 12 个 webview2 164）
+优化后  wetype 全家桶  263 MB（只剩 service 11 + server 198 + renderer 54）
+省                     217 MB
+输入法                  正常（wetype_server 还在）
+```
+
+**注意**：改名后微信输入法**无法自动更新**。要恢复：
+把 `wetype_update.exe.disabled` 改回 `wetype_update.exe`。
+
+### 8.2 agent2api 的 webview（管理界面）
+
+**问题**：882 MB 里 588 MB 是 4 个 `msedgewebview2`。
+
+**判断方法**：
+
+```powershell
+# 1. 看 user-data-dir —— 能区分"界面"和"必需组件"
+Get-CimInstance Win32_Process -Filter "ProcessId=<webview根>" |
+  ForEach-Object { $_.CommandLine -match 'user-data-dir="([^"]+)"'; $Matches[1] }
+# 结果：C:\Users\Lenovo\AppData\Local\com.workbuddy.local-proxy\EBWebView
+#   -> 是管理界面的浏览器数据目录，不是 API 必需
+
+# 2. 看 API 端口是否独立
+Get-NetTCPConnection -State Listen | Where-Object OwningProcess -eq <主进程>
+# 结果：127.0.0.1:3065 由 agent2api.exe 自己监听
+#   -> API 在独立进程，webview 只是前端
+```
+
+**解法**：直接停那 4 个 webview2 进程即可。
+
+```powershell
+# 找出属于 agent2api 的 webview 根
+Get-CimInstance Win32_Process | Where-Object {
+  $_.Name -eq 'msedgewebview2.exe' -and
+  $_.CommandLine -match 'webview-exe-name=agent2api'
+} | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+**效果**：
+
+```
+优化前  agent2api 子树  882 MB（webview 588）
+优化后  agent2api 子树  242 MB（只剩本体 + providers 插件）
+省                      640 MB
+API                     3065 端口正常响应（404 是根路径无路由，属正常）
+```
+
+**注意**：webview 是它的**设置界面**。关掉后如果想改配置，
+需要重启 agent2api（`--autostart`）让它重新拉起界面。
+
+### 8.3 优化总账
+
+| 目标 | 优化前 | 优化后 | 省 |
+|---|---|---|---|
+| wetype 全家桶 | 480 MB | 263 MB | **217 MB** |
+| agent2api | 882 MB | 242 MB | **640 MB** |
+| **合计** | | | **857 MB** |
+
+内存使用率：`99.4% → 85.1%`，可用 `0.2 → 4.7 GB`。
+
+### 8.4 这两个都是"会自己回来"的
+
+| 进程 | 谁拉起它 | 怎么彻底解决 |
+|---|---|---|
+| `wetype_update` | WeType Management Service（自启服务） | 把 exe 改名（已做） |
+| `agent2api` webview | agent2api.exe 启动时创建 | 每次手动关，或改它的启动参数（未研究） |
+
+`oc_prompt_ui` 同理 —— 计划任务 `OcPromptJobs` 每分钟拉起：
+
+```powershell
+# 不想用了就禁用（我没动，因为不是本项目装的）
+Disable-ScheduledTask -TaskName OcPromptJobs
+```
