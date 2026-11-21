@@ -5,6 +5,9 @@
 """
 from __future__ import annotations
 
+import io
+import json
+import os
 import time
 import numpy as np
 import cv2
@@ -276,15 +279,61 @@ class Perc:
             return {"pct": None, "color": "none", "ui": False}
         return _read_bar(crop, (0, 2, w, h))
 
+    # 血条垂直搜索偏移（基准像素）。
+    # **0 必须在最前面**：原位能读到时必须用原位，否则会读到别的行
+    # （实测先试 -48 时把满宽的其它色块读成 100% 血，反而引入回归）。
+    BAR_SEARCH_DY = (0, -16, -32, -48, -64, 16, 32)
+
+    # 血条垂直偏移。
+    #
+    # ⚠ 2026-11-22 实测结论：**不要做"读不到就上下搜索"**。
+    # 试过按偏移搜索并成对校验，结果是灾难 —— 场景里到处都有满足颜色
+    # 条件的色块：
+    #
+    #     live7.png（我方 0/417 已倒的真实战斗）
+    #         -> 搜索读到 my=100%
+    #
+    # 单看颜色无法区分"血条"和"背景色块"，所以搜索会**制造假数据**，
+    # 比读不到危险得多。真正让 4:3 可用的是 `_read_bar` 里新增的
+    # `solid` 判据（填充从最左列连续铺开），它在本位就能生效。
+    #
+    # 这里保留常量 0：将来若确认某个分辨率需要固定偏移，由人写死，
+    # 不靠运行时搜索猜。
+    BAR_DY = 0
+
+    def _read_pair_at(self, frame, scale, dy):
+        out = []
+        for box in (MY_BAR, FOE_BAR):
+            x, y, w, h = box
+            crop = self.screen.crop_frame(
+                frame, (x, y + dy - 2, w, h + 4), scale)
+            if crop is None:
+                return None, None
+            out.append(_read_bar(crop, (0, 2, w, h)))
+        return out[0], out[1]
+
     def _bar_from(self, frame, scale, box):
-        """同 _bar，但从已经抓好的一整帧里切（省一次 16ms 的抓屏）。"""
+        """单条血条（固定偏移，不做搜索）。"""
         x, y, w, h = box
         if frame is None:
             return self._bar(box)
-        crop = self.screen.crop_frame(frame, (x, y - 2, w, h + 4), scale)
+        crop = self.screen.crop_frame(
+            frame, (x, y + self.BAR_DY - 2, w, h + 4), scale)
         if crop is None:
-            return {"pct": None, "color": "none", "ui": False}
+            return {"pct": None, "color": "none", "ui": False, "solid": False}
         return _read_bar(crop, (0, 2, w, h))
+
+    def _bars_pair(self, frame, scale):
+        """成对读我方/敌方血条（同一偏移，保证两条血条在同一水平线）。"""
+        if frame is None:
+            return self._bar(MY_BAR), self._bar(FOE_BAR)
+        my, foe = self._read_pair_at(frame, scale, self.BAR_DY)
+        if my is None:
+            return ({"pct": None, "color": "none", "ui": False,
+                     "solid": False},
+                    {"pct": None, "color": "none", "ui": False,
+                     "solid": False})
+        return my, foe
 
     def _grab(self, frame, scale, box):
         """同 screen.grab_s(box)，但走整帧切片。"""
@@ -301,15 +350,22 @@ class Perc:
             frame, scale = self.screen.grab_frame()
         else:
             frame, scale = None, (1.0, 1.0)
-        my = self._bar_from(frame, scale, MY_BAR)
-        foe = self._bar_from(frame, scale, FOE_BAR)
+        my, foe = self._bars_pair(frame, scale)
         # 两边血条都能读出数? 只说??HUD"。S5 赛季大厅左上那条金色横幅
         # 正好压在 MY_BAR/FOE_BAR ? 于是大厅被读?battle=1, 机器人对着
         # "开始挑战站一晚上也不点。真血条有灰色底板 (ui), 横幅没有;
         # 技能栏/倒计时在场时也足以证明在战斗里（缩放让底板判据失效时兜底）。?
         bars = my["pct"] is not None and foe["pct"] is not None
-        battle = bool(bars and my["ui"] and foe["ui"])
-
+        # `ui` = 灰底板（基准分辨率下有效）；`solid` = 填充从最左列连续铺开
+        # （4:3 下没有底板时的等价信号，见 _read_bar）。
+        hud = bool((my.get("ui") or my.get("solid"))
+                   and (foe.get("ui") or foe.get("solid")))
+        # VS 准备页两边血条都画成满格、且**没有灰底板**。它比战斗画面
+        # 更像"有 HUD"，但它在对局之外 —— 不加这条会让机器人在 VS 页
+        # 里出招（实测 stuck_000004.png 被判成 battle=True）。
+        vs_like = (not my.get("ui") and not foe.get("ui")
+                   and (my["pct"] or 0) >= 99.5 and (foe["pct"] or 0) >= 99.5)
+        battle = bool(bars and hud and not vs_like)
         x0, y0, x1, y1 = SKILL_BOX
         cw, ch = x1 - x0, y1 - y0
         crop = self._grab(frame, scale, (x0, y0, cw, ch))
@@ -355,6 +411,9 @@ class Perc:
             # the full grab cost ~100 ms to read a 340x150 region.
             cnt_crop = self._grab(frame, scale, CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
+        # 技能栏可见 = 确定在战斗中（这里只用于日志，不再做血条偏移校准：
+        # 实测"读不到就搜索"会读到背景色块，把 0/417 读成 100%）。
+
         # 底板判据失效但技能栏画着 -> 仍然是在战斗。
         #
         # 注意：**不能用倒计时兜底**。实测 2026-11-21 03:00，大厅的
@@ -367,6 +426,13 @@ class Perc:
         # 现在要求：要么底板确认，要么技能栏真的画出来了（visible），
         # 单靠倒计时不再足以判定战斗。
         if bars and not battle and visible:
+            battle = True
+        # 技能栏画着 = 一定在战斗里（它只在对局中、且只在我方回合出现）。
+        #
+        # 2026-11-22：4:3 下血条的白框/灰底板判据全都失效，`battle` 只能靠
+        # 这一条。实测这比血条判据可靠得多 —— 血条颜色判据会读到场景色块
+        # （把 0/417 读成 100%），而技能栏是 4 张规整卡片，场景里不会有。
+        if visible and not battle:
             battle = True
 
         # Energy: a row of pips under the HP card. Only meaningful in battle,
@@ -406,7 +472,7 @@ def _read_bar(rgb, rect):
     """
     x, y, w, h = rect
     if x + w > rgb.shape[1] or y + h + 1 >= rgb.shape[0]:
-        return {"pct": None, "color": "none", "ui": False}
+        return {"pct": None, "color": "none", "ui": False, "solid": False}
     sub = rgb[y:y + h, x:x + w]
     r = sub[:, :, 0].astype(np.int16)
     g = sub[:, :, 1].astype(np.int16)
@@ -428,17 +494,33 @@ def _read_bar(rgb, rect):
     emx = np.maximum(np.maximum(er, eg), eb)
     emn = np.minimum(np.minimum(er, eg), eb)
     ui = bool((((emx - emn) < 20) & (emx > 70) & (emx < 125)).mean() > 0.55)
+    # ---- 没有灰底板时的等价信号（2026-11-22）
+    #
+    # 2048x1536（4:3）下血条**没有**上下那两条灰底板，`ui` 永远是 False，
+    # 于是 `battle` 永远 False —— 这就是"4:3 下每局只打 1 手"的根因。
+    #
+    # 真血条有一个场景不可能有的特征：填充**从最左列开始且连续**。
+    # 实测战斗帧 y=112~124 的填充是 cols 0..229（满宽连续）；
+    # 而大厅横幅/场景色块是零散分布，不会从 0 列连续铺开。
+    solid = False
+    if len(cols):
+        run = int(cols[-1] - cols[0] + 1)
+        contiguous = run >= 0.9 * (cols[-1] + 1) and cols[0] <= 1
+        solid = bool(contiguous and run >= 0.08 * w)
     if not len(cols) or cols[0] > 6:
         # No fill at all. Only call it an empty bar when the frame really is a
         # battle HUD; otherwise the reading is unknown.
-        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui}
+        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui,
+                "solid": False}
     pct = 100.0 * (cols[-1] + 1) / w
     px = sub[fm]
     if len(px) == 0:
-        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui}
+        return {"pct": 0.0 if ui else None, "color": "none", "ui": ui,
+                "solid": solid}
     mr, mg = px[:, 0].mean(), px[:, 1].mean()
     color = "green" if mg >= mr else ("orange" if mg > 0.6 * mr else "red")
-    return {"pct": round(min(pct, 100.0), 1), "color": color, "ui": ui}
+    return {"pct": round(min(pct, 100.0), 1), "color": color, "ui": ui,
+            "solid": solid}
 
 
 def _is_skillbar(crop, region, pills=None, slots=None):
