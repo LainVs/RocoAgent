@@ -407,6 +407,33 @@ def test_label(port):
     except Exception as e:
         ok(False, "未知物种", str(e)[:60])
 
+    # 模糊匹配：错字能救回库里名字，乱码要拒绝
+    try:
+        sys.path.insert(0, SRC)
+        import ui_server as _U
+        ok(_U._safe_species("冥古龙") == "冥古龙", "精确匹配")
+        got = _U._safe_species("冥古尤")
+        ok(got == "冥古龙", "编辑距离匹配（错字）", "冥古尤 -> %s" % got)
+        ok(_U._safe_species("07417") is None, "数字被拒")
+        ok(_U._safe_species("0/366") is None, "血量被拒")
+        ok(_U._safe_species("") is None, "空串被拒")
+    except Exception as e:
+        ok(False, "模糊匹配", str(e)[:60])
+
+    # OCR 结果文件（可能还没跑过，不算失败）
+    try:
+        p = os.path.join(ROOT, "logs", "ocr_names.json")
+        if os.path.exists(p):
+            with open(p, encoding="utf-8") as f:
+                d = json.load(f)
+            n_ok = sum(1 for v in d.values() if v.get("text"))
+            ok(len(d) > 0, "OCR 结果文件可读",
+               "%d 条，有效 %d" % (len(d), n_ok))
+        else:
+            ok(True, "OCR 结果文件（还没跑，跳过）")
+    except Exception as e:
+        ok(False, "OCR 结果文件", str(e)[:60])
+
 
 # ============================================================ 5. 窗口状态
 def test_window_state():
