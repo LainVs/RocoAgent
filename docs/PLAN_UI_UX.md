@@ -344,9 +344,10 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U29 | 日志着色按"正则碰巧命中"分类：场次边界和出招都是灰的，`STUCK recovery failed` 只算 warn | 渲染实测：`=== MATCH` 加粗高亮，筛选 全部/出招/异常/噪音 |
 | U30 | 「感知耗时」在过期帧上显示绿色 67ms（漏掉的最后一格假绿灯） | 渲染实测：`stale_green` 为空数组 |
 | U31 | 9 处空态各写各的，多数只说"缺什么"不说"该做什么" | 渲染实测：搜不存在的精灵会给出"试试更短的词" |
+| U32 | `/api/log` 的 offset 按解码后的字符串长度推算，中文日志被切断时会重复/丢行 | 单测：切在中文字符中间，offset 落在换行边界，续拉 120 行 0 重复 |
 
-**验证基线**：`python src/test_ui.py` → 170 项全过（原 62）；
-`--no-dom` 120 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 175 项全过（原 62）；
+`--no-dom` 125 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -358,8 +359,8 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 120 项，约 5 秒
-python src\test_ui.py                 # 170 项，约 90 秒，含真实渲染
+python src\test_ui.py --no-dom        # 125 项，约 5 秒
+python src\test_ui.py                 # 175 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -367,7 +368,7 @@ python src\test_ui.py                 # 170 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 170 项、`--no-dom` 120 项、
+**基线（本轮结束）**：`test_ui.py` 175 项、`--no-dom` 125 项、
 其余三个脚本 ALL PASS。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
@@ -379,7 +380,6 @@ python src\test_ui.py                 # 170 项，约 90 秒，含真实渲染
 ---
 
 ## 五、本轮踩到的一次事故（记录，防再犯）
-
 改文档里的测试基线数字时，我用 PowerShell 做了「读进来 → 正则替换 →
 写回去」：
 
@@ -405,6 +405,44 @@ git checkout -- docs/PLAN_UI_UX.md    # 文件已入库，直接丢弃工作区�
 
 教训：**只要文件里有中文，就不要用 PowerShell 往返改写**，
 哪怕只是改一个数字。
+
+### 五之二、第二次事故：按行号切块把文件头删掉了（2026-11-21 23:19）
+
+同一轮里我又踩了一个：
+
+```python
+# 危险：按行号索引删除一段，缩进/边界算错就会多删
+start = 100
+end = <找 "except OSError: pass">
+del lines[start:end+1]
+```
+
+我本想搬一段测试代码，结果 `del` 把 `test_ui.py` 的**模块头**
+（`ROOT` / `SRC` / `UI` / `ok()` / `FAILS` / `PASSES`）一起删掉了。
+
+**最危险的地方是它没有立刻暴露**：文件仍然能 `ast.parse`，测试也跑出
+"175 项全过" —— 因为跑的是**旧进程**，不是损坏的文件。如果我当时
+相信那个结果就提交了，整个测试框架就废了。
+
+发现方式：`git diff --numstat` 显示 **104 增 / 70 删**，
+而我预期是"纯追加"。删行数不对 → 立刻回查。
+
+**正确做法**：
+
+```python
+# 用 edit 工具做精确替换，不用行号切片
+```
+
+**教训**：
+1. **任何"纯追加"的改动，`git diff --numstat` 的删列必须是 0**。
+   不是 0 就停下来查。
+2. 修改测试文件后，除了跑测试，还要**确认关键符号还在**：
+   ```powershell
+   python -c "import io; s=io.open('src/test_ui.py',encoding='utf-8').read(); \
+              print('def ok:', 'def ok(' in s, 'ROOT:', 'ROOT =' in s)"
+   ```
+3. 恢复方式：`git checkout <上一个好提交> -- src/test_ui.py`，
+   然后**用 `edit` 重新追加**，不要再用脚本切行。
 
 ---
 
