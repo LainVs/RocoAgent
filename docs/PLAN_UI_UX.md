@@ -88,6 +88,9 @@ git 约定：
 | U16 | `docs/FRONTEND.md` 里 `data.html` 段落与实现对齐 | ✅ `3394cbb` |
 | U17 | `bot_stdout.log` 被 `[standalone]` 日志污染 | ✅ `5bab168` |
 | U18 | 回合明细把轮询行当手数（同一手最多重复 5 次） | ✅ `fba9e28` |
+| U19 | 队伍页把 `my_team.moves` 原样返回却从不显示（配置过期是最隐蔽的 bug） | ✅ `7f4455a` |
+| U20 | 段位卡读数卡死时，走势图仍画着 100 根假柱子 | ✅ `44e37b1` |
+| U21 | 头像标注只取前 60 张、无翻页 —— 我方 561 张永远标不完 | ✅ `e150fe2` |
 
 #### U15 为什么不改 `robot.py`
 
@@ -134,6 +137,41 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 同一张卡"。现在按 `(mid, turn, 血量, 动作)` 去重并显示
 「最近 100 条轮询 → 94 手（已去重）」。
 
+#### U19：配置过期是"最隐蔽的 bug"，但界面上看不到配置
+
+`docs/AGENTS.md` 记着：`my_team.moves` 一过期，`my_card_costs()` 就会把
+1 费技能当成 5 费，策略于是"莫名其妙选了低伤害技能"，很容易被误判成
+策略 bug。而 `ui_server.team()` 把 `moves` 原样返回、前端**从不渲染** ——
+等于没有任何人工核对入口。
+
+现在 `/api/team` 把 id 数组联表展开：
+
+```jsonc
+"skills": [
+  {"id": 7040320, "name": "火云车", "element": "火", "power": 140, "cost": 5},
+  {"id": 7020840, "name": "借用",   "element": "普通", "power": 0, "cost": 0}
+]
+```
+
+查不到的 id **保留成 `{"id": N, "name": null}`**，不静默丢掉 —— 让
+"库里没有"和"没配"能区分。队伍页每只显示 4 个技能块（序号 + 名字 +
+属性/威力/耗能），数量不是 4 时给警告。
+
+#### U20：卡死的读数不能画成趋势
+
+`badge_stuck` 为真时那 100 条 flat 是**段位卡读数卡在 2/3**，不是平局。
+原来走势图照画 100 根 18% 高的灰柱，等于把"读坏了"伪装成"这些局都没分
+胜负"—— 和绿灯骗人是同一类问题。现在整块换成说明文字，并指向新增的
+「今日 / 近 20 局增量」。
+
+#### U21：561 张待标注，只能看到前 60 张
+
+实测 `/api/portraits?side=self` → `total: 561`，但前端固定 `limit=60`
+且没有翻页。旧 UI 移除后头像标注积压了 1122 张，新 UI 做了标注页却
+**没法翻到第二页**，等于积压永远清不掉。现在加 offset 分页（60/页），
+显示「1–60 / 561 张待标注」+ 上一页/下一页，切 side 时重置到第 1 页。
+
+
 
 
 ---
@@ -175,9 +213,12 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 | U16 | `docs/FRONTEND.md` §3.1 / §3.2 / §4.2 / §4.3 | — |
 | U17 | `ui_server._robot_lines()` 按 `[standalone]` 前缀过滤 + 窗口 16KB→256KB | 计数从全 0 变成 `board_offline:10 / focus_lost:2 / waiting_board:1` |
 | U18 | `console.js refreshTurns()` 按 `(mid,turn,hp,action)` 去重 | 渲染实测：100 条轮询 → 94 手 |
+| U19 | `ui_server.team()` 联表展开技能 + `console.js skillRows()` | 渲染实测：5 只 / 20 个技能块，`借用 普通·0费` 等可读 |
+| U20 | `console.js refreshStats()` 的走势分支 | 渲染实测：`spark_bars=0`，显示"段位卡读数卡死" |
+| U21 | `console.js refreshLabel()` + `#labelPager` | 渲染实测：`1–60 / 64`、`第 1 / 2 页` |
 
-**验证基线**：`python src/test_ui.py` → 113 项全过（原 62）；
-`--no-dom` 81 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 117 项全过（原 62）；
+`--no-dom` 85 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -189,8 +230,8 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 81 项，约 4 秒
-python src\test_ui.py                 # 113 项，约 60 秒，含真实渲染
+python src\test_ui.py --no-dom        # 85 项，约 4 秒
+python src\test_ui.py                 # 117 项，约 60 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
