@@ -50,6 +50,36 @@ import sim.skill_db as _SD  # noqa: E402
 
 _conn = None
 
+# 立绘模板名 -> 种族名。
+#
+# 实测（2026-11-21）：turns.jsonl 里我方精灵名有时是立绘模板名
+# （wolf / wolf_leader），不是种族名。这会让 build_pokemon 抛
+# "未知精灵"。别名表与 opponent_model.ALIASES 保持一致。
+ALIASES = {
+    "wolf": "音速犬",
+    "wolf_leader": "音速犬",
+}
+
+# 名字里的形态/立绘后缀，要剥掉才能查到 species 表。
+# 例：银月狼王#2 -> 银月狼王，音速犬#5 -> 音速犬
+_SUFFIX_MARKS = ("#", "（", "(")
+
+
+def normalize_name(name):
+    """把立绘/形态名归一成种族名。
+
+    实测（2026-11-21）：turns.jsonl 里我方名字有
+        银月狼王#2 / 音速犬#5 / 冥古龙#27 / 卡瓦重#14
+    不归一化会让 326/943 条校准记录构造失败。
+    """
+    if not name:
+        return name
+    s = str(name)
+    for mark in _SUFFIX_MARKS:
+        if mark in s:
+            s = s.split(mark)[0]
+    return ALIASES.get(s, s)
+
 
 def _db():
     global _conn
@@ -183,7 +213,14 @@ def build_pokemon(name):
 
     六维用实测值（my_team 的 hp/atk/spa/def/spd/spe）。
     如果某只不在 my_team 里，退回用 species 的种族值 + 默认 IV 计算。
+
+    名字归一（实测 2026-11-21）：
+        turns.jsonl 里的我方精灵名可能是立绘模板变体：
+            银月狼王#2 / 音速犬#5 / 冥古龙#27
+        不归一化会让 326/943 条校准记录构造失败。
+        处理：去掉 #编号 + 别名映射。
     """
+    name = normalize_name(name)
     row = _my_team_row(name)
     if row is not None:
         sp = _species_row_by_id(row["species_id"])
