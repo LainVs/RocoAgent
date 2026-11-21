@@ -154,7 +154,14 @@
   },
   "badge_stuck": true,                        // 段位卡读数卡死
   "reliable": false,                          // 卡死时一律 false
-  "primary": "season"                         // 前端该拿哪个当主指标
+  "primary": "season",                        // 前端该拿哪个当主指标
+
+  "progress": {                               // ★ 增量口径（2026-11-21 新增）
+    "today":    {"wins": 3, "losses": 5, "decided": 8, "rate": 37.5},
+    "recent20": {"wins": 9, "losses": 11, "decided": 20, "rate": 45.0},
+    "since":    {"at": "2026-11-21 18:00:03", "wins": 124, "losses": 152},
+    "count": 31
+  }
 }
 ```
 
@@ -163,6 +170,51 @@
 - `season` 存在就以它为主（游戏内累计战绩）
 - `badge_stuck` 为真时，`results.jsonl` 推出来的胜率与走势**整块标注为不可用**
 - `season` 缺失（机器人没进过大厅）才退回 `results.jsonl`，并按 `reliable` 提示
+
+`progress` 由 `logs/record_snapshots.jsonl` 算出来：`record.save_state()` 每判完
+一场追加一行 `{ts,wins,losses,dw,dl}`，`decided` 只数 `dw/dl` 非零的行
+（建立基线的那次读数是 0/0，不算比赛）。**没有快照时整个 `progress` 是
+`null`**，前端显示 `—`，不能显示 0。
+
+为什么必须有它：`season` 是累计值，44.8% 一天动不了 0.3 个百分点 ——
+拿它判断"这次改动有没有用"等于没有反馈。
+
+### 3.2 `/api/bot` 的 phase（2026-11-21 新增）
+
+以前只有 `stopped / stale / live` 三态。机器人连不上板子时会在
+`BLE waiting for board …` 里循环最多 30 分钟，`bot_stdout.log` 一直在更新，
+于是 `phase=live`、界面显示绿色"运行中" —— 2026-11-21 16:06 的真实故障。
+
+现在 `phase` 由**日志尾**推断（不碰硬件）：
+
+| phase | 触发（日志最后一条能定性的行） | 界面 |
+|---|---|---|
+| `waiting_board` | `BLE waiting for board` | 琥珀 + 等待板子 12s |
+| `ble_failed` | `BLE FAILED` | 红 + 板子连接失败 |
+| `focus_lost` | `FOCUS LOST` | 琥珀 + 焦点丢失 |
+| `board_offline` | `(board offline)` | 红 |
+| `live` | 心跳 `state battle=` 且 `state_age <= 3s` | 绿 |
+| `stale` | 有心跳但 `state_age > 3s` | 琥珀 |
+| `stopped` | 没有 robot 进程 | 灰 |
+
+附带两个字段：
+
+```jsonc
+"activity": {                    // 最后一条能定性的日志
+  "event": "waiting_board", "text": "20:09:18 BLE waiting for board …",
+  "age": 12.4,                   // 行首 HH:MM:SS 算出来的秒数，跨天自动回退
+  "counts": {"waiting_board": 1}
+},
+"board": {                       // 输入链路（espfast.log / ble.log）
+  "state": "offline",            // connected / offline / idle / null
+  "text": "16:06:42 link down, reconnecting (#1)",
+  "age": 3323.0,
+  "transport": "usb cdc on COM8"
+}
+```
+
+`board.state == "connected"` 也可能是**很久以前**的日志（espfast 停了不写新行），
+所以前端在 `age > 600s` 时降级成「最后已连 X 前」（琥珀），不按绿色处理。
 
 ---
 
@@ -208,9 +260,18 @@
 | `turns.jsonl` 941KB 每次全读 | 服务端按 mtime 缓存解析结果 |
 | 日志全量重读 | 按字节 offset 增量返回 |
 
-### 4.3 数据页 `data.html`
+顶栏（2026-11-21 新增）：状态点 + 文案 + **输入链路小标**。
+非 `live` 状态会写成「等待板子 12s」这种带时长的说法，
+板子日志超过 10 分钟没更新时降级成「板子 55min前」，不再按绿色处理。
 
-图鉴浏览 + 队伍编辑 + 战绩复盘。可以晚一点做，优先级低于控制台。
+键盘：`1~7` 切页、`/` 聚焦图鉴搜索、`Esc` 退出输入。
+只在没有输入焦点时生效（头像标注页要打精灵名）。
+
+### 4.3 数据页 `data.html`（未实现，功能已并入控制台）
+
+早期设计里计划单独做一个 `data.html`（图鉴 + 队伍编辑 + 复盘），
+实际实现时拆进了控制台的「我方队伍 / 精灵图鉴 / 回合明细」三页，
+**没有独立文件**。本段保留是为了解释历史文档里的引用。
 
 ---
 

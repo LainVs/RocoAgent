@@ -89,16 +89,44 @@ git 约定：
 
 ---
 
-## 二、执行顺序与提交
+## 二、执行顺序与提交（实际）
 
-| 步 | 内容 | 提交信息 |
+| 步 | 内容 | 提交 |
 |---|---|---|
-| 0 | 本文件 | `docs(ui): UX 优化计划清单` |
-| 1 | U1+U2+U3 | `feat(ui): 状态可见性——等待板子/焦点丢失/板子离线可辨认` |
-| 2 | U4+U5 | `feat(ui): toast 替代 alert，连接状态只提示一次` |
-| 3 | U6~U9 | `fix(ui): 对比度 2.73->4.5、焦点环、表格横向滚动、控制台快捷键` |
-| 4 | U10~U12 | `feat(ui): 战绩增量——逐场快照 + 今日/近 20 局` |
-| 5 | U16 | `docs(ui): FRONTEND 与实现对齐` |
+| 0 | 本文件 | `06b4094 docs(ui): UX 优化计划清单` |
+| 1 | U1+U2+U3+U10+U11 | `9cdf45d feat(ui): 状态可见性 + 战绩增量数据层` |
+| 2 | U4+U5 | `cfc0806 feat(ui): toast 替代 alert，连接状态只在变化时提示` |
+| 3 | U6~U9 | `6fa031c fix(ui): 对比度 2.73→4.72、焦点环、表格横向滚动、键盘快捷键` |
+| 4 | U12 | `b93fef7 feat(ui): show today and last-20 win delta on stats page` |
+| 5 | U16 | 见下方「执行记录」 |
+
+---
+
+## 二之二、执行记录（2026-11-21 晚）
+
+**已完成**：U1–U12、U16。
+
+| # | 落地位置 | 验证 |
+|---|---|---|
+| U1 | `ui_server.bot_activity()` / `board_status()` / `_line_age()` | `test_ui` 8 条新断言 |
+| U2 | `console.js` `PHASE_TEXT` / `PHASE_LEVEL` / `fmtAge()` | 真实渲染：`top_text=未运行` |
+| U3 | `console.js refreshHealth()` 第 0 格 + `console.html #botLink` | 健康格 8→9 |
+| U4 | `console.js toast()`、`setConn()`；8 处 alert 清零 | `grep -c "alert(" = 0` |
+| U5 | `refreshBot` 的 `setConn(true/false)` | 断开只提示一次 |
+| U6 | `console.css --ink-3: .50`，新增 `--ink-4: .32` | 对比度自算：4.72:1（bg-3 最差） |
+| U7 | `:focus-visible` 焦点环 | 渲染实测 `outline: solid 2px` |
+| U8 | `.tbl-wrap` + 两处表格 + 生成的技能表 | 渲染实测 `tbl_wrap=2` |
+| U9 | `console.js` 键盘监听 | 按 `5` 实测切到 `page-dex` |
+| U10 | `record.save_state()` 追加 `record_snapshots.jsonl` | 单测：无快照时 `progress=None` |
+| U11 | `ui_server._progress()` + `stats().progress` | 单测：2 胜 1 负 = 66.7% |
+| U12 | `console.js refreshStats()` 两格 | 战绩页 5→7 格 |
+| U16 | `docs/FRONTEND.md` §3.1 / §3.2 / §4.2 / §4.3 | — |
+
+**验证基线**：`python src/test_ui.py --no-dom` → 70 项全过（原 62）；
+`python src/test_ui.py` DOM 部分沿用原有断言。
+
+**未做（下一轮）**：U13（对局表点开复盘）、U14（日志筛选 chips）、
+U15（悬浮窗显示 plan/why —— 依赖 A 会话的 `robot.py`）。
 
 ---
 
