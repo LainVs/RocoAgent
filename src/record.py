@@ -30,9 +30,9 @@ STATE = os.path.join(ROOT, "logs", "record_state.json")
 # record_snapshots.jsonl。不在这里定常量：测试会把 STATE 指到临时目录，
 # 快照必须跟着走（见 save_state）。
 
-OPEN_CLICK = (191, 943)          # 客户区：历史战绩按钮
+OPEN_CLICK = (200, 1042)         # 客户区：历史战绩图标中心（实测 4:3 下）
 CLOSE_CLICK = (2012, 422)        # 客户区：面板右上角 X
-RECORD_BOX = (900, 470, 800, 90)  # 客户区："胜利 N 失败 M" 那一行
+RECORD_BOX = (1040, 525, 460, 70)  # 客户区："胜利 N 失败 M" 那一行（实测）
 
 
 def _panel_open(img):
@@ -41,6 +41,100 @@ def _panel_open(img):
         return False
     mn = img.min(axis=2)
     return float((mn > 200).mean()) > 0.35
+
+
+def _parse_record_text(text, lines=None):
+    """从 OCR 结果里解析 (wins, losses)。
+
+    为什么要专门写一个（2026-11-21 实测）
+    ----------------------------------
+    OCR 返回的**顺序不固定**。实测同一帧两次读取：
+
+        "胜利 140 失败 161"      <- 正常的从左到右
+        "胜利 失败 140 161"      <- 文字先出，数字后出
+
+    原来用 `re.search(r"(\\d+)\\D{0,6}?(\\d+)", text)` 取"前两个数字"。
+    第二种顺序下会算错：`_num_after("失败")` 会先撞到 "140"（它排在
+    "失败"后面），于是得到 (140, 140)。
+
+    现在的做法：
+      1. 找到"胜利"和"失败"两个关键词的**位置**
+      2. 按位置先后配对：靠前的关键词配第一个数字，靠后的配第二个
+      3. 关键词不全时退回"取前两个数字"
+    """
+    if not text:
+        return None
+
+    nums = re.findall(r"\d{1,4}", text)
+    if not nums:
+        return None
+
+    pos_w = text.find("胜利")
+    pos_l = text.find("失败")
+
+    if pos_w >= 0 and pos_l >= 0 and len(nums) >= 2:
+        # 两个关键词都在：靠前的那个配第一个数字
+        if pos_w < pos_l:
+            return (int(nums[0]), int(nums[1]))
+        return (int(nums[1]), int(nums[0]))
+
+    if pos_w >= 0:
+        # 只有"胜利"：它后面 8 字符内的数字算胜场
+        m = re.search(r"胜利\D{0,8}(\d{1,4})", text)
+        if m:
+            w = int(m.group(1))
+            rest = [int(x) for x in nums if int(x) != w]
+            return (w, rest[0] if rest else None)
+        return None
+
+    if pos_l >= 0:
+        m = re.search(r"失败\D{0,8}(\d{1,4})", text)
+        if m:
+            l_ = int(m.group(1))
+            rest = [int(x) for x in nums if int(x) != l_]
+            return (rest[0] if rest else None, l_)
+        return None
+
+    if len(nums) >= 2:
+        return (int(nums[0]), int(nums[1]))
+    return None
+
+
+def _grab_box_keep_ar(screen, box):
+    """按当前分辨率抓一块，并**保持宽高比**缩回基准尺寸。
+
+    为什么不能直接用 screen.grab_client（2026-11-21 实测）
+    ----------------------------------------------------
+    `grab_client` 内部是"按 sx/sy 分别缩放裁剪，再 `_fit` 缩回基准尺寸"，
+    两步都是**非等比**的。当客户区宽高比和基准（2560x1600 = 1.6）不同时，
+    文字会被横向压扁或拉长：
+
+        基准  RECORD_BOX 宽高比 6.57
+        2048x1536 (1.333) -> 5.49   横向压缩 16%
+        1920x1080 (1.778) -> 7.34   横向拉伸 12%
+
+    OCR 对文字变形很敏感（实测变形后"失败 161"被读成"失败 16"）。
+
+    这里改成：先按 sx 等比缩放取框（只用 sx，不用 sy），
+    再缩回基准尺寸 —— 这样文字比例始终不变。
+    代价是纵向位置要用 sy 单独算（框的中心点位置仍按 sy 走）。
+    """
+    import cv2
+    cw, ch = getattr(screen, "client_size", (0, 0))
+    if not cw or not ch:
+        return screen.grab_client(box)
+    sx, sy = screen.scale()
+    x, y, w, h = box
+    # 位置按各自轴的缩放走（这是对的：HUD 是贴边锚定的）
+    px = int(round(x * sx))
+    py = int(round(y * sy))
+    # 尺寸只按 sx 缩放，保持文字比例
+    pw = max(1, int(round(w * sx)))
+    ph = max(1, int(round(h * sx)))
+    img = screen._grab_at_client((px, py, pw, ph))
+    if img is None or img.size == 0:
+        return None
+    return cv2.resize(img, (w, h), interpolation=cv2.INTER_AREA)
 
 
 def read(screen, click, log=None):
@@ -67,22 +161,21 @@ def read(screen, click, log=None):
             deadline = time.time() + 2.5
             while time.time() < deadline:
                 time.sleep(0.25)
-                img = screen.grab_client(RECORD_BOX)
+                img = _grab_box_keep_ar(screen, RECORD_BOX)
                 if _panel_open(img):
                     # 白底出现了，但数字可能还没画完 —— 再给它一点时间
                     time.sleep(0.4)
-                    img = screen.grab_client(RECORD_BOX)
+                    img = _grab_box_keep_ar(screen, RECORD_BOX)
                     break
             if img is None or img.size == 0:
                 continue
             big = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
             lines = ocr_cn.Ocr().read_region(big)
             text = " ".join(t for t, _c in lines)
-            m = re.search(r"(\d+)\D{0,6}?(\d+)", text)
             if log:
                 log("record ocr[%d]: %s" % (attempt + 1, text.strip()[:40]))
-            if m:
-                got = (int(m.group(1)), int(m.group(2)))
+            got = _parse_record_text(text, lines)
+            if got:
                 break
             # 读不到就把画面存下来，第二天能看出是没打开还是读错区域
             try:
