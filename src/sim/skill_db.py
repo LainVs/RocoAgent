@@ -14,6 +14,7 @@ from typing import Optional, List
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from sim.models import Skill, Type, SkillCategory, TYPE_NAME_MAP, CATEGORY_NAME_MAP
+from sim.effect_models import SkillEffect
 
 # 魔攻属性类型
 SPECIAL_TYPES = {Type.FIRE, Type.WATER, Type.GRASS, Type.ELECTRIC, Type.ICE,
@@ -64,6 +65,57 @@ def _get_conn() -> sqlite3.Connection:
         _conn = sqlite3.connect(_DB_PATH)
         _conn.row_factory = sqlite3.Row
     return _conn
+
+
+def _flatten_effects(effects):
+    """把双重嵌套的 SkillEffect 摊平。
+
+    为什么需要（2026-11-21 实测）
+    ----------------------------
+    `skill_effects_generated.py` 里有 8 个技能被写成了
+    `SE(timing, [SE(timing, [EffectTag(...)])])` —— 内层多包了一层。
+
+    引擎的 `battle._iter_flat_tags` 只展平一层，遇到内层 SkillEffect
+    会直接 AttributeError: 'SkillEffect' object has no attribute 'type'。
+
+    实测受影响的 8 个技能：
+        富养化 / 风隐 / 雪球 / 架势 / 休息回复 / 徒长 / 根吸收 / 杠杆置换
+
+    修在加载层而不是改生成文件，原因：
+        · 生成文件是上游自动产出的，改它下次重新生成会丢
+        · 摊平后所有调用方（battle / pimc / belief）都受益
+        · 语义不变：内层 SkillEffect 的 timing 和外层一致
+
+    如果内层 timing 和外层不同，保留内层的（更具体）。
+    """
+    out = []
+    for se in (effects or []):
+        if not isinstance(se, SkillEffect):
+            out.append(se)
+            continue
+        inner = getattr(se, "effects", None) or []
+        nested = [x for x in inner if isinstance(x, SkillEffect)]
+        if not nested:
+            out.append(se)
+            continue
+        # 有嵌套：把内层的 effects 提到外层
+        flat = []
+        for x in inner:
+            if isinstance(x, SkillEffect):
+                sub = _flatten_effects([x])
+                for y in sub:
+                    # 用内层的 timing（更具体），但保留外层的 filter
+                    if getattr(y, "timing", None) != getattr(se, "timing", None):
+                        y = SkillEffect(timing=y.timing, effects=y.effects,
+                                        filter=(y.filter or se.filter))
+                    elif not (getattr(y, "filter", None) or {}):
+                        y = SkillEffect(timing=y.timing, effects=y.effects,
+                                        filter=se.filter)
+                    flat.append(y)
+            else:
+                flat.append(x)
+        out.extend(flat)
+    return out
 
 
 def load_skills(csv_path: str = None) -> dict:
@@ -122,7 +174,7 @@ def load_skills(csv_path: str = None) -> dict:
             hit_count=hit_count, agility=agility, priority_mod=priority_mod,
         )
         skill._base_energy_cost = energy
-        skill.effects = all_effects.get(name, [])
+        skill.effects = _flatten_effects(all_effects.get(name, []))
 
         # 迸发标记：description 中包含"迸发"的技能
         skill.burst = "迸发" in description
