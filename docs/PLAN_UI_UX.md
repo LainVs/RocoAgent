@@ -343,6 +343,7 @@ test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
 | U28 | 机器人停后 `live_state` 仍是旧的，健康面板照出绿色「正常/畅通」 | 渲染实测：过期时只剩板子一个绿 |
 | U29 | 日志着色按"正则碰巧命中"分类：场次边界和出招都是灰的，`STUCK recovery failed` 只算 warn | 渲染实测：`=== MATCH` 加粗高亮，筛选 全部/出招/异常/噪音 |
 | U30 | 「感知耗时」在过期帧上显示绿色 67ms（漏掉的最后一格假绿灯） | 渲染实测：`stale_green` 为空数组 |
+| U31 | 9 处空态各写各的，多数只说"缺什么"不说"该做什么" | 渲染实测：搜不存在的精灵会给出"试试更短的词" |
 
 **验证基线**：`python src/test_ui.py` → 170 项全过（原 62）；
 `--no-dom` 120 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
