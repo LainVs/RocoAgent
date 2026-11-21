@@ -176,8 +176,8 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 | U17 | `ui_server._robot_lines()` 按 `[standalone]` 前缀过滤 + 窗口 16KB→256KB | 计数从全 0 变成 `board_offline:10 / focus_lost:2 / waiting_board:1` |
 | U18 | `console.js refreshTurns()` 按 `(mid,turn,hp,action)` 去重 | 渲染实测：100 条轮询 → 94 手 |
 
-**验证基线**：`python src/test_ui.py` → 88 项全过（原 62）；
-`--no-dom` 81 项；`test_record.py` / `test_imports.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 113 项全过（原 62）；
+`--no-dom` 81 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -188,20 +188,18 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 ```powershell
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
-# 契约 + 静态资源 + DOM（DOM 部分需要系统 Python，因为它有 pywebview）
-python src\test_ui.py --no-dom        # 3 秒
-python src\test_ui.py                 # 40 秒，含真实渲染
+# 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
+python src\test_ui.py --no-dom        # 81 项，约 4 秒
+python src\test_ui.py                 # 113 项，约 60 秒，含真实渲染
 
-# 数值/逻辑回归（不应被 UI 改动影响，跑一遍确认）
-& $py src\test_imports.py
-& $py src\test_policy_cost.py
-
-# 对比度重算（改 --ink-3 之后）
-& $py -c "..."   # 见提交说明里的脚本
+# 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
+& $py src\test_record.py              # 战绩读写 + 快照
+& $py src\test_imports.py             # robot.py 模块级名字
+& $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（改动前已确认）**：`test_ui.py` 62 项、`test_imports.py` ALL PASS、
-`test_policy_cost.py` ALL PASS。
+**基线（本轮结束）**：`test_ui.py` 113 项、`--no-dom` 81 项、
+其余三个脚本 ALL PASS。
 
 ---
 
