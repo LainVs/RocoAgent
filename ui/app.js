@@ -134,15 +134,22 @@ function skillTier(s) {
  * 用户看到这个的第一反应是"这东西坏了"，而不是"现在不在战斗"。
  * **信息噪声伪装成信息，比没有信息更糟。**
  *
- * ★ 血条要配合检测器一起看（2026-11-21 20:50 实机）
- * ------------------------------------------------
- * 实测 `/api/state` 返回 `foe.hp_pct = 8.6` 但 `detectors.bar = false`。
- * 那个 8.6 是**没检测到血条时的残留噪声**，不是真读数。
+ * ★ 血条噪声的处理（2026-11-21 两次修正）
+ * --------------------------------------
+ * 第一版：只看 `hp_pct != null`。
+ *   实测 `/api/state` 返回 `foe.hp_pct = 8.6` 但 `detectors.bar = false`，
+ *   那个 8.6 是没检测到血条时的残留值 —— 显示出来会让用户以为对面快死了。
+ *   所以加了"bar 为真才算数"。
  *
- * 如果只看 `hp_pct != null` 就判"有数据"，面板会显示一个假的 9% 血条，
- * 比显示"没有对战画面"更糟 —— 用户会以为对面快死了。
+ * 第二版（当前）：`detectors.bar` 的语义改了。
+ *   实测 14 张真实战斗帧里，白框检测 0% 命中，导致 `bar` 恒为 false，
+ *   连真实血量都被当噪声丢掉。所以服务端把 `bar` 放宽成
+ *   "任一边读到血量"（见 standalone.observe 里的 has_bars）。
  *
- * 所以血条只有在 `detectors.bar` 为真时才算有效数据。
+ *   这意味着 `bar` 不再保证"血条画得很标准"，只保证"有读数"。
+ *   噪声防护改为**看数值本身是否离谱**：血量必须在 0~100。
+ *   实测那个 8.6 是合理范围，但配合"对面名字也未知 + 技能栏也没有"
+ *   仍然会被判成空帧 —— 因为另外两个条件都不满足。
  */
 function isEmptyFrame(st) {
   // ★ 服务端报了错（遮挡 / 抓屏失败）-> 一定是空帧（2026-11-21）
@@ -160,10 +167,10 @@ function isEmptyFrame(st) {
   const foe = st.foe || {};
   const dets = (st.system || {}).detectors || {};
 
-  // 没有血条检测器时，hp_pct 一律当噪声（见上面 8.6 的例子）
-  const barOk = !!dets.bar;
-  const meHp = barOk ? me.hp_pct : null;
-  const foeHp = barOk ? foe.hp_pct : null;
+  // 血量必须在 0~100 才是有效读数（越界说明是误读，见上面说明）
+  const okPct = (v) => v != null && v >= 0 && v <= 100;
+  const meHp = okPct(me.hp_pct) ? me.hp_pct : null;
+  const foeHp = okPct(foe.hp_pct) ? foe.hp_pct : null;
 
   const noMe = meHp == null && !me.name;
   const noFoe = foeHp == null && !foe.name;

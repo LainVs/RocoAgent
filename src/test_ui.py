@@ -722,11 +722,17 @@ def worker():
             skillNa: isEmptyFrame(mk({
               skills: [{ i: 1, dmg: null, pct: null }] })),
             foeHp: isEmptyFrame(mk({ foe: { hp_pct: 45, name: null } })),
-            // 血条检测器没开时，hp_pct 是残留噪声（实测 8.6），
-            // 不能当成"有数据"，否则面板会显示一个假血条
+            // 越界血量是误读（实测有 163% 的假读数），不能当数据
             hpNoise: isEmptyFrame(mk({
-              foe: { hp_pct: 8.6, name: null },
+              foe: { hp_pct: 163, name: null },
               system: { detectors: { bar: false, skillbar: false,
+                                     countdown: false } },
+            })),
+            // 合理血量 + 没名字 + 没技能 -> 仍算空帧（只有血量不足以
+            // 说明"在战斗"，可能只是主界面满血）
+            hpOnlyNoName: isEmptyFrame(mk({
+              foe: { hp_pct: 8.6, name: null },
+              system: { detectors: { bar: true, skillbar: false,
                                      countdown: false } },
             })),
             // 服务端报错（遮挡）-> 一定是空帧，且文案要用它的原因
@@ -986,7 +992,9 @@ def test_resilience(port):
     ok(e.get("skillNa") is True, "技能全是占位 -> 算空帧")
     ok(e.get("foeHp") is False, "对面有血条 -> 不算空帧")
     ok(e.get("hpNoise") is True,
-       "detectors.bar=false 时 hp_pct 是噪声 -> 算空帧")
+       "血量 163（越界）-> 算空帧（误读）")
+    ok(e.get("hpOnlyNoName") is False,
+       "血量 8.6 + bar=true -> 不算空帧（有读数就显示）")
     ok(e.get("errCovered") is True,
        "服务端 error -> 算空帧（不然满屏未知）")
 

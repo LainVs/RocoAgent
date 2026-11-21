@@ -355,6 +355,79 @@ def main():
     check(_dt < 20, "50 次缓存查询 < 20ms", "%.2fms" % _dt)
 
     print()
+    print("[11] 战斗判定：任一边读到血量就算（不能要求两边都读到）")
+    #
+    # 背景（2026-11-21 实测 14 张真实战斗帧）
+    # ---------------------------------------
+    # `perceive.observe()` 的 battle 判定是：
+    #     bars = my_pct and foe_pct
+    #     battle = bars and my_ui and foe_ui     （或 bars and 技能栏可见）
+    #
+    # 实测白框检测 0% 命中（分辨率适配问题），导致 battle 恒 False：
+    #     读到我方血量 5 (36%) / 对面 4 (29%) / 两边都读到 3 (21%)
+    #     我方白框 0 (0%) / 技能栏 0 (0%) / battle=True 0 (0%)
+    #
+    # 独立计算器不需要"精确判断在战斗"，只需要"有可用数据"。
+    # 所以 standalone 改用"任一边读到"的判据。
+    #
+    # 这里锁住三件事：
+    #   1. 只有我方血量 -> battle + bar=True
+    #   2. 只有对面血量 -> battle + bar=True
+    #   3. 都没有       -> idle + bar=False
+    old_bg = (standalone._perc, standalone._screen,
+              dict(standalone._cache), dict(standalone._BG))
+    try:
+        import perceive
+
+        def probe(my_pct, foe_pct):
+            scr = FakeScreen()
+            fake = perceive.Perc(scr)
+            obs = make_fake_observe()
+            base = obs()
+
+            def patched(self=None):
+                d = dict(base)
+                d["my_pct"] = my_pct
+                d["foe_pct"] = foe_pct
+                # 模拟实测：白框检测失败、技能栏也看不到
+                d["my_ui"] = False
+                d["foe_ui"] = False
+                d["bar"] = False
+                d["battle"] = False
+                return d
+
+            fake.observe = patched
+            standalone.inject_screen(scr, fake)
+            standalone._cache = {"at": 0.0, "state": None}
+            return standalone.observe(force=True)
+
+        st = probe(92.6, None)
+        check(st is not None and st.get("mode") == "battle",
+              "只有我方血量 -> mode=battle",
+              str(st.get("mode") if st else None))
+        check(st is not None and st["system"]["detectors"]["bar"] is True,
+              "只有我方血量 -> bar=True")
+        check(st is not None and st["me"]["hp_pct"] == 92.6,
+              "我方血量保留", str(st["me"]["hp_pct"] if st else None))
+
+        st = probe(None, 35.1)
+        check(st is not None and st.get("mode") == "battle",
+              "只有对面血量 -> mode=battle",
+              str(st.get("mode") if st else None))
+        check(st is not None and st["foe"]["hp_pct"] == 35.1,
+              "对面血量保留", str(st["foe"]["hp_pct"] if st else None))
+
+        st = probe(None, None)
+        check(st is not None and st.get("mode") == "idle",
+              "都没读到 -> mode=idle",
+              str(st.get("mode") if st else None))
+        check(st is not None and st["system"]["detectors"]["bar"] is False,
+              "都没读到 -> bar=False")
+    finally:
+        (standalone._perc, standalone._screen,
+         standalone._cache, standalone._BG) = old_bg
+
+    print()
     if fails:
         print("%d FAILURE(S)" % fails)
         return 1

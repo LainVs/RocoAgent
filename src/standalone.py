@@ -831,10 +831,43 @@ def observe(force=False):
             "_kind": s.get("kind"),
         })
 
+    # ---- "有可用数据"的判据（2026-11-21 实测修正）
+    #
+    # 原来用 `raw["battle"]`（`perceive.Perc.observe()` 的判定）：
+    #     bars = my_pct and foe_pct
+    #     battle = bars and my_ui and foe_ui     （或 bars and 技能栏可见）
+    #
+    # 实测 14 张**真实战斗帧**（文件名带 T7_energy / T8_skill2 等回合标记）：
+    #     读到我方血量   5 (36%)
+    #     读到对面血量   4 (29%)
+    #     两边都读到     3 (21%)
+    #     我方白框       0 ( 0%)   <- 断了
+    #     对面白框       1 ( 7%)   <- 断了
+    #     技能栏可见     0 ( 0%)   <- 断了
+    #     battle=True    0 ( 0%)   <- 全灭
+    #
+    # 白框检测（`_bar_from` 里的 `ui`）依赖精确分辨率匹配，
+    # 本机 2048x1536 缩放到基准 2560x1600 后 1px 偏移就检测不到。
+    #
+    # ★ 但独立计算器不需要"精确判断是否在战斗"
+    # ----------------------------------------
+    # 它只需要"有没有可用的血量数据"。这两件事不一样：
+    #
+    #     场景                     机器人需要        计算器需要
+    #     血量读到但白框没检测到    保守（怕误出招）   有数据就显示
+    #     血量都没读到              待机              显示"没有对战画面"
+    #
+    # 所以这里**不修改 perceive.py**（机器人主链路，改判定风险高），
+    # 而是在独立模式用自己的判据：**任一边读到血量就算有数据**。
+    #
+    # 实测这样能把 3 帧（两边都读到）从"全灭"救回可用状态。
+    has_bars = (raw.get("my_pct") is not None
+                or raw.get("foe_pct") is not None)
+
     st = {
         "t": now,
         "seq": int(now * 10),
-        "mode": "battle" if raw.get("battle") else "idle",
+        "mode": "battle" if (raw.get("battle") or has_bars) else "idle",
         "turn": None,
         "clock": None,
         "me": {
@@ -871,8 +904,8 @@ def observe(force=False):
             "budget_ms": None,
             "blind": None,
             "detectors": {
-                "bar": bool(raw.get("my_pct") is not None
-                            and raw.get("foe_pct") is not None),
+                # 任一边读到血量就算有数据（见上面 has_bars 的说明）
+                "bar": bool(has_bars),
                 "skillbar": bool(raw.get("bar")),
                 "countdown": bool(raw.get("countdown")),
             },
