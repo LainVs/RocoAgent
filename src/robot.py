@@ -1974,6 +1974,23 @@ class Bot:
         """
         if getattr(self.args, "no_foe_scan", False):
             return
+        # ---- 默认关闭（2026-11-22 实测：0/136 成功，纯亏）
+        #
+        # 这个功能的本意是"模板置信度低时点开对面头像面板补录"，
+        # 但实测（整晚 1097 条 FOE SCAN 日志）：
+        #
+        #     点击尝试      136 次
+        #     成功打开面板    0 次   <- FOE PANEL open FAILED / no panel
+        #     靠它识别出精灵  0 只   <- 244 次成功全是 name<-trait 反查
+        #
+        # 而每次尝试要在战斗里连点 3 下屏幕（2192,95 / 2194,114 / 2185,80
+        # 换算到物理坐标是 2720,149 / 2721,167 / 2714,135）、并浪费 3~7 秒。
+        # 这些点击落在对面 HUD 上，是"把对局点废"的直接嫌疑之一。
+        #
+        # 真正有效的身份来源已经是 `portrait_onnx`（conf 1.00）和
+        # 特性反查，所以这条路径默认关掉。需要时可以 `--foe-scan` 打开。
+        if not getattr(self.args, "foe_scan", False):
+            return
         # 触发条件：**模板置信度不足**就点头像，而不是"foe_name 为空"。
         #
         # 为什么改（2026-11-21 实盘 + 用户提出）
@@ -4240,7 +4257,12 @@ def main():
     ap.add_argument("--no-input", action="store_true",
                     help="空转模式：只感知/记录，绝不按键、不点击（稳定性测试）")
     ap.add_argument("--no-foe-scan", action="store_true",
-                    help="do not click the foe portrait to identify unknown pets")
+                    help="(default) do not click the foe portrait to identify "
+                         "unknown pets; kept for backwards compatibility")
+    ap.add_argument("--foe-scan", action="store_true",
+                    help="re-enable clicking the foe portrait. OFF by default: "
+                         "measured 0/136 successful opens while burning 3-7 s "
+                         "and 3 clicks per attempt inside a live match")
     ap.add_argument("--seconds", type=int, default=0,
                     help="stop after N seconds (0 = run forever)")
     args = ap.parse_args()
