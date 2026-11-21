@@ -36,6 +36,7 @@ const root = document.documentElement;
 let folded = false;
 let lastSig = '';
 let pollTimer = null;
+let polling = false;
 
 /* ---------------------------------------------------------------- 工具 */
 function hexA(hex, a) {
@@ -123,7 +124,98 @@ function skillTier(s) {
   return '';
 }
 
+/* 这一帧是不是"实质为空"。
+ *
+ * 为什么要单独判断（2026-11-21 实机截图暴露）
+ * ------------------------------------------
+ * 独立模式下服务在跑、屏幕能抓，但游戏黑屏/加载/不在战斗时，
+ * 每个字段各自兜底成 '—'，于是面板变成 12 个破折号 + 4 个「未知」。
+ *
+ * 用户看到这个的第一反应是"这东西坏了"，而不是"现在不在战斗"。
+ * **信息噪声伪装成信息，比没有信息更糟。**
+ *
+ * 判定要保守：只有三个区块**全都**没数据才算空帧。
+ * 只有血条没名字（很常见：刚进战斗还没识别身份）不算空 —— 血条是真数据。
+ */
+function isEmptyFrame(st) {
+  const me = st.me || {};
+  const foe = st.foe || {};
+  const noMe = me.hp_pct == null && !me.name;
+  const noFoe = foe.hp_pct == null && !foe.name;
+  const noSkill = !(st.skills || []).some((s) => s && s.dmg != null);
+  return noMe && noFoe && noSkill;
+}
+
+/* 空帧文案：要说清"为什么没有"，不能只写"无数据"。
+ *
+ * 三种情况对用户意味着完全不同的动作：
+ *   · 没找到对战画面 -> 切到战斗界面就会自动识别（用户能自己解决）
+ *   · 画面在但读不出 -> 等一两秒，或者检查游戏是否被遮挡
+ *   · 机器人没跑     -> 走 renderEmpty()，那条分支已经写好了
+ */
+function emptyReason(st) {
+  const dets = (st.system || {}).detectors || {};
+  if (st.standalone && !dets.bar) {
+    return {
+      title: '没有对战画面',
+      hint: '切到战斗界面后会自动识别',
+    };
+  }
+  return {
+    title: '等待画面',
+    hint: '正在读取，画面稳定后自动显示',
+  };
+}
+
+function renderNoData(st) {
+  const r = emptyReason(st);
+  const panel = $('panel');
+  panel.dataset.empty = '1';
+
+  // 系统栏照常更新 —— 它是"服务活着"的唯一证据，不能停
+  $('sysTurn').textContent = st.turn != null ? 'T' + st.turn : 'T—';
+  $('sysClock').textContent = '';
+  const ms = $('sysMs');
+  const sys = st.system || {};
+  if (sys.fps_ms != null) {
+    ms.textContent = sys.fps_ms.toFixed(1) + 'ms';
+  } else {
+    ms.textContent = '';
+  }
+  const dets = sys.detectors || {};
+  $('sysDets').innerHTML = [dets.bar, dets.skillbar, dets.countdown]
+    .map((on) => `<i class="${on ? 'on' : ''}"></i>`).join('');
+  $('liveDot').className = 'live-dot' + (st._stale ? ' warn' : ' off');
+  $('sysState').textContent = st._stale ? '数据过期' : '未在战斗';
+  const sb = $('btnStartBot');
+  if (sb) sb.hidden = true;
+  const badge = $('sysStandalone');
+  if (badge) badge.hidden = !st.standalone;
+
+  // 中间换成一条说明
+  const box = $('noDataBox');
+  if (box) {
+    box.innerHTML = `<b>${r.title}</b><span>${r.hint}</span>`;
+  }
+
+  // 血条归零，避免残留上一次的数值
+  root.style.setProperty('--me-p', '0');
+  root.style.setProperty('--me-g', '0');
+  root.style.setProperty('--foe-p', '0');
+  root.style.setProperty('--foe-g', '0');
+  setAccent('even');
+  scheduleFit();
+}
+
 function render(st) {
+  // 整帧没数据时走精简分支，不铺一屏破折号
+  if (isEmptyFrame(st)) {
+    renderNoData(st);
+    return;
+  }
+  const panel = $('panel');
+  if (panel.dataset.empty) delete panel.dataset.empty;
+
   // ── 系统栏
   const sys = st.system || {};
   const dets = sys.detectors || {};
@@ -434,15 +526,21 @@ function measureContentHeight() {
    ================================================================ */
 async function poll() {
   if (document.hidden) return;
+  // 防重叠：后端偶尔要 15~35 秒（跑 OCR），10Hz 会把请求堆满浏览器
+  // 的 6 个并发连接，队列排满后界面就"完全不动"。
+  if (polling) return;
+  polling = true;
   let st;
   try {
     const r = await fetch(API + '/api/state', { cache: 'no-store' });
     st = await r.json();
   } catch (e) {
+    polling = false;
     $('sysState').textContent = '服务未连接';
     $('liveDot').className = 'live-dot off';
     return;
   }
+  polling = false;
 
   if (!st) {
     // 机器人没跑：显示空态，但保留布局不跳动
@@ -1032,7 +1130,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
   safe('renderEmpty', renderEmpty);
   safe('poll', poll);
-  pollTimer = setInterval(poll, 100);
+  // 轮询间隔 400ms（原 100ms）。
+  //
+  // 为什么改（2026-11-21 实测）：后端 `/api/state` 在需要跑 OCR 时要
+  // 15~35 秒，10Hz 轮询会把请求堆到上百个，浏览器最多 6 个并发连接，
+  // 队列排满后界面就"完全不动"。降到 2.5Hz 后请求量只剩 1/4，
+  // 而且战斗里血量/回合本来就是秒级变化，2.5Hz 完全够用。
+  pollTimer = setInterval(poll, 400);
 
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
@@ -1041,7 +1145,7 @@ document.addEventListener('DOMContentLoaded', () => {
     } else if (!pollTimer) {
       lastSig = '';
       poll();
-      pollTimer = setInterval(poll, 100);
+      pollTimer = setInterval(poll, 400);
     }
   });
 

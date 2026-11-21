@@ -57,7 +57,14 @@ _screen = None
 _thread_state = {"tid": None}      # Screen/mss 绑线程，见 _get() 的注释
 _last = {"t": 0.0, "st": None}
 _cache = {"at": 0.0, "state": None}
-MIN_INTERVAL = 0.10       # 最快 10Hz，和机器人推送同量级
+
+# 状态缓存时间（秒）。
+#
+# 前端轮询是 10Hz（100ms），但一局战斗的关键变化（血量/回合）是秒级，
+# 10Hz 毫无必要。缓存 0.35 秒后，实际抓屏降到约 3 次/秒：
+#   · CPU 从 ~100% 降到 ~25%（一次 observe 约 100ms）
+#   · 前端 10Hz 轮询仍然每个请求都拿到数据（只是同一份）
+MIN_INTERVAL = 0.35
 
 # ---- 身份识别（可选，有代价）
 #
@@ -239,6 +246,46 @@ def identify(now=None, foe_hp_pct=None):
         _ident["at"] = 0.0
 
     return _ident
+
+
+# ---- 后台识别线程
+#
+# 为什么必须有（2026-11-21 实测）
+# -----------------------------
+# 一次完整识别 = RapidOCR 4.7~6.4s × 2 侧 + 属性图标匹配 330ms。
+# 如果放在 HTTP 请求里，`/api/state` 实测要 15~35 秒。
+# 而悬浮窗前端的轮询是 10Hz —— 10 秒堆 100 个请求，
+# ThreadingHTTPServer 开 100 个线程全在等 OCR，GIL 互抢，
+# 于是每个响应都拖到几十秒，界面看起来完全不动。
+#
+# 现在识别只跑在**一个**后台线程里，HTTP 请求只读 `_ident` 快照。
+_BG = {"thread": None, "hp": None}
+
+
+def ensure_ident_worker():
+    """启动（或复用）后台识别线程。"""
+    t = _BG.get("thread")
+    if t is not None and t.is_alive():
+        return t
+    t = threading.Thread(target=_ident_loop, daemon=True,
+                         name="standalone-ident")
+    _BG["thread"] = t
+    t.start()
+    return t
+
+
+def _ident_loop():
+    """后台识别循环。
+
+    `identify()` 内部有 ID_INTERVAL 节流（20 秒），所以这里密集调用
+    也只是空转读取，不会真的反复跑 OCR。
+    """
+    while True:
+        try:
+            identify(foe_hp_pct=_BG.get("hp"))
+        except Exception:
+            pass
+        time.sleep(0.5)
 
 
 def reset_identity():
@@ -537,13 +584,25 @@ def observe(force=False):
             return {"error": "%s: %s" % (type(e).__name__, e),
                     "standalone": True}
 
-    # ---- 身份识别（节流 1.5s，失败不影响主流程）
-    ident = {}
+    # ---- 身份识别：**不在这里做**
+    #
+    # 为什么（2026-11-21 实测）
+    # ----------------------
+    # 一次完整识别 = RapidOCR 4.7~6.4s × 2 侧 + 属性图标匹配 330ms，
+    # 实测 `/api/state` 因此要 **15~35 秒**才返回。
+    #
+    # 而悬浮窗前端的轮询是 10Hz —— 10 秒内堆 100 个请求，
+    # ThreadingHTTPServer 就开 100 个线程，全在等 OCR，GIL 互相抢，
+    # 结果每个响应都拖到几十秒，界面看起来"完全不刷新"。
+    #
+    # 所以识别全部挪到后台线程（`_ident_worker`），这里只读快照。
     try:
         # 不在战斗时清空身份缓存，避免下一局沿用上一局的答案
         if not raw.get("battle"):
             reset_identity()
-        ident = identify(now=now, foe_hp_pct=raw.get("foe_pct"))
+        _BG["hp"] = raw.get("foe_pct")
+        ensure_ident_worker()
+        ident = dict(_ident)
     except Exception:
         ident = {}
 
