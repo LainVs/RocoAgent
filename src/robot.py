@@ -1483,7 +1483,8 @@ class Bot:
             # 于是 660 被当成"必杀"。所以再加两条**不依赖对面物种数据**
             # 的兜底：
             #   · 绝对上限 900（PvP 最强单体技能 power 900，打完减伤更小）
-            #   · 对面当前血量的 1.5 倍（卡面是打完减伤的实际值）
+            #   · 对面当前血量的 2.5 倍（卡面是打完减伤的实际值，
+            #     可以远超当前血，只要量级不离谱）
             _ABS_MAX_DMG = 900
             _foe_now = self._foe_now_hp(st)
             if dmg is not None and dmg > _ABS_MAX_DMG:
@@ -1494,8 +1495,8 @@ class Bot:
                 log("SKILL %d damage %d > foe max %d * 1.2 -> unreadable"
                     % (s["index"], dmg, foe_max))
                 dmg = None
-            elif dmg is not None and _foe_now and dmg > _foe_now * 1.5:
-                log("SKILL %d damage %d > foe current hp %d * 1.5 "
+            elif dmg is not None and _foe_now and dmg > _foe_now * 2.5:
+                log("SKILL %d damage %d > foe current hp %d * 2.5 "
                     "-> unreadable" % (s["index"], dmg, _foe_now))
                 dmg = None
             # 耗能必须从**我方技能表**查（my_card_costs），不能用技能名查。
@@ -3179,6 +3180,7 @@ class Bot:
             # 超过血量"的合理性过滤（实测读出过 660 / 700 / 1000+）。
             "foe_max": self._foe_max_hp(),
             "foe_now": self._foe_now_hp(st),
+            "foe_pct": st.get("foe_pct"),
             # 注意：这里**故意不传** card_costs。
             #
             # policy_legacy.decide() 里有 "净收益 = 伤害 - λ×耗能" 的算法，

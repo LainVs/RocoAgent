@@ -185,6 +185,11 @@ def decide(st, ctx):
     # 把对面最大血量挂到每张卡上，供下面的合理性过滤用（见 damaged 循环）。
     foe_max = ctx.get("foe_max")
     foe_now = ctx.get("foe_now")
+    foe_pct = ctx.get("foe_pct")
+    # 对面最大血量未知时（物种不在库），用「当前血 / 当前百分比」反推。
+    # 实测「幽冥龙」不在库 -> foe_max=None -> 660 打 92% 血漏过过滤。
+    if not foe_max and foe_now and foe_pct and foe_pct > 20:
+        foe_max = foe_now * 100.0 / foe_pct
     if foe_max or foe_now:
         for s in skills:
             if foe_max:
@@ -239,15 +244,22 @@ def decide(st, ctx):
         #    power 900，打完减伤后不可能超过 900。（PvE 的 BOSS 有
         #    2 万血，但那些不会出现在排位里。）
         # 2) 相对上限：超过对面最大血量 1.2 倍。
-        # 3) 用"对面当前血量"兜底：卡面伤害是打完减伤的实际值，
-        #    一击打掉超过对面**当前**血量 1.5 倍必然是误读
-        #    （实测 660 打一个 92% 血、总量约 400 的对手）。
+        # 3) 用"对面当前血量"兜底：卡面伤害是打完减伤的实际值。
+        #
+        # ⚠ 倍数取 2.5 而不是 1.5（2026-11-22 实测修正）
+        # --------------------------------------------
+        # 1.5 倍太激进，把正常斩杀也挡了：
+        #     对面剩 111 血，卡面 220 / 170 -> 全被判不可读
+        #     T9 只能选 121，而 220 才是该用的
+        # 卡面伤害本来就可以远超当前血量（多段 / 克制 / buff），
+        # 只要**量级**不离谱就行。2.5 倍仍能挡住"660 打 92% 血
+        # （总量约 400）"这种荒谬读数。
         if v > 900:
             continue
         if s.get("_foe_max") and v > s["_foe_max"] * 1.2:
             continue
         _foe_now = s.get("_foe_now")
-        if _foe_now and v > _foe_now * 1.5:
+        if _foe_now and v > _foe_now * 2.5:
             continue
         damaged.append((s, v))
     # 读不全的卡要分两种，不能一刀切：
