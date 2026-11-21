@@ -512,6 +512,7 @@ button, input, select {
   background: var(--bg-2);
   border: 1px solid var(--line-soft);
   transition: border-color .13s;
+  position: relative;
 }
 .label-card:hover { border-color: var(--line); }
 .label-card.done { opacity: .35; pointer-events: none; }
@@ -541,20 +542,37 @@ button, input, select {
 .label-row {
   display: flex;
   gap: 5px;
+  align-items: stretch;
+  flex-wrap: wrap;
 }
+/* 输入框独占一行：名字最长 8~12 字，挤在按钮旁边会被截断
+   （实测"锤头鹳"显示成"锤头l"）。按钮换到第二行。 */
 .label-input {
-  flex: 1;
+  flex: 1 1 100%;
   min-width: 0;
   padding: 5px 8px;
-  font-size: 11.5px;
+  font-size: 12px;
   border-radius: 5px;
   border: 1px solid var(--line);
   background: var(--bg-1);
   color: var(--ink-0);
   outline: none;
 }
+.label-btn { flex: 0 0 auto; }
+.label-btn.ok { flex: 1 1 auto; }
 .label-input:focus { border-color: var(--accent-soft); }
 .label-input::placeholder { color: var(--ink-3); }
+/* OCR 预填的两种状态：
+   高置信度（>=0.8）淡绿底 —— 直接回车确认就行
+   低置信度      淡黄底 —— 需要看一眼改不改 */
+.label-input.ocr-hi {
+  border-color: rgba(78, 201, 176, .35);
+  background: rgba(78, 201, 176, .07);
+}
+.label-input.ocr-lo {
+  border-color: rgba(232, 163, 61, .35);
+  background: rgba(232, 163, 61, .07);
+}
 
 .label-btn {
   padding: 5px 9px;
@@ -589,17 +607,21 @@ button, input, select {
 }
 
 /* 同款角标：同一只精灵往往有 5~10 张截图，
-   有这个标记才知道"标一张等于标一批" */
+   有这个标记才知道"标一张等于标一批"。
+   放在卡片右上角，不参与 flex 布局。 */
 .dup-badge {
+  position: absolute;
+  top: 5px;
+  right: 5px;
   font-family: var(--font-num);
   font-size: 10px;
   padding: 0 5px;
   border-radius: 4px;
   color: var(--warn);
-  background: rgba(232, 163, 61, .14);
-  border: 1px solid rgba(232, 163, 61, .28);
+  background: rgba(20, 16, 8, .82);
+  border: 1px solid rgba(232, 163, 61, .38);
   white-space: nowrap;
-  align-self: center;
+  line-height: 15px;
 }
 
 /* ── 搜索框 ─────────────────────────────────────────── */

@@ -655,6 +655,18 @@ async function refreshLabel() {
     const dupBadge = same.length > 1
       ? `<span class="dup-badge" title="同款 ${same.length} 张">×${same.length}</span>`
       : '';
+    // OCR 预填的三种状态：
+    //   匹配到库里  -> 绿底，直接回车就对
+    //   有 OCR 但库里没有 -> 黄底，需要看一眼（可能是错字或库里真没有）
+    //   没识别出来  -> 空，手输
+    const ocrTxt = it.ocr || '';
+    const ocrConf = it.ocr_conf || 0;
+    const ocrCls = !ocrTxt ? ''
+      : (it.ocr_matched ? ' ocr-hi' : ' ocr-lo');
+    const ocrNote = !ocrTxt ? ''
+      : (it.ocr_matched
+         ? ` · OCR ${Math.round(ocrConf * 100)}%`
+         : ` · OCR ${Math.round(ocrConf * 100)}%（库里没有，原文「${it.ocr_raw || ''}」）`);
     return `<div class="label-card" data-stem="${it.stem}"
                  data-sig="${it.sig || ''}" data-i="${i}">
       <div class="label-imgs">
@@ -662,12 +674,13 @@ async function refreshLabel() {
         ${nc ? `<img class="nc" src="${nc}" alt="名字条">` : ''}
       </div>
       <div class="label-row">
-        <input class="label-input" placeholder="精灵名…" autocomplete="off">
+        <input class="label-input${ocrCls}" placeholder="精灵名…"
+               value="${ocrTxt}" autocomplete="off">
         <button class="label-btn ok">标注</button>
         <button class="label-btn skip">跳过</button>
         ${dupBadge}
       </div>
-      <div class="label-hint">${it.stem}</div>
+      <div class="label-hint">${it.stem}${ocrNote}</div>
     </div>`;
   }).join('');
 

@@ -697,10 +697,9 @@ _PORTRAIT_DIRS = {"self": "portraits", "foe": "portraits_foe"}
 def portraits_pending(side="foe", limit=60, offset=0):
     """待标注头像列表。按时间倒序（新的在前，更容易回忆）。
 
-    额外返回 group：按**名字条图片的字节指纹**分组。
-    实测发现同一只精灵会有 5~10 张截图（同一帧连续采、或反复遇到），
-    标注一张后其余的还是待标注，标注 1122 张会疯。
-    分组后可以「标一张，同组全部标掉」。
+    额外返回：
+      group : 按名字条感知哈希聚类（同款一起标）
+      ocr   : 名字条 OCR 预填结果（人工只需确认）
     """
     import hashlib
 
@@ -717,6 +716,17 @@ def portraits_pending(side="foe", limit=60, offset=0):
     names.sort(reverse=True)
     total = len(names)
     page = names[offset:offset + limit]
+
+    # OCR 预填结果（ocr_batch.py 跑出来的）
+    ocr_map = {}
+    try:
+        import io as _io
+        p = os.path.join(LOGS, "ocr_names.json")
+        if os.path.exists(p):
+            with _io.open(p, encoding="utf-8") as f:
+                ocr_map = json.load(f)
+    except Exception:
+        ocr_map = {}
 
     # 名字条指纹：同一条名字条 = 同一只精灵。
     #
@@ -749,6 +759,12 @@ def portraits_pending(side="foe", limit=60, offset=0):
         namefile = stem + "_name.png"
         has_nc = os.path.exists(os.path.join(d, namefile))
         sig = name_sig(stem) if has_nc else None
+        o = ocr_map.get(stem) or {}
+        ocr_txt = o.get("text")
+        # OCR 原文经常是错字（"锤头鹳" 实际是 "锤头鲨"）。
+        # 预填用**匹配到库里的名字** —— 这样人工直接回车就对，
+        # 不用再改一遍。匹配不上就留原文（标黄让人看一眼）。
+        matched = _safe_species(ocr_txt) if ocr_txt else None
         items.append({
             "file": f,
             "stem": stem,
@@ -756,6 +772,10 @@ def portraits_pending(side="foe", limit=60, offset=0):
             "has_name_crop": has_nc,
             "name_crop": namefile if has_nc else None,
             "sig": sig,
+            "ocr": matched or ocr_txt,
+            "ocr_raw": ocr_txt,
+            "ocr_conf": o.get("conf"),
+            "ocr_matched": bool(matched),
         })
         if sig:
             sigs.append((stem, int(sig, 16)))
@@ -818,16 +838,80 @@ def portrait_label_group(side, stems, species, variant=""):
 
 
 def _safe_species(name):
-    """确认这个名字是库里的精灵，避免标错成乱码。"""
+    """确认这个名字是库里的精灵，避免标错成乱码。
+
+    OCR 常常给出简称或错字，所以三级匹配：
+      1. 精确
+      2. 前缀（"锤头鳄" 匹配 "锤头鳄（...的样子）"）
+      3. 编辑距离 <= 1（错一个字也能救回来，比如"冰钻布鲁斯"少个偏旁）
+
+    三级都失败就返回 None —— 宁可不标，也不要标成库里不存在的名字
+    （那样头像永远匹配不上，等于白标）。
+    """
     if not name or len(name) > 24:
         return None
     try:
         db = _db()
         r = db.execute(
             "SELECT name FROM species WHERE name=? LIMIT 1", (name,)).fetchone()
-        return r["name"] if r else None
+        if r:
+            return r["name"]
+
+        # 前缀
+        r = db.execute(
+            "SELECT name FROM species WHERE name LIKE ? "
+            "ORDER BY length(name) LIMIT 1", (name + "%",)).fetchone()
+        if r:
+            return r["name"]
+
+        # 编辑距离 <= 1：拿候选集（同首字或同长度）算距离
+        # 只取首字相同的候选，避免全表扫描
+        cands = db.execute(
+            "SELECT name FROM species WHERE substr(name,1,1)=? "
+            "AND abs(length(name)-?)<=2 LIMIT 200",
+            (name[0], len(name))).fetchall()
+        best = None
+        best_d = 99
+        for c in cands:
+            cn = c["name"]
+            # 只比前 len(name) 个字（库里可能有后缀括号）
+            head = cn[:len(name) + 2]
+            d = _edit1(name, head)
+            if d < best_d:
+                best_d = d
+                best = cn
+        if best and best_d <= 1:
+            return best
+        return None
     except Exception:
         return None
+
+
+def _edit1(a, b):
+    """编辑距离，超过 1 就直接返回 2（早停，不用算完整 DP）。"""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return 2
+    # 长度相同：只能替换一次
+    if la == lb:
+        diff = sum(1 for x, y in zip(a, b) if x != y)
+        return diff if diff <= 1 else 2
+    # 长度差 1：只能插/删一次
+    short, long_ = (a, b) if la < lb else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(short) and j < len(long_):
+        if short[i] != long_[j]:
+            if skipped:
+                return 2
+            skipped = True
+            j += 1
+            continue
+        i += 1
+        j += 1
+    return 1
 
 
 def portrait_label(side, stem, species, variant=""):
