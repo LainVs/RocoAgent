@@ -1165,6 +1165,10 @@ class Bot:
                     continue
                 dmg = s.get("value")
                 kind = s.get("kind") or ""
+                # 同样的合理性过滤（前端/日志也要干净）：卡面伤害不可能
+                # 超过对面最大血量的 1.2 倍。实测读出过 700（对面 max≈400）。
+                if dmg is not None and hp_range and dmg > hp_range[1] * 1.2:
+                    dmg = None
                 # 占比 = 伤害 / 对面最大血。对面血量未知时留 None
                 pct = None
                 if dmg and hp_range:
@@ -1431,6 +1435,15 @@ class Bot:
             dmg = s.get("value")
             if dmg is None:
                 dmg = _est_value(s)
+            # 合理性过滤：卡面伤害不可能超过对面最大血量的 1.2 倍。
+            #
+            # 实测 2026-11-22 02:24：对面雪影冰灵（max≈400）读出 700，
+            # policy_v2 把它当"必杀"选中，整局白打。
+            # standalone 早就有这道过滤，机器人这条链路一直漏着。
+            if dmg is not None and foe_max and dmg > foe_max * 1.2:
+                log("SKILL %d damage %d > foe max %d * 1.2 -> unreadable"
+                    % (s["index"], dmg, foe_max))
+                dmg = None
             # 耗能必须从**我方技能表**查（my_card_costs），不能用技能名查。
             #
             # 踩过的坑（2026-11-21 09:00，用户报的"选低伤害技能"）：
