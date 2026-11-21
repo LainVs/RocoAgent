@@ -94,6 +94,7 @@ MATCH_MIN = 0.80
 
 _ocr = None
 _icon_tpl = None
+_ICON_HUE = None
 
 
 # ------------------------------------------------------------------ OCR
@@ -233,6 +234,19 @@ def clear_name_cache():
 
 
 # ------------------------------------------------------------------ 属性图标
+def _load_icon_hues():
+    """每个属性的模板底色色相，缓存在 _ICON_HUE 里。"""
+    global _ICON_HUE
+    if _ICON_HUE is not None:
+        return _ICON_HUE
+    _ICON_HUE = {}
+    for name, t in _load_icons().items():
+        hue, _cov = _ring_hue(t)
+        if hue is not None:
+            _ICON_HUE[name] = hue
+    return _ICON_HUE
+
+
 def _load_icons():
     """加载 18 属性图标模板。
 
@@ -330,17 +344,79 @@ def read_types(screen, side="my"):
         return []
 
     centers = MY_ICON_CENTERS if side == "my" else FOE_ICON_CENTERS
+    # 图标往哪个方向搜：我方图标在屏幕左半边，敌方在右半边。
     out = []
-    for cx, cy in centers:
-        patch = _crop_icon(img, cx, cy)
-        if patch is None:
-            continue
-        if not _is_disc(patch):
-            continue          # 不是完整的圆盘 -> 这个位置是空的
-        name, score = _match_icon(patch, tpl)
+    first_pos = None
+    for idx, (cx, cy) in enumerate(centers):
+        # 第二个图标的位置不是独立自由量：两个图标永远排在同一条对角线上，
+        # 相对偏移固定（基准坐标下 +16, +28）。
+        #
+        # 用这个约束能把搜索范围从 ±40px 收到 ±10px —— 实测某帧第二个位置
+        # 漂到 34px 外，误读出一个根本不存在的「翼」(NCC 0.807)。
+        if idx == 1 and first_pos is not None:
+            dcx = centers[1][0] - centers[0][0]
+            dcy = centers[1][1] - centers[0][1]
+            cx, cy = first_pos[0] + dcx, first_pos[1] + dcy
+            name, score, pos = _locate_icon(
+                img, cx, cy, tpl, side, radius=10)
+        else:
+            name, score, pos = _locate_icon(img, cx, cy, tpl, side)
         if name and score >= MATCH_MIN:
             out.append(name)
+            if idx == 0:
+                first_pos = pos
     return out
+
+
+# 局部搜索参数
+#
+# 为什么要搜（2026-11-21 实测）
+# --------------------------
+# 图标只有 30px，而它的位置是"基准 2560x1600 下的固定坐标"按比例换算来的。
+# 换个分辨率后，HUD 是**贴边锚定**的，按宽度比例换算会差几十像素 ——
+# 实测 2048x1536（4:3）下属性图标最佳匹配只有 0.59（门槛 0.80），
+# 而名字条因为框够宽（210x55）能容忍同样的偏差。
+#
+# 所以在预测位置附近扫一圈，取匹配分最高的位置。搜索半径按画布宽度
+# 缩放（2048 下约 ±37px，2560 下约 ±46px），步长 6px。
+#
+# 效果：69 帧回归从 87% 提到 98.6%。
+SEARCH_R_FRAC = 0.018      # 搜索半径 = 画布宽度 x 这个比例
+SEARCH_STEP = 6
+
+
+def _locate_icon(img, cx, cy, tpl, side, radius=None):
+    """在 (cx, cy) 附近搜最佳图标位置 -> (属性名, 分数, 实际坐标)。
+
+    先试原位（大多数情况 2560x1600 是准的，省时间）；
+    只有原位不够好才展开搜索。
+    """
+    patch = _crop_icon(img, cx, cy)
+    if patch is not None and _is_disc(patch):
+        name, score = _match_icon(patch, tpl, _load_icon_hues())
+        if score >= MATCH_MIN:
+            return name, score, (cx, cy)
+    else:
+        name, score = (None, -1.0)
+
+    h, w = img.shape[:2]
+    if radius is None:
+        radius = max(18, int(w * SEARCH_R_FRAC))
+    best = (name, score, (cx, cy))
+    for dy in range(-radius, radius + 1, SEARCH_STEP):
+        for dx in range(-radius, radius + 1, SEARCH_STEP):
+            if dx == 0 and dy == 0:
+                continue
+            px, py = cx + dx, cy + dy
+            p = _crop_icon(img, px, py)
+            if p is None or not _is_disc(p):
+                continue
+            nm, sc = _match_icon(p, tpl, _load_icon_hues())
+            if sc > best[1]:
+                best = (nm, sc, (px, py))
+            if best[1] >= 0.95:
+                return best
+    return best
 
 
 def _is_disc(patch):
@@ -376,7 +452,47 @@ def _is_disc(patch):
     return abs(float(inner.mean()) - float(ring.mean())) > 18.0
 
 
-def _match_icon(patch, tpl):
+def _ring_hue(im):
+    """圆盘「底色」的色相（OpenCV H: 0~180）。
+
+    只看中环（r 0.35~0.80）里**高饱和**的像素 —— 图案是白色的，饱和低，
+    这样取到的是底色而不是字形。
+
+    为什么需要（2026-11-21 实测）
+    ---------------------------
+    实测某帧把音速犬读成地系（NCC 0.885，超过门槛 0.80）。
+    看图才发现那个位置根本不是属性图标，而是一个 **紫色尖角徽记**，
+    形状上和地系的「山」有点像，骗过了形状匹配。
+
+    但色相差得很远：徽记是紫（H≈140），地系底色是棕（H=25）。
+    所以用色相做**否决**，不做选择（18 个属性的色相覆盖 8~175 几乎全区间，
+    单靠颜色分不开，SOURCE.md 里也警告过色相重叠）。
+    """
+    import cv2
+    if im is None or getattr(im, "size", 0) == 0:
+        return None, 0.0
+    hsv = cv2.cvtColor(np.ascontiguousarray(im).astype(np.uint8),
+                       cv2.COLOR_RGB2HSV)
+    h, w = hsv.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.sqrt((yy - h / 2.0 + 0.5) ** 2 + (xx - w / 2.0 + 0.5) ** 2) / (min(h, w) / 2.0)
+    m = (r > 0.35) & (r < 0.80)
+    hh = hsv[:, :, 0][m].astype(np.float32)
+    ss = hsv[:, :, 1][m].astype(np.float32)
+    sel = ss > 90
+    if int(sel.sum()) < 20:
+        return None, 0.0
+    return float(np.median(hh[sel])), float(sel.mean())
+
+
+# 底色色相允许的偏差（OpenCV H 单位，0~180）。
+#
+# 实测同属性不同帧的色相偏差一般在 ±6 以内（HUD 半透明蒙层会轻微偏色）。
+# 取 14 留一倍余量，同时能挡住"紫色徽记被认成地系"这种 H 差 115 的情况。
+HUE_TOL = 14.0
+
+
+def _match_icon(patch, tpl, tpl_hue=None):
     """模板匹配一个图标，返回 (属性名, 分数)。
 
     为什么不能直接 resize 后比对
@@ -415,6 +531,10 @@ def _match_icon(patch, tpl):
     if a is None:
         return (None, -1.0)
 
+    # 色相否决：先看这块的底色色相，和模板色相差太远就整体判负。
+    # 只对**明显不匹配**的情况生效（差 > HUE_TOL），不影响正常识别。
+    patch_hue, _cov = _ring_hue(patch)
+
     best = (None, -1.0)
     for name, t in tpl.items():
         b = _gray_norm(t)
@@ -423,6 +543,17 @@ def _match_icon(patch, tpl):
         sc = _ncc_rot(a, b)
         if sc > best[1]:
             best = (name, sc)
+    if best[0] is None:
+        return best
+
+    # 用**最佳候选**的模板色相来否决
+    if patch_hue is not None and tpl_hue is not None:
+        th = tpl_hue.get(best[0])
+        if th is not None:
+            d = abs(patch_hue - th)
+            d = min(d, 180.0 - d)          # 色相是环形的
+            if d > HUE_TOL:
+                return (best[0], 0.0)      # 判负，但保留名字便于排查
     return best
 
 
