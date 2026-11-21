@@ -191,7 +191,6 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 全量过一遍（517 场 / 3181 条回合）。现在只跑一遍再切片。
 
 #### U24：游戏窗口在跑，控制台却看不见 —— 而且分辨率是错的
-
 这条是本轮最值钱的发现。机器人能不能干活有两道门：**输入链路**和
 **游戏窗口**。上一轮只补了板子那条，窗口这条完全没有。
 
@@ -232,6 +231,28 @@ x 缩 0.810、y 缩 1.004 —— 两个方向差 24%。所有写死的 ROI 都�
 **为什么不用 `robot.Screen()` 直接拿**：那会构造 mss、触发 DPI 探测、
 刷新窗口缓存 —— UI 服务常驻时不该碰这些东西。这里只 `EnumWindows` +
 `GetWindowRect`，与 `winio.find_game()` 同一判据但不产生副作用。
+
+**踩到的第二个坑（`1bad3a1`）**：第一版报出来的是 **1037×804**，
+而真实服务报 **2074×1607** —— 正好差 2 倍。
+
+原因：`winio` 在**模块级**调 `_declare_dpi_aware()`，但 `ui_server`
+**从不 import winio**（它只读日志和数据库）。进程没声明 DPI 感知时
+`GetWindowRect` 返回**逻辑坐标**（200% 缩放下是物理值的一半），
+而 `mss` 抓屏用物理像素。
+
+所以同一台机器上：
+
+```
+test_ui（先 import overlay → winio → DPI 已声明） -> 2074x1607
+真实服务（只 import ui_server）                    -> 1037x804
+```
+
+后果不只是数字难看：U24 的目的是"告诉用户把窗口调回基准"，
+**报错数字会让用户照着改错**。
+
+修法：`ui_server` 自己在 import 时声明一次，不依赖 import 顺序。
+回归断言从"能算比例"加强到"读到的必须是物理像素"（宽度 > 1200），
+这样以后谁再动 import 顺序都会立刻被抓到。
 
 
 ---
@@ -279,9 +300,10 @@ x 缩 0.810、y 缩 1.004 —— 两个方向差 24%。所有写死的 ROI 都�
 | U22 | `ui_server.matches_summary(offset)` + `console.js renderMatchPager()` | 单测：`offset=3` 与 `offset=0` 无重叠、total 一致；渲染 `1–40 / 517`、`第 1 / 13 页` |
 | U23 | `console.js loadDex()` + `#dexMore` | 渲染实测：点一次 120 → 240 张，`还有 737 只` |
 | U24 | `ui_server.game_status()` + `console.js` 顶栏 `#botRes` + 健康第 1b 格 | 单测：`aspect=1.290`、`scale_ok=False` 并给出说明；渲染：顶栏 `2074×1607`（`top-link warn`），健康格 9→10 |
+| U25 | `ui_server._ensure_dpi_aware()` —— 不 import `winio` 就读到逻辑坐标（差 2 倍） | 单测：读到 2074×1607（物理），不是 1037×804（逻辑） |
 
-**验证基线**：`python src/test_ui.py` → 132 项全过（原 62）；
-`--no-dom` 95 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 133 项全过（原 62）；
+`--no-dom` 96 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -293,8 +315,8 @@ x 缩 0.810、y 缩 1.004 —— 两个方向差 24%。所有写死的 ROI 都�
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 95 项，约 5 秒
-python src\test_ui.py                 # 132 项，约 90 秒，含真实渲染
+python src\test_ui.py --no-dom        # 96 项，约 5 秒
+python src\test_ui.py                 # 133 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -302,7 +324,7 @@ python src\test_ui.py                 # 132 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 132 项、`--no-dom` 95 项、
+**基线（本轮结束）**：`test_ui.py` 133 项、`--no-dom` 96 项、
 其余三个脚本 ALL PASS。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
