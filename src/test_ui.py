@@ -805,6 +805,69 @@ def test_resilience(port):
     ok(int(d.get("skills") or 0) == 2, "技能数正确", "skills=%s" % d.get("skills"))
 
 
+# ============================================================ 3c. 对比度
+def test_contrast():
+    """设计 token 的对比度回归。
+
+    背景（2026-11-21）：`--ink-3` 原来是 rgba(..., .32)，在 bg-1 上只有
+    2.73:1，而它承担的正是 `.card-sub` / `.nav-label` / placeholder
+    这些**解释性文字**。这里把它钉住，防止以后又被"调淡一点"。
+    """
+    print("\n[3c] 对比度（WCAG AA）")
+    import re
+
+    def lin(c):
+        c = c / 255.0
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    def lum(rgb):
+        r, g, b = (lin(x) for x in rgb)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+    def ratio(a, b):
+        la, lb = lum(a), lum(b)
+        hi, lo = max(la, lb), min(la, lb)
+        return (hi + 0.05) / (lo + 0.05)
+
+    try:
+        with open(os.path.join(UI, "console.css"), encoding="utf-8") as f:
+            css = f.read()
+    except OSError as e:
+        ok(False, "读 console.css", str(e)[:60])
+        return
+
+    bgs = {}
+    for name in ("bg-0", "bg-1", "bg-2", "bg-3"):
+        m = re.search(r"--%s:\s*#([0-9A-Fa-f]{6})" % name, css)
+        if m:
+            h = m.group(1)
+            bgs[name] = tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+    ok(len(bgs) == 4, "解析 4 个底色 token", str(sorted(bgs)))
+
+    def check(name, min_ratio):
+        m = re.search(
+            r"--%s:\s*rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)"
+            % name, css)
+        if not m:
+            ok(False, "解析 --%s" % name)
+            return
+        fg = tuple(int(m.group(i)) for i in (1, 2, 3))
+        a = float(m.group(4))
+        worst_name, worst = None, 99.0
+        for bn, bg in bgs.items():
+            mixed = tuple(round(a * f + (1 - a) * b) for f, b in zip(fg, bg))
+            r = ratio(mixed, bg)
+            if r < worst:
+                worst_name, worst = bn, r
+        ok(worst >= min_ratio, "--%s >= %.1f:1" % (name, min_ratio),
+           "最差 %s = %.2f:1" % (worst_name, worst))
+
+    check("ink-1", 7.0)
+    check("ink-2", 5.0)
+    check("ink-3", 4.5)
+    ok("--ink-4" in css, "保留装饰级 token --ink-4")
+
+
 # ============================================================ 3b. 日志尾推断
 def test_phase_infer():
     """`/api/bot` 的 phase 全部来自日志尾推断，这里用临时日志验证。
@@ -951,6 +1014,7 @@ def main():
         test_api(port)
         test_static(port)
         test_contract()
+        test_contrast()
         test_phase_infer()
         test_label(port)
         test_window_state()

@@ -12,9 +12,13 @@
   --bg-3: #1A212B;
 
   --ink-0: #F2F5F9;
-  --ink-1: rgba(242, 245, 249, 0.78);
-  --ink-2: rgba(242, 245, 249, 0.52);
-  --ink-3: rgba(242, 245, 249, 0.32);
+  --ink-1: rgba(242, 245, 249, 0.80);
+  --ink-2: rgba(242, 245, 249, 0.62);
+  /* ink-3 原来是 0.32 -> 深底上只有 2.73:1（WCAG AA 要 4.5）。
+     它承担的是 .card-sub / .nav-label / placeholder 这些**解释性文字**，
+     不是装饰，所以必须能读。装饰性灰另设 ink-4。 */
+  --ink-3: rgba(242, 245, 249, 0.50);
+  --ink-4: rgba(242, 245, 249, 0.32);
 
   --line:      rgba(255, 255, 255, 0.075);
   --line-soft: rgba(255, 255, 255, 0.04);
@@ -112,7 +116,7 @@ button, input, select {
 }
 .dot.live  { background: var(--win);  box-shadow: 0 0 0 3px rgba(78,201,176,.16); }
 .dot.stale { background: var(--warn); box-shadow: 0 0 0 3px rgba(232,163,61,.16); }
-.dot.off   { background: var(--ink-3); }
+.dot.off   { background: var(--ink-4); }
 .dot.bad   { background: var(--lose); box-shadow: 0 0 0 3px rgba(232,102,74,.16); }
 
 /* 输入链路小标：顶栏常驻。它决定"能不能出招"，比 PID 重要。 */
@@ -757,7 +761,7 @@ button, input, select {
   width: 7px; height: 7px;
   border-radius: 50%;
   flex: none;
-  background: var(--ink-3);
+  background: var(--ink-4);
 }
 .hitem.ok   .hdot { background: var(--win);  box-shadow: 0 0 0 3px rgba(78,201,176,.14); }
 .hitem.warn .hdot { background: var(--warn); box-shadow: 0 0 0 3px rgba(232,163,61,.14); }
@@ -941,5 +945,20 @@ button, input, select {
 .tbl-wrap {
   overflow-x: auto;
   min-width: 0;
+}
+
+/* ── 键盘可访问性 ─────────────────────────────────────────
+   原来两处 `outline: none` 没有任何替代焦点环，Tab 走一圈完全看不出
+   焦点在哪。这里统一补 :focus-visible（只在键盘操作时出现，
+   鼠标点击不会出现，不影响观感）。 */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+.nav-item:focus-visible,
+.btn:focus-visible,
+.seg button:focus-visible,
+.label-btn:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 2px;
 }
 

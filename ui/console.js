@@ -429,6 +429,7 @@ async function refreshLive() {
     </div>
 
     ${skills.length ? `
+    <div class="tbl-wrap">
     <table class="tbl" style="margin-top:12px">
       <thead><tr><th>#</th><th>技能</th><th>属性</th><th>消耗</th>
         <th>伤害</th><th>占比</th></tr></thead>
@@ -443,7 +444,8 @@ async function refreshLive() {
             <td class="num">${s.pct != null ? s.pct + '%' : (s.note || '—')}</td>
           </tr>`).join('')}
       </tbody>
-    </table>` : ''}
+    </table>
+    </div>` : ''}
   `;
 }
 
@@ -1170,6 +1172,37 @@ $('dexSearch').addEventListener('input', (e) => {
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) stopTimers();
   else startTimers();
+});
+
+/* ---------------------------------------------------------------- 键盘
+   1~7 切页 / `/` 聚焦图鉴搜索 / Esc 退出输入。
+   只在没有输入焦点时生效 —— 头像标注页要打精灵名，不能被切页抢走。 */
+const NAV_ORDER = ['overview', 'logs', 'stats', 'team', 'dex', 'turns', 'label'];
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  const typing = !!(t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA'
+    || t.isContentEditable));
+  if (e.key === 'Escape') {
+    if (typing) t.blur();
+    return;
+  }
+  if (typing || e.ctrlKey || e.altKey || e.metaKey) return;
+  if (e.key === '/') {
+    e.preventDefault();
+    goto('dex');
+    setTimeout(() => {
+      const s = $('dexSearch');
+      if (s) s.focus();
+    }, 40);
+    return;
+  }
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= NAV_ORDER.length) {
+    const target = NAV_ORDER[n - 1];
+    goto(target);
+    const btn = document.querySelector(`.nav-item[data-page="${target}"]`);
+    if (btn) btn.focus();
+  }
 });
 
 /* ---------------------------------------------------------------- 启动 */
