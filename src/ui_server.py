@@ -684,6 +684,237 @@ def stop_bot():
     return {"ok": True, "killed": killed, "msg": "已停止"}
 
 
+# ============================================================ 头像标注
+# 旧 UI 移除后一直没有替代入口，导致 1122 张待标注头像积压（已标注只有 115 张）。
+# 头像识别不准会直接拖累对面识别，所以这是数据层面最大的缺口。
+#
+# 文件命名规律：
+#   _unknown_HHMMSS.png        头像本体
+#   _unknown_HHMMSS_name.png   同帧的名字条（标注时的参考）
+_PORTRAIT_DIRS = {"self": "portraits", "foe": "portraits_foe"}
+
+
+def portraits_pending(side="foe", limit=60, offset=0):
+    """待标注头像列表。按时间倒序（新的在前，更容易回忆）。
+
+    额外返回 group：按**名字条图片的字节指纹**分组。
+    实测发现同一只精灵会有 5~10 张截图（同一帧连续采、或反复遇到），
+    标注一张后其余的还是待标注，标注 1122 张会疯。
+    分组后可以「标一张，同组全部标掉」。
+    """
+    import hashlib
+
+    sub = _PORTRAIT_DIRS.get(side)
+    if not sub:
+        return {"error": "bad side", "items": [], "total": 0}
+    d = os.path.join(ROOT, "assets", sub)
+    try:
+        names = [f for f in os.listdir(d)
+                 if f.startswith("_unknown_") and f.endswith(".png")
+                 and "_name" not in f]
+    except OSError as e:
+        return {"error": str(e), "items": [], "total": 0}
+    names.sort(reverse=True)
+    total = len(names)
+    page = names[offset:offset + limit]
+
+    # 名字条指纹：同一条名字条 = 同一只精灵。
+    #
+    # 不能用 md5 —— 实测同一只精灵每帧截图的内容都有细微差异
+    # （动画/光照/抗锯齿），md5 永远不等，dup_count=0。
+    # 改用感知哈希：缩到 16x4 灰度 + 均值二值化，视觉上一样就算同款。
+    def name_sig(stem):
+        p = os.path.join(d, stem + "_name.png")
+        try:
+            import cv2
+            import numpy as np
+            img = cv2.imread(p, cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                return None
+            small = cv2.resize(img, (16, 4), interpolation=cv2.INTER_AREA)
+            avg = small.mean()
+            bits = (small > avg).flatten()
+            # 16x4 = 64 bit -> 16 位十六进制
+            out = 0
+            for b in bits:
+                out = (out << 1) | int(bool(b))
+            return "%016x" % out
+        except Exception:
+            return None
+
+    items = []
+    sigs = []          # [(stem, sig_int)]
+    for f in page:
+        stem = f[:-4]
+        namefile = stem + "_name.png"
+        has_nc = os.path.exists(os.path.join(d, namefile))
+        sig = name_sig(stem) if has_nc else None
+        items.append({
+            "file": f,
+            "stem": stem,
+            "side": side,
+            "has_name_crop": has_nc,
+            "name_crop": namefile if has_nc else None,
+            "sig": sig,
+        })
+        if sig:
+            sigs.append((stem, int(sig, 16)))
+
+    # 按汉明距离聚类：同一条名字条不同帧的渲染会差几个 bit。
+    # 实测 60 张名字条的组大小分布（阈值 -> 组数/最大组）：
+    #     6 -> 15 组 / 最大 4 张
+    #     8 -> 15 组 / 最大 4 张
+    #    10 -> 14 组 / 最大 6 张   <- 和肉眼看到的"贝古斯 6 次"对得上
+    #    12 -> 11 组 / 最大 9 张   <- 开始把不同精灵合并（过度）
+    #    16 ->  5 组 / 最大 21 张  <- 明显错
+    # 所以取 10。
+    HAMMING_MAX = 10
+    groups = {}
+    assigned = {}       # stem -> 组 id
+    for stem, v in sigs:
+        placed = False
+        for gid, members in groups.items():
+            rep = members[0][1]
+            if bin(v ^ rep).count("1") <= HAMMING_MAX:
+                members.append((stem, v))
+                assigned[stem] = gid
+                placed = True
+                break
+        if not placed:
+            gid = "g%d" % len(groups)
+            groups[gid] = [(stem, v)]
+            assigned[stem] = gid
+
+    # 输出：stem -> 组内其它成员
+    dup = {}
+    for gid, members in groups.items():
+        if len(members) < 2:
+            continue
+        stems = [m[0] for m in members]
+        for s in stems:
+            dup[s] = stems
+
+    # 给每个 item 打上组标记
+    for it in items:
+        it["group"] = assigned.get(it["stem"])
+
+    return {"items": items, "total": total, "side": side,
+            "groups": dup,
+            "dup_count": sum(1 for g in groups.values() if len(g) > 1)}
+
+
+def portrait_label_group(side, stems, species, variant=""):
+    """一次标注一组同款头像（同一个名字条指纹）。"""
+    ok = 0
+    fails = []
+    for stem in (stems or []):
+        r = portrait_label(side, stem, species, variant)
+        if r.get("ok"):
+            ok += 1
+        else:
+            fails.append({"stem": stem, "msg": r.get("msg")})
+    return {"ok": ok > 0, "done": ok, "fails": fails,
+            "msg": "标注了 %d 张" % ok}
+
+
+def _safe_species(name):
+    """确认这个名字是库里的精灵，避免标错成乱码。"""
+    if not name or len(name) > 24:
+        return None
+    try:
+        db = _db()
+        r = db.execute(
+            "SELECT name FROM species WHERE name=? LIMIT 1", (name,)).fetchone()
+        return r["name"] if r else None
+    except Exception:
+        return None
+
+
+def portrait_label(side, stem, species, variant=""):
+    """把一张待标注头像改名成正式名字。
+
+    stem      : '_unknown_010953'
+    species   : '音速犬'
+    variant   : '' 或 '首领' 等，会拼成 '音速犬#首领.png'
+
+    为什么改名而不是只写数据库：
+    识别时是按文件名找图的（portraits/<名字>.png），
+    数据库只是索引。改名才是真正生效的动作。
+    """
+    sub = _PORTRAIT_DIRS.get(side)
+    if not sub:
+        return {"ok": False, "msg": "bad side"}
+    d = os.path.join(ROOT, "assets", sub)
+    src = os.path.join(d, stem + ".png")
+    if not os.path.exists(src):
+        return {"ok": False, "msg": "文件不存在：%s" % (stem + ".png")}
+
+    # 物种名必须在库里 —— 否则标错的名字永远匹配不上
+    sp = _safe_species(species)
+    if not sp:
+        return {"ok": False, "msg": "库里没有这个精灵：%s" % species}
+
+    base = sp + ("#" + variant.strip() if variant.strip() else "")
+    dst = os.path.join(d, base + ".png")
+    n = 2
+    while os.path.exists(dst):
+        # 同名的变体（不同形态/角度）用 #2 #3 区分，
+        # 这是 portrait_db 认的命名规则
+        dst = os.path.join(d, "%s#%d.png" % (base, n))
+        n += 1
+
+    try:
+        os.replace(src, dst)
+    except OSError as e:
+        return {"ok": False, "msg": "改名失败：%s" % e}
+
+    # 名字条截图一起删掉（没用了，留着只是垃圾）
+    namefile = os.path.join(d, stem + "_name.png")
+    try:
+        if os.path.exists(namefile):
+            os.remove(namefile)
+    except OSError:
+        pass
+
+    # 写进索引（失败不影响改名，索引可以重建）
+    try:
+        import portrait_db
+        sid = None
+        try:
+            db = _db()
+            row = db.execute(
+                "SELECT id FROM species WHERE name=? LIMIT 1", (sp,)).fetchone()
+            sid = row["id"] if row else None
+        except Exception:
+            sid = None
+        if sid:
+            portrait_db.add_portrait(
+                os.path.basename(dst), sid,
+                variant=(variant.strip() or "普通"), side=side,
+                source="manual")
+    except Exception:
+        pass
+
+    return {"ok": True, "file": os.path.basename(dst),
+            "msg": "已标注为 %s" % os.path.basename(dst)}
+
+
+def portrait_skip(side, stem):
+    """跳过这张（删除，不要了）。"""
+    sub = _PORTRAIT_DIRS.get(side)
+    if not sub:
+        return {"ok": False, "msg": "bad side"}
+    d = os.path.join(ROOT, "assets", sub)
+    removed = 0
+    for f in (stem + ".png", stem + "_name.png"):
+        try:
+            os.remove(os.path.join(d, f))
+            removed += 1
+        except OSError:
+            pass
+    return {"ok": removed > 0, "msg": "已删除 %d 个文件" % removed}
+
+
 # ============================================================ HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "RocoUI/1.0"
@@ -748,6 +979,12 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/team":
             return self._json(team())
 
+        if path == "/api/portraits":
+            return self._json(portraits_pending(
+                q.get("side") or "foe",
+                int(q.get("limit") or 60),
+                int(q.get("offset") or 0)))
+
         return self._json({"error": "not found"}, 404)
 
     # ---------- POST
@@ -768,6 +1005,29 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/bot/stop":
             return self._json(stop_bot())
+
+        if path == "/api/portrait/label":
+            side = body.get("side") or "foe"
+            stem = body.get("stem") or ""
+            species = (body.get("species") or "").strip()
+            variant = body.get("variant") or ""
+            if not stem or not species:
+                return self._json({"ok": False, "msg": "缺 stem 或 species"})
+            return self._json(portrait_label(side, stem, species, variant))
+
+        if path == "/api/portrait/label_group":
+            side = body.get("side") or "foe"
+            stems = body.get("stems") or []
+            species = (body.get("species") or "").strip()
+            variant = body.get("variant") or ""
+            if not stems or not species:
+                return self._json({"ok": False, "msg": "缺 stems 或 species"})
+            return self._json(
+                portrait_label_group(side, stems, species, variant))
+
+        if path == "/api/portrait/skip":
+            return self._json(portrait_skip(
+                body.get("side") or "foe", body.get("stem") or ""))
 
         return self._json({"error": "not found"}, 404)
 

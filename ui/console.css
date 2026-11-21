@@ -478,6 +478,130 @@ button, input, select {
   white-space: nowrap;
 }
 
+/* ── 头像标注 ───────────────────────────────────────── */
+.seg {
+  display: inline-flex;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+}
+.seg button {
+  padding: 4px 11px;
+  font-size: 11px;
+  background: transparent;
+  border: 0;
+  color: var(--ink-2);
+  cursor: pointer;
+  transition: background-color .13s, color .13s;
+}
+.seg button:hover { background: var(--bg-3); color: var(--ink-1); }
+.seg button.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.label-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(186px, 1fr));
+  gap: 9px;
+}
+
+.label-card {
+  padding: 9px;
+  border-radius: 9px;
+  background: var(--bg-2);
+  border: 1px solid var(--line-soft);
+  transition: border-color .13s;
+}
+.label-card:hover { border-color: var(--line); }
+.label-card.done { opacity: .35; pointer-events: none; }
+
+.label-imgs {
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 6px;
+  margin-bottom: 7px;
+  align-items: stretch;
+}
+.label-imgs img {
+  border-radius: 6px;
+  background: var(--bg-3);
+  object-fit: cover;
+  display: block;
+  height: 54px;
+  width: 100%;
+  min-width: 0;
+}
+.label-imgs .av { width: 54px; }
+.label-imgs .nc {
+  object-fit: contain;
+  object-position: left center;
+}
+
+.label-row {
+  display: flex;
+  gap: 5px;
+}
+.label-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  font-size: 11.5px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--ink-0);
+  outline: none;
+}
+.label-input:focus { border-color: var(--accent-soft); }
+.label-input::placeholder { color: var(--ink-3); }
+
+.label-btn {
+  padding: 5px 9px;
+  font-size: 11px;
+  border-radius: 5px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--ink-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color .13s, color .13s, border-color .13s;
+}
+.label-btn:hover { background: var(--bg-3); color: var(--ink-0); }
+.label-btn.ok {
+  color: var(--accent);
+  border-color: var(--accent-soft);
+  background: var(--accent-dim);
+}
+.label-btn.skip:hover {
+  color: var(--lose);
+  border-color: rgba(232,102,74,.3);
+}
+
+.label-hint {
+  font-size: 9.5px;
+  color: var(--ink-3);
+  margin-top: 4px;
+  font-family: var(--font-num);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 同款角标：同一只精灵往往有 5~10 张截图，
+   有这个标记才知道"标一张等于标一批" */
+.dup-badge {
+  font-family: var(--font-num);
+  font-size: 10px;
+  padding: 0 5px;
+  border-radius: 4px;
+  color: var(--warn);
+  background: rgba(232, 163, 61, .14);
+  border: 1px solid rgba(232, 163, 61, .28);
+  white-space: nowrap;
+  align-self: center;
+}
+
 /* ── 搜索框 ─────────────────────────────────────────── */
 .search {
   display: flex;

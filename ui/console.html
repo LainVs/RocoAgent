@@ -92,6 +92,14 @@
         </svg>
         <span>回合明细</span>
       </button>
+      <button class="nav-item" data-page="label">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <path d="M1.6 2.4h5.2l5.6 5.6-5.2 5.2L1.6 7.6z" stroke="currentColor"
+                stroke-width="1.2" stroke-linejoin="round"/>
+          <circle cx="4.4" cy="5.2" r="1" fill="currentColor"/>
+        </svg>
+        <span>头像标注</span>
+      </button>
     </nav>
 
     <main class="content">
@@ -215,6 +223,25 @@
             </div>
           </div>
           <div class="dex-grid" id="dexGrid"></div>
+        </div>
+      </section>
+
+      <!-- ══════════ 头像标注 ══════════ -->
+      <!-- 旧 UI 移除后一直没替代入口，积压了 1122 张待标注。
+           头像是识别对面精灵的唯一可靠信号，标注准确率直接影响识别率。 -->
+      <section class="page" id="page-label">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">头像标注</span>
+            <span class="card-sub" id="labelSub"></span>
+            <div class="card-actions">
+              <div class="seg" id="labelSide">
+                <button data-side="foe" class="active">敌方</button>
+                <button data-side="self">我方</button>
+              </div>
+            </div>
+          </div>
+          <div class="label-grid" id="labelGrid"></div>
         </div>
       </section>
 

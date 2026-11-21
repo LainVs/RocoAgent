@@ -608,6 +608,171 @@ async function refreshTurns() {
 }
 
 /* ================================================================
+   头像标注
+   ----------------------------------------------------------------
+   旧 UI 移除后一直没有替代入口，积压了 1122 张待标注（已标注只有 115）。
+   头像是识别对面精灵的唯一可靠信号，标注准确率直接影响识别率。
+
+   交互设计：
+     · 名字条截图和头像并排显示 —— 标注时可以直接对照名字
+     · 输入名字回车即提交（不用点按钮）
+     · 提交成功后卡片淡出，不用手动刷新
+     · 支持"跳过"（删掉不要的截图）
+   ================================================================ */
+let labelSide = 'foe';
+let labelBusy = false;
+
+async function refreshLabel() {
+  let d;
+  try {
+    d = await get('/api/portraits?side=' + labelSide + '&limit=60');
+  } catch (e) {
+    return;
+  }
+  const items = d.items || [];
+  const groups = d.groups || {};
+  $('labelSub').textContent =
+    `${items.length} / ${d.total || 0} 张待标注` +
+    (d.dup_count ? `（${d.dup_count} 组同款）` : '');
+
+  const grid = $('labelGrid');
+  if (!items.length) {
+    grid.innerHTML = `<div class="empty"><b>没有待标注的头像</b>
+      <span>跑几局机器人后，未识别的头像会自动存到这里</span></div>`;
+    return;
+  }
+
+  grid.innerHTML = items.map((it, i) => {
+    const av = `portraits${labelSide === 'foe' ? '_foe' : ''}/` +
+               encodeURIComponent(it.file);
+    const nc = it.name_crop
+      ? `portraits${labelSide === 'foe' ? '_foe' : ''}/` +
+        encodeURIComponent(it.name_crop)
+      : null;
+    // 同款数量：同一只精灵往往有 5~10 张截图，
+    // 标注一张后其余的应该一起标掉，否则 1122 张标不完
+    const same = (d.groups && d.groups[it.stem]) || [];
+    const dupBadge = same.length > 1
+      ? `<span class="dup-badge" title="同款 ${same.length} 张">×${same.length}</span>`
+      : '';
+    return `<div class="label-card" data-stem="${it.stem}"
+                 data-sig="${it.sig || ''}" data-i="${i}">
+      <div class="label-imgs">
+        <img class="av" src="${av}" alt="">
+        ${nc ? `<img class="nc" src="${nc}" alt="名字条">` : ''}
+      </div>
+      <div class="label-row">
+        <input class="label-input" placeholder="精灵名…" autocomplete="off">
+        <button class="label-btn ok">标注</button>
+        <button class="label-btn skip">跳过</button>
+        ${dupBadge}
+      </div>
+      <div class="label-hint">${it.stem}</div>
+    </div>`;
+  }).join('');
+
+  // 绑定：回车提交 / 按钮提交 / 跳过
+  grid.querySelectorAll('.label-card').forEach((card) => {
+    const stem = card.dataset.stem;
+    const input = card.querySelector('.label-input');
+    const btnOk = card.querySelector('.label-btn.ok');
+    const btnSkip = card.querySelector('.label-btn.skip');
+
+    const submit = async () => {
+      const species = input.value.trim();
+      if (!species || labelBusy) return;
+      labelBusy = true;
+      btnOk.textContent = '…';
+
+      // 同款一起标：同一只精灵往往有 5~10 张截图，
+      // 一张张标 1122 张会疯。有同款时问一次。
+      const same = (groups[stem]) || [];
+      const others = same.filter((s) => s !== stem);
+
+      let r;
+      if (others.length > 0) {
+        const yes = confirm(
+          `还有 ${others.length} 张同款（同一个名字条）。\n` +
+          `一起标注为「${species}」吗？\n\n` +
+          `选"取消"则只标这一张。`);
+        r = yes
+          ? await post('/api/portrait/label_group',
+                       { side: labelSide, species, stems: same })
+          : await post('/api/portrait/label',
+                       { side: labelSide, stem, species });
+      } else {
+        r = await post('/api/portrait/label',
+                       { side: labelSide, stem, species });
+      }
+
+      labelBusy = false;
+      btnOk.textContent = '标注';
+
+      if (r.ok) {
+        // 把这一组（含同款）的卡片全部淡出
+        const done = others.length > 0 ? same : [stem];
+        done.forEach((s) => {
+          const c = grid.querySelector(`.label-card[data-stem="${s}"]`);
+          if (c) c.classList.add('done');
+        });
+        // 自动聚焦下一张未完成的
+        const next = [...grid.querySelectorAll('.label-card:not(.done)')]
+          .find((c) => {
+            const r2 = c.getBoundingClientRect();
+            return r2.top > card.getBoundingClientRect().top - 50;
+          });
+        if (next) {
+          const ni = next.querySelector('.label-input');
+          if (ni) ni.focus();
+        }
+        refreshLabelCount();
+      } else {
+        input.style.borderColor = 'var(--lose)';
+        setTimeout(() => { input.style.borderColor = ''; }, 1500);
+        alert(r.msg || '标注失败');
+      }
+    };
+
+    btnOk.addEventListener('click', submit);
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submit();
+    });
+
+    btnSkip.addEventListener('click', async () => {
+      const r = await post('/api/portrait/skip',
+        { side: labelSide, stem });
+      if (r.ok) {
+        card.classList.add('done');
+        refreshLabelCount();
+      }
+    });
+  });
+
+  // 自动聚焦第一个输入框
+  const first = grid.querySelector('.label-input');
+  if (first) first.focus();
+}
+
+async function refreshLabelCount() {
+  try {
+    const d = await get('/api/portraits?side=' + labelSide + '&limit=1');
+    $('labelSub').textContent = `待标注 ${d.total || 0} 张`;
+  } catch (e) { /* 忽略 */ }
+}
+
+function bindLabelSide() {
+  document.querySelectorAll('#labelSide button').forEach((b) => {
+    b.addEventListener('click', () => {
+      document.querySelectorAll('#labelSide button')
+        .forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      labelSide = b.dataset.side;
+      refreshLabel();
+    });
+  });
+}
+
+/* ================================================================
    页面切换 + 定时器管理
    ================================================================ */
 const REFRESH = {
@@ -619,6 +784,8 @@ const REFRESH = {
   // 图鉴是静态数据，进页面拉一次就够，不轮询
   dex: [['dex', () => refreshDex($('dexSearch').value.trim()), 0]],
   turns: [['turns', refreshTurns, 10000]],
+  // 标注页不轮询 —— 标注过程中刷新会把输入框清掉
+  label: [['label', refreshLabel, 0]],
 };
 
 function stopTimers() {
@@ -697,4 +864,5 @@ document.addEventListener('visibilitychange', () => {
 /* ---------------------------------------------------------------- 启动 */
 refreshBot();
 setInterval(refreshBot, 3000);
+bindLabelSide();
 startTimers();
