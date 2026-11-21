@@ -56,6 +56,7 @@ SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
 SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
+SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
 HWND_TOPMOST = -1
 
@@ -77,14 +78,34 @@ DEFAULT_W = 340
 DEFAULT_H = 620
 
 
-def dpi_scale():
+def dpi_scale(hwnd=None):
     """屏幕缩放倍数（仅用于日志/兜底，不参与窗口尺寸计算）。
 
     **不要在这里调 SetProcessDpiAwarenessContext** ——
     实测那会让随后 create_window 的 width/height 被当成物理像素，
     窗口只有预期的一半大小（340x620 变成 170x310），
     而且从外面完全看不出原因。让进程保持系统默认的 DPI 虚拟化即可。
+
+    ★ 为什么优先用 GetDpiForWindow（2026-11-21 修）
+    ------------------------------------------------
+    `GetDpiForSystem()` 对**非 DPI-aware 进程**返回的是系统默认 DPI，
+    在 200% 缩放下实测返回 **96**（即 scale=1.0），而真实是 2.0。
+
+    这个 1.0 造成了真实故障：
+        pin size 用 340 * 1.0 = 340 物理像素传给 SetWindowPos
+        而窗口应该是 680 物理像素（340 CSS × 2）
+        -> 窗口被砍一半，页面按 2 倍渲染，只显示左上 1/4
+
+    `GetDpiForWindow(hwnd)` 拿的是**该窗口所在显示器**的 DPI，不受进程
+    awareness 影响，才是这个场景下正确的值。
     """
+    try:
+        if hwnd:
+            dpi = UD.GetDpiForWindow(hwnd)
+            if dpi:
+                return max(1.0, dpi / 96.0)
+    except Exception:
+        pass
     try:
         dpi = UD.GetDpiForSystem()
         if dpi and dpi != 96:
@@ -143,12 +164,29 @@ def add_layered(hwnd):
 
 
 def set_click_through(hwnd, enabled):
+    """开关点击穿透。
+
+    ★ 必须调 SetWindowPos(SWP_FRAMECHANGED)
+    --------------------------------------
+    只改扩展样式**不够**：窗口已经创建并显示后，`SetWindowLongW(GWL_EXSTYLE)`
+    不会让系统重新应用样式，WS_EX_TRANSPARENT 加了/去掉都"没反应"。
+
+    实测（2026-11-21，用户报"关闭点击穿透的快捷键没有效果"）：
+    按 Ctrl+Alt+P 之后 GetWindowLongW 里 WS_EX_TRANSPARENT 位确实变了，
+    但窗口行为不变 —— 因为系统没重新算窗口的 hit-test。
+
+    修法就是改完样式后调一次 SetWindowPos 带 SWP_FRAMECHANGED。
+    """
     ex = UD.GetWindowLongW(hwnd, GWL_EXSTYLE)
     if enabled:
         ex |= WS_EX_TRANSPARENT | WS_EX_LAYERED
     else:
         ex &= ~WS_EX_TRANSPARENT
     UD.SetWindowLongW(hwnd, GWL_EXSTYLE, ex)
+    # 让系统重新应用扩展样式（关键的一步）
+    UD.SetWindowPos(hwnd, 0, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                    | SWP_NOACTIVATE | SWP_FRAMECHANGED)
 
 
 def hide_from_taskbar(hwnd):
@@ -697,16 +735,58 @@ def _run(args):
             set_click_through(hwnd, bool(enabled))
             return True
 
+        def get_state(self):
+            """前端用来同步原生侧的状态。
+
+            为什么需要：全局热键 Ctrl+Alt+O / Ctrl+Alt+P 是在**原生线程**
+            里处理的，页面完全不知道。不同步的话会出现"穿透已经关了，
+            但按钮还写着已穿透"这种自相矛盾的显示。
+            """
+            hwnd = state.get("hwnd")
+            ex = 0
+            if hwnd:
+                try:
+                    ex = UD.GetWindowLongW(hwnd, GWL_EXSTYLE) & 0xFFFFFFFF
+                except Exception:
+                    ex = 0
+            return {
+                "visible": bool(state.get("visible", True)),
+                "pass_through": bool(ex & WS_EX_TRANSPARENT),
+                "opacity": int(state.get("opacity", 255)),
+                "folded": bool(state.get("folded")),
+            }
+
         def set_opacity(self, alpha):
-            """整体透明度（0~255）。面板底色透明度由 CSS 控制，
-            这个只用于"整体隐身"。"""
+            """整体透明度（0~255）。
+
+            ★ 这是用户真正感知到的"透明度"
+            ---------------------------------
+            之前只有 CSS 的 `--alpha` 在变，而它只作用于 `.panel` 的
+            background —— 窗口本身仍然完全不透明，所以用户把滑块拉到
+            20% 也看不出变化（实测确认：整窗 alpha 一直是 255）。
+
+            真正让"整窗"变透明必须走分层窗口：
+                SetLayeredWindowAttributes(hwnd, 0, alpha, LWA_ALPHA)
+
+            前提是窗口带 WS_EX_LAYERED。transparent=True 建的窗口一般
+            已经带了，但这里仍然兜底加一次（add_layered），否则
+            SetLayeredWindowAttributes 会直接返回 0 失败。
+
+            下限保护：alpha 太低会让窗口完全看不见、连热键都不知道该
+            按什么。夹到 40（约 16%）。
+            """
             hwnd = state.get("hwnd")
             if not hwnd:
                 return False
             try:
-                UD.SetLayeredWindowAttributes(hwnd, 0, int(alpha), LWA_ALPHA)
-                return True
-            except Exception:
+                a = max(40, min(255, int(alpha)))
+                add_layered(hwnd)
+                ok = UD.SetLayeredWindowAttributes(hwnd, 0, a, LWA_ALPHA)
+                state["opacity"] = a
+                _log("set_opacity %d -> %s" % (a, "ok" if ok else "FAIL"))
+                return bool(ok)
+            except Exception as e:
+                _log("set_opacity error: %s" % e)
                 return False
 
         def hide(self):
@@ -933,12 +1013,15 @@ def _run(args):
         # WebView2 按页面内容"自适应"。而且 win.resize() 在透明+无焦点
         # 窗口上会阻塞。所以用 SetWindowPos 显式钉尺寸。
         #
-        # 缩放倍数不能靠 dpi_scale()：它在 overlay 进程里实测返回 1.0，
-        # 而页面里的 devicePixelRatio 是 2。用页面读出来的才可靠。
+        # 缩放倍数必须按**窗口所在显示器**取（GetDpiForWindow），
+        # 不能用 dpi_scale() 的 GetDpiForSystem 兜底 —— 那个对非
+        # DPI-aware 进程返回 96，会算出 1.0，把窗口砍一半。
         try:
             # SetWindowPos 尺寸 = 物理像素。create_window 已经给了正确值，
             # 这里只是把它钉死（防止 WebView2 按内容自适应）。
-            s = dpi_scale()
+            s = dpi_scale(hwnd)
+            _log("pin dpi: GetDpiForWindow=%s -> scale=%.2f"
+                 % (UD.GetDpiForWindow(hwnd), s))
             time.sleep(0.8)
             cur = ctypes.wintypes.RECT()
             UD.GetWindowRect(hwnd, ctypes.byref(cur))

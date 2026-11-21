@@ -464,8 +464,16 @@ async function callNative(method, ...args) {
    交互
    ================================================================ */
 
-// 透明度：只改面板底色 alpha。文字带描边，20% 仍可读。
-// 图形元素（血条底槽/边框）有下限补偿 —— 它们没有描边，会跟着面板消失。
+// 透明度：**整窗** alpha（原生）+ 面板底色（CSS）两条腿。
+//
+// 踩过的坑（2026-11-21，用户报"透明度调节无效，实际上并没有变透明"）：
+// 以前只改 CSS 的 --alpha，而它只作用于 .panel 的 background ——
+// 窗口本身完全不透明，所以滑块拉到 20% 看起来也没变化。
+// 真正让整窗变透明必须走 SetLayeredWindowAttributes（原生侧）。
+//
+// 两条腿各管一件事：
+//   原生整窗 alpha  -> 用户拖动滑块时"整体变淡"的直观感受
+//   CSS --alpha     -> 面板底色再压一点，让底下的游戏画面透出来
 function bindAlpha() {
   const slider = $('alpha');
   const label = $('alphaVal');
@@ -474,6 +482,11 @@ function bindAlpha() {
     const a = v / 100;
     root.style.setProperty('--alpha', a.toFixed(2));
     label.textContent = v + '%';
+
+    // 整窗 alpha：原生侧。真悬浮窗才有，浏览器预览时自动跳过。
+    if (hasNative()) {
+      callNative('set_opacity', Math.round(a * 255));
+    }
 
     const boost = Math.min(1, 0.55 + (1 - a) * 0.55);
     root.style.setProperty('--well-a', (0.34 * boost).toFixed(3));
@@ -486,6 +499,8 @@ function bindAlpha() {
     try { localStorage.setItem('overlay.alpha', String(v)); } catch (_) {}
   };
   slider.addEventListener('input', apply);
+  // 松手时再应用一次，防止拖动过程中的高频调用被丢
+  slider.addEventListener('change', apply);
 
   try {
     const saved = localStorage.getItem('overlay.alpha');
@@ -507,18 +522,35 @@ function bindDrawer() {
 // 点击穿透：真悬浮窗里改窗口样式，浏览器里只切状态
 function bindPass() {
   const btn = $('btnPass');
+  const paint = (on) => {
+    btn.setAttribute('aria-pressed', String(on));
+    // 穿透开着的时候按钮自己也点不到了 —— 用热键 Ctrl+Alt+P 关
+    btn.textContent = on ? '已穿透（Ctrl+Alt+P 关）' : '点击穿透';
+  };
   btn.addEventListener('click', async () => {
     const on = btn.getAttribute('aria-pressed') !== 'true';
-    btn.setAttribute('aria-pressed', String(on));
-
+    paint(on);
     if (hasNative()) {
       await callNative('set_click_through', on);
-      // 穿透开着的时候，按钮自己也点不到了 —— 用热键 Ctrl+Alt+P 关
-      btn.textContent = on ? '已穿透（Ctrl+Alt+P 关）' : '点击穿透';
     } else {
       document.body.classList.toggle('pass-through', on);
     }
   });
+
+  // 全局热键 Ctrl+Alt+P 在原生线程里处理，页面不知道。
+  // 定时对齐一次，避免"穿透已经关了但按钮还写着已穿透"。
+  if (hasNative()) {
+    setInterval(async () => {
+      try {
+        const s = await callNative('get_state');
+        if (s && typeof s.pass_through === 'boolean') {
+          if (btn.getAttribute('aria-pressed') !== String(s.pass_through)) {
+            paint(s.pass_through);
+          }
+        }
+      } catch (_) {}
+    }, 1200);
+  }
 }
 
 function bindFold() {
