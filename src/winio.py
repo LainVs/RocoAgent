@@ -279,24 +279,38 @@ class Screen:
         return (cw / float(self.BASE_CLIENT_W), ch / float(self.BASE_CLIENT_H))
 
     def abs_point(self, box, cx, cy):
-        """box 是**窗口坐标**（基准分辨率），cx/cy 是 box 内的基准像素偏移
+        """box 是**客户区坐标**（基准分辨率），cx/cy 是 box 内的基准像素偏移
         -> 屏幕物理坐标。
 
-        grab_s(box) 抓到的图已经缩回基准尺寸，所以图内像素 (cx, cy)
-        对应的客户区像素 = sbox(box) 原点 + (cx, cy) * scale。
+        grab_s(box) / grab_client(box) 抓到的图已经缩回基准尺寸，
+        所以图内像素 (cx, cy) 对应的**客户区像素** = box 原点 + (cx, cy)*scale。
 
-        以前这里直接走 phys()（会再减一次 BASE_OFF），
-        导致所有用 abs_point 定位的按钮**偏下 58px**，
-        机器人一直点在按钮外面 —— 结算页「退出」点不到、
-        「确认首发」点不到，都源于此。
+        踩过的坑（2026-11-21 10:25，用户报"你每次都没移动到正确的坐标"）
+        ------------------------------------------------------------------
+        原实现：
+
+            sb = self.sbox(box)                  # 这里已经减过 BASE_OFF (13,58)
+            return (cr[0] + sb[0] + cx*sx,       # cr 是 client_rect_on_screen()
+                    cr[1] + sb[1] + cy*sy)       # 已经是客户区的屏幕位置
+
+        `sbox()` 把窗口坐标转成客户区坐标时减了 BASE_OFF，
+        而 `client_rect_on_screen()` 本身就是客户区在屏幕上的位置，
+        两者相加 = **重复减了 (13, 58)**。
+
+        实测：目标屏幕 (1748, 1445)，函数返回 (1735, 1387)，
+        正好差 (-13, -58)，点击全部偏左上。
+
+        现在直接用 box 原点（不做 sbox 转换），因为调用方传的 box
+        已经是客户区坐标：
+            return (cr[0] + box[0] + cx*sx,
+                    cr[1] + box[1] + cy*sy)
         """
         sx, sy = self.scale()
         cr = self.client_rect_on_screen()
         if cr is None:
             return None
-        sb = self.sbox(box)
-        return (cr[0] + int(round(sb[0] + cx * sx)),
-                cr[1] + int(round(sb[1] + cy * sy)))
+        return (cr[0] + int(round(box[0] + cx * sx)),
+                cr[1] + int(round(box[1] + cy * sy)))
 
     def client_rect_on_screen(self):
         if self.rect is None:

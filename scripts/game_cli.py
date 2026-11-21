@@ -96,16 +96,24 @@ def _ble_session():
 
 def cmd_click(scr, args):
     if len(args) < 2:
-        print("用法: click X Y   （客户区坐标，基准 2560x1600）")
+        print("用法: click X Y   （窗口坐标，与 config 的 *_REL 同一套）")
         return 1
     x, y = int(args[0]), int(args[1])
-    pt = scr.abs_point((0, 0, 2560, 1600), x, y)
-    if pt is None:
-        print("!! 坐标换算失败")
+    # 用与 robot.click_rel 完全相同的换算：
+    #   屏幕 = client_rect + (x - BASE_OFF) * scale
+    #
+    # 踩过的坑（2026-11-21 10:30，用户报"你每次都没移动到正确的坐标"）：
+    # 一开始用 abs_point，它的坐标系是**客户区**（不减 BASE_OFF），
+    # 而 config 的 *_REL 是**窗口坐标**（要减 BASE_OFF），
+    # 两者差 (13, 58)，点击全部偏左上。
+    cr = scr.client_rect_on_screen()
+    if cr is None:
+        print("!! 客户区位置取不到")
         return 1
-    ax, ay = pt
-    print("点击 客户区(%d,%d) -> 物理(%d,%d)" % (x, y, ax, ay))
-    # **必须走开发板**：BLE 硬件鼠标
+    sx, sy = scr.scale()
+    ax = cr[0] + int(round((x - scr.BASE_OFF_X) * sx))
+    ay = cr[1] + int(round((y - scr.BASE_OFF_Y) * sy))
+    print("点击 窗口坐标(%d,%d) -> 物理(%d,%d)" % (x, y, ax, ay))
     sess, loop = _ble_session()
     try:
         loop.run_until_complete(sess.click_at(ax, ay))
@@ -120,15 +128,17 @@ def cmd_click(scr, args):
 
 def cmd_move(scr, args):
     if len(args) < 2:
-        print("用法: move X Y")
+        print("用法: move X Y   （窗口坐标）")
         return 1
     x, y = int(args[0]), int(args[1])
-    pt = scr.abs_point((0, 0, 2560, 1600), x, y)
-    if pt is None:
-        print("!! 坐标换算失败")
+    cr = scr.client_rect_on_screen()
+    if cr is None:
+        print("!! 客户区位置取不到")
         return 1
-    ax, ay = pt
-    print("移动 客户区(%d,%d) -> 物理(%d,%d)" % (x, y, ax, ay))
+    sx, sy = scr.scale()
+    ax = cr[0] + int(round((x - scr.BASE_OFF_X) * sx))
+    ay = cr[1] + int(round((y - scr.BASE_OFF_Y) * sy))
+    print("移动 窗口坐标(%d,%d) -> 物理(%d,%d)" % (x, y, ax, ay))
     sess, loop = _ble_session()
     try:
         loop.run_until_complete(sess.move_to(ax, ay))
