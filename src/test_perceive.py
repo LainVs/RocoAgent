@@ -202,8 +202,9 @@ def cmp_state(tag, a, b, keys):
     else:
         for i, (x, y) in enumerate(zip(sa, sb)):
             recovered = bool(y and y.get("recovered"))
+            rejected = bool(y and y.get("rejected"))
             check = ("kind", "color", "plate", "lit", "skill_name", "skill_kind")
-            if not recovered:
+            if not recovered and not rejected:
                 check = check + ("text", "value", "score")
             for kk in check:
                 xv = None if x is None else x.get(kk)
@@ -216,6 +217,15 @@ def cmp_state(tag, a, b, keys):
                 if yt != xt.replace("?", "7"):
                     bad.append("skill%d 兜底结果不对 old=%r new=%r"
                                % (i + 1, xt, yt))
+            if rejected:
+                # 位数闸门：旧版会给出一个 4 位以上的"数字"（切分错误），
+                # 新版应当降级成读不出。
+                xt = (x or {}).get("text") or ""
+                if len(xt) <= 3:
+                    bad.append("skill%d 不该被位数闸门拦下 old=%r" % (i + 1, xt))
+                if (y or {}).get("text") != "?":
+                    bad.append("skill%d 被拦后 text 应为 '?' 实际 %r"
+                               % (i + 1, (y or {}).get("text")))
     if bad:
         P("  [FAIL] %s" % tag)
         for x in bad[:12]:
@@ -359,6 +369,30 @@ def main():
         P("  %s 7 判据：真实 7 认出 %d/%d，非 7 误判 %d/%d"
           % ("[OK]  " if (other_fp == 0 and sevens_hit == sevens) else "[FAIL]",
              sevens_hit, sevens, other_fp, glyphs - sevens))
+
+    # ---- 1d. 位数闸门：4 位以上的读数是切分错误，必须降级成读不出 ----
+    P("")
+    P("== 位数闸门（4 位以上 = 多切进一个字形）==")
+    path = os.path.join(config.LOG_DIR, "bar_partial_054346.png")
+    if not os.path.exists(path):
+        P("  跳过（截图不在）")
+    else:
+        img = cv2.imread(path)
+        rgb = img[:, :, ::-1]
+        h, w = rgb.shape[:2]
+        pills = dr.find_pills(rgb, (0, 0, w, h))
+        slots = NEW._slots(rgb, (0, 0, w, h), pills)
+        got = []
+        for s in slots:
+            if not s:
+                got.append(None)
+                continue
+            got.append(NEW.read_skill_with_fallback(rgb, s, tpl)["text"])
+        # 这一帧 slot 4 是 9 个字形（卡面图案被当成字），旧版会算成 10**7
+        good = got[3] == "?"
+        ok_all &= good
+        P("  %s %-26s 读出 %s（slot4 期望 '?'）"
+          % ("[OK]  " if good else "[FAIL]", os.path.basename(path), got))
 
     # ---- 2. 实时屏幕：冻结一帧真机画面，新旧两版跑同一帧 ----
     if not args.no_live:

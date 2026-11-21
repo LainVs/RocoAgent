@@ -80,13 +80,25 @@ def _est_value(s):
     unknown ones sit at the end, which keeps the estimate in the right decade.
     The old floor of 100 let a "23?" tie with a real 100 and win the sort, so
     the bot pressed a card it could not read over one it could.
+
+    位数上限（2026-11-21）
+    ---------------------
+    卡面伤害在本作里最多 3 位（实测最大 ~700，精灵血量都在 500 上下）。
+    4 位以上一定是**切分错误**：多切进了一个字形。实测 turns.jsonl 里
+    25 条 4 位以上的读数（"1062"/"1294"/"??????"）**全部** >999，
+    对应的真实值都是 3 位数（106 / 129）。
+    不拦住的话后果很严重：
+        "1062"  -> value=1062 -> 引擎认为这一下必定秒杀（+0.30 KO 权重）
+        "??????" -> 按位数推算 10**5 = 100000 -> 同上
     """
+    txt = s.get("text") or ""
+    if len(txt) > 3:
+        return None
     if s.get("value") is not None:
         return float(s["value"])
-    text = s.get("text") or ""
-    digits = "".join(ch for ch in text if ch.isdigit())
-    n = len(text) or int(s.get("glyphs") or 0)
-    if s.get("kind") == "num" and n >= 2:
+    digits = "".join(ch for ch in txt if ch.isdigit())
+    n = len(txt) or int(s.get("glyphs") or 0)
+    if s.get("kind") == "num" and 2 <= n <= 3:
         if digits:
             return float(int(digits) * 10 ** max(0, n - len(digits)))
         return float(10 ** (n - 1))

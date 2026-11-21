@@ -201,18 +201,43 @@ def _looks_like_seven(glyph):
         return False
 
 
-def read_skill_with_fallback(crop, pill, tpl):
-    """dr.read_skill + 模板拒识时的 7 兜底。
+_MAX_DMG_DIGITS = 3
 
-    只补 '?'，不覆盖已经认出来的数字 —— 兜底判据再准也不该推翻高置信度的
-    模板结果。补上的槽位带 `recovered=True`，方便复盘时区分。
+
+def read_skill_with_fallback(crop, pill, tpl):
+    """dr.read_skill + 两个拦河坝。
+
+    1) 模板拒识时的 7 兜底
+       只补 '?'，不覆盖已经认出来的数字 —— 兜底判据再准也不该推翻
+       高置信度的模板结果。补上的槽位带 `recovered=True`。
+
+    2) 位数合理性
+       卡面伤害最多 3 位。4 位以上一定是**多切进了一个字形**。
+       实测 turns.jsonl 里 25 条 4 位以上的读数全部 >999
+       （"1062" / "1294" / "??????"），真实值都是 3 位数。
+       不拦住的话，policy_v2 会把它当成"必定秒杀"（KO 权重 0.30），
+       "??????" 更会被估成 10**5 = 100000。
+       拦下后按"读不出"处理（text="?"，value=None）。
     """
     res = dr.read_skill(crop, pill, tpl)
     if not res or res.get("kind") != "num":
         return res
     txt = res.get("text") or ""
-    if "?" not in txt:
-        return res
+    out = res
+    if "?" in txt:
+        out = _recover_sevens(crop, pill, res)
+        txt = out.get("text") or ""
+    if len(txt) > _MAX_DMG_DIGITS:
+        out = dict(out)
+        out["text"] = "?"
+        out["value"] = None
+        out["rejected"] = len(txt)
+    return out
+
+
+def _recover_sevens(crop, pill, res):
+    """把被模板拒识的细斜杠 7 补回去。返回新 dict（可能没有改动）。"""
+    txt = res.get("text") or ""
     try:
         glyphs = dr.extract_glyphs(crop, pill)
     except Exception:

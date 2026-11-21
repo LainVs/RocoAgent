@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, str(paths.ROOT / "src"))
 sys.path.insert(0, str(paths.TOOLS))
 import robot  # noqa: E402
+from policy_legacy import _est_value as policy_legacy_est  # noqa: E402
 
 
 def milk(slot, value=None, lit=True):
@@ -132,6 +133,37 @@ if not ok:
 print("%-52s %-6s %s   (%s)" % (
     "\"???\" vs 300 -> attack slot 2",
     "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
+
+print()
+print("--- 4 位以上的读数是切分错误，不能当数字用 ---")
+# 实测 turns.jsonl 里 25 条 4 位读数全部 >999（"1062"/"1294"/"??????"），
+# 真实值都是 3 位数。不拦住的话 "1062" 会被当成必定秒杀，
+# "??????" 更会被按位数估成 10**5 = 100000。
+_garbage = [
+    {"index": 1, "value": 1062, "text": "1062", "kind": "num", "color": "green",
+     "score": 1.0, "glyphs": 4, "lit": True},
+    {"index": 2, "value": 300, "text": "300", "kind": "num", "color": "white",
+     "score": 1.0, "glyphs": 3, "lit": True},
+    {"index": 3, "value": None, "text": "??????", "kind": "num",
+     "color": "white", "score": 0.0, "glyphs": 6, "lit": True},
+    {"index": 4, "value": None, "text": "--", "kind": "dash", "color": None,
+     "score": 1.0, "glyphs": 0, "lit": True},
+]
+a, why = robot.decide(state(100.0, 100.0, _garbage), base)
+ok = a == ("skill", 2)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "\"1062\" 和 \"??????\" 都不能参与 -> attack slot 2",
+    "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
+print("%-52s %-6s %s" % (
+    "_est_value 对 4 位读数返回 None",
+    str(policy_legacy_est(_garbage[0])),
+    "OK" if policy_legacy_est(_garbage[0]) is None
+    and policy_legacy_est(_garbage[2]) is None else "**FAIL**"))
+if not (policy_legacy_est(_garbage[0]) is None
+        and policy_legacy_est(_garbage[2]) is None):
+    fails += 1
 
 print()
 print("--- out of energy: two charges, then rotate to a full-energy pet ---")
