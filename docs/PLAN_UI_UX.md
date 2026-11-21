@@ -93,6 +93,7 @@ git 约定：
 | U21 | 头像标注只取前 60 张、无翻页 —— 我方 561 张永远标不完 | ✅ `e150fe2` |
 | U22 | 对局记录只取最近 40 场 / 517 场，无翻页；且每次请求跑两遍 `summarize()` | ✅ `ab4978d` |
 | U23 | 图鉴 857 只只显示前 120 只，无「加载更多」 | ✅ `f93cd57` |
+| U24 | 游戏窗口 / 分辨率不匹配时界面完全无感知（识别率无声下降） | ✅ `12c6d78` |
 
 #### U15 为什么不改 `robot.py`
 
@@ -189,6 +190,50 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 `summarize(limit)` 和 `summarize()` **两遍**，每遍都要把三份 jsonl
 全量过一遍（517 场 / 3181 条回合）。现在只跑一遍再切片。
 
+#### U24：游戏窗口在跑，控制台却看不见 —— 而且分辨率是错的
+
+这条是本轮最值钱的发现。机器人能不能干活有两道门：**输入链路**和
+**游戏窗口**。上一轮只补了板子那条，窗口这条完全没有。
+
+实测现场（2026-11-21 21:5x）：
+
+```
+hwnd=262818  title="洛克王国：世界"  cls=UnrealWindow  vis=true
+rect 2074x1607   aspect 1.291
+标定基准 2560x1600  aspect 1.600      <- 差 19%
+```
+
+后果不是"读不到"，而是**读得歪**：`winio.Screen.scale()` 是
+
+```python
+return (cw / 2560.0, ch / 1600.0)     # x 和 y 分别算
+```
+
+x 缩 0.810、y 缩 1.004 —— 两个方向差 24%。所有写死的 ROI 都会被
+非等比拉伸：血条被压扁、技能栏错位、倒计时框跑到别处。表现是
+"今天怎么老读错"，但界面上**没有任何迹象**指向分辨率。
+
+修法（只读，不抓屏、不改 DPI）：
+
+```jsonc
+"game": {
+  "found": true, "hwnd": 262818,
+  "w": 2074, "h": 1607, "aspect": 1.291,
+  "base": [2560, 1600],
+  "scale_ok": false,
+  "iconic": false,
+  "note": "窗口 2074x1607（比例 1.29）与标定基准 2560x1600（比例 1.60）不一致，固定 ROI 会变形"
+}
+```
+
+判据：长宽比偏离基准超过 4% 即 `scale_ok=false`。前端在顶栏显示
+琥珀色的 `2074×1607`，健康面板新增一行（9 → 10 格）。
+
+**为什么不用 `robot.Screen()` 直接拿**：那会构造 mss、触发 DPI 探测、
+刷新窗口缓存 —— UI 服务常驻时不该碰这些东西。这里只 `EnumWindows` +
+`GetWindowRect`，与 `winio.find_game()` 同一判据但不产生副作用。
+
+
 ---
 
 ## 二、执行顺序与提交（实际）
@@ -233,9 +278,10 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 | U21 | `console.js refreshLabel()` + `#labelPager` | 渲染实测：`1–60 / 64`、`第 1 / 2 页` |
 | U22 | `ui_server.matches_summary(offset)` + `console.js renderMatchPager()` | 单测：`offset=3` 与 `offset=0` 无重叠、total 一致；渲染 `1–40 / 517`、`第 1 / 13 页` |
 | U23 | `console.js loadDex()` + `#dexMore` | 渲染实测：点一次 120 → 240 张，`还有 737 只` |
+| U24 | `ui_server.game_status()` + `console.js` 顶栏 `#botRes` + 健康第 1b 格 | 单测：`aspect=1.290`、`scale_ok=False` 并给出说明；渲染：顶栏 `2074×1607`（`top-link warn`），健康格 9→10 |
 
-**验证基线**：`python src/test_ui.py` → 127 项全过（原 62）；
-`--no-dom` 91 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 132 项全过（原 62）；
+`--no-dom` 95 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -247,8 +293,8 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 91 项，约 5 秒
-python src\test_ui.py                 # 127 项，约 90 秒，含真实渲染
+python src\test_ui.py --no-dom        # 95 项，约 5 秒
+python src\test_ui.py                 # 132 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -256,7 +302,7 @@ python src\test_ui.py                 # 127 项，约 90 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 127 项、`--no-dom` 91 项、
+**基线（本轮结束）**：`test_ui.py` 132 项、`--no-dom` 95 项、
 其余三个脚本 ALL PASS。
 
 > **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
