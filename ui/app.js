@@ -231,7 +231,42 @@ function render(st) {
 
   // ── 敌方
   const foe = st.foe || {};
-  $('foeName').textContent = foe.name || '未知';
+
+  // 名字显示（2026-11-21）
+  //
+  // 独立计算器模式下，`foe.name` 可能是 None，但 `foe.candidates` 里
+  // 有一批属性对得上的候选。这时候显示"候选：A / B"比干巴巴的"未知"有用
+  // —— 用户能看出系统在工作，只是没定到唯一答案。
+  //
+  // `foe.ident_source` 说明这个答案从哪来：
+  //   nickname  昵称映射表命中（最可靠，以前确认过）
+  //   name      名字恰好是种族名
+  //   types     属性过滤后只剩一个
+  //   portrait  头像模板
+  //   onnx      立绘模型
+  //   kept      沿用上一帧的判断（防抖）
+  //   none      什么都没定下来
+  const cands = foe.candidates || [];
+  let foeLabel = foe.name || '未知';
+  let foeNote = '';
+  if (!foe.name && cands.length) {
+    if (cands.length <= 3) {
+      foeLabel = cands.join(' / ');
+    } else {
+      foeLabel = `${cands[0]} 等 ${cands.length} 只`;
+    }
+    foeNote = '候选';
+  } else if (!foe.name && !cands.length) {
+    foeLabel = '未知';
+  }
+  $('foeName').textContent = foeLabel;
+  if (foe.nickname && foe.nickname !== foe.name) {
+    $('foeName').title = `HUD 显示「${foe.nickname}」（可能是玩家昵称）`;
+  } else {
+    $('foeName').title = foe.ident_source
+      ? `识别来源：${foe.ident_source}` : '';
+  }
+
   loadAvatar($('foeAvatar'), foe.name, 'foe');
   typeChips($('foeTypes'), foe.types);
   $('foePct').textContent = foe.hp_pct == null ? '—' : Math.round(foe.hp_pct);
