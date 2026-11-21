@@ -1032,24 +1032,14 @@ async function refreshTeam() {
    图鉴
    ================================================================ */
 let dexTimer = null;
+// 图鉴是 857 只，一次只给 120 只。用「加载更多」而不是翻页 ——
+// 网格布局下滚到底继续加载更自然，也不会丢掉已经浏览的位置。
+let dexQuery = '';
+let dexShown = 0;
+const DEX_PAGE = 120;
 
-async function refreshDex(q) {
-  let d;
-  try {
-    d = await get('/api/dex?limit=120&q=' + encodeURIComponent(q || ''));
-  } catch (e) {
-    return;
-  }
-  const items = d.items || [];
-  $('dexSub').textContent = `${items.length} / ${d.total || 0} 只`;
-
-  const grid = $('dexGrid');
-  if (!items.length) {
-    grid.innerHTML = `<div class="empty"><b>没有匹配的精灵</b></div>`;
-    return;
-  }
-
-  grid.innerHTML = items.map((p) => `
+function dexCard(p) {
+  return `
     <div class="dex-card">
       <div class="dex-av" data-name="${esc(p.name)}">${esc(p.name.slice(0, 1))}</div>
       <div class="dex-body">
@@ -1058,11 +1048,67 @@ async function refreshDex(q) {
         <div class="dex-stat">HP ${p.hp || '—'} · 攻 ${p.atk || '—'} ·
           速 ${p.spe || '—'} · 计 ${p.total || '—'}</div>
       </div>
-    </div>`).join('');
+    </div>`;
+}
 
-  grid.querySelectorAll('.dex-av').forEach((el) => {
-    loadAvatar(el, el.dataset.name);
+function renderDexMore(total) {
+  const host = $('dexMore');
+  if (!host) return;
+  const left = Math.max(0, total - dexShown);
+  if (!left) {
+    host.hidden = true;
+    return;
+  }
+  host.hidden = false;
+  host.innerHTML = `<button class="btn" id="dexLoadMore">
+    加载更多（还有 ${left} 只）</button>`;
+  const btn = $('dexLoadMore');
+  if (btn) btn.addEventListener('click', () => {
+    btn.disabled = true;
+    btn.textContent = '加载中…';
+    loadDex(dexQuery, true);
   });
+}
+
+async function loadDex(q, append) {
+  let d;
+  const offset = append ? dexShown : 0;
+  try {
+    d = await get('/api/dex?limit=' + DEX_PAGE + '&offset=' + offset
+      + '&q=' + encodeURIComponent(q || ''));
+  } catch (e) {
+    return;
+  }
+  const items = d.items || [];
+  const grid = $('dexGrid');
+  if (!append) {
+    dexShown = 0;
+    dexQuery = q || '';
+    grid.innerHTML = '';
+  }
+  dexShown += items.length;
+  $('dexSub').textContent = `${dexShown} / ${d.total || 0} 只`;
+
+  if (!dexShown) {
+    grid.innerHTML = `<div class="empty"><b>没有匹配的精灵</b></div>`;
+    renderDexMore(0);
+    return;
+  }
+
+  const box = document.createElement('div');
+  box.innerHTML = items.map(dexCard).join('');
+  const nodes = Array.from(box.children);
+  nodes.forEach((n) => {
+    grid.appendChild(n);
+    // 头像懒加载（限并发，见 loadAvatar）
+    const el = n.querySelector('.dex-av');
+    if (el) loadAvatar(el, el.dataset.name);
+  });
+  renderDexMore(d.total || 0);
+}
+
+async function refreshDex(q) {
+  await loadDex(q, false);
 }
 
 /* ================================================================
