@@ -145,6 +145,17 @@ function skillTier(s) {
  * 所以血条只有在 `detectors.bar` 为真时才算有效数据。
  */
 function isEmptyFrame(st) {
+  // ★ 服务端报了错（遮挡 / 抓屏失败）-> 一定是空帧（2026-11-21）
+  // -------------------------------------------------------------
+  // `standalone.observe()` 在游戏被遮挡时返回：
+  //     {"error": "游戏窗口被其他窗口遮挡…", "covered": true}
+  // 这个 dict **没有任何 me/foe/skills 字段**。
+  //
+  // 原来前端不认 error，当成正常帧渲染 -> 所有字段 undefined ->
+  // 满屏「未知」和「—」，而真正的错误信息被丢掉了。
+  // 用户完全不知道是自己把编辑器盖在游戏上面。
+  if (st.error) return true;
+
   const me = st.me || {};
   const foe = st.foe || {};
   const dets = (st.system || {}).detectors || {};
@@ -168,6 +179,26 @@ function isEmptyFrame(st) {
  *   · 机器人没跑     -> 走 renderEmpty()，那条分支已经写好了
  */
 function emptyReason(st) {
+  // ★ 服务端给了明确原因就直接用（2026-11-21）
+  // -------------------------------------------
+  // `standalone.observe()` 在游戏被遮挡时返回带 error 的 dict。
+  // 那句话写得比前端能猜的准得多（"请点一下游戏窗口把它切到前台"），
+  // 丢掉它换成通用的"等待画面"是浪费。
+  if (st.error) {
+    const msg = String(st.error);
+    // 错误信息通常是一长句，拆成标题 + 提示更好读
+    if (st.covered || msg.indexOf("遮挡") >= 0) {
+      return {
+        title: '游戏窗口被遮挡',
+        hint: '点一下游戏窗口把它切到前台',
+      };
+    }
+    return {
+      title: '读取失败',
+      hint: msg.length > 40 ? msg.slice(0, 40) + '…' : msg,
+    };
+  }
+
   const dets = (st.system || {}).detectors || {};
   if (st.standalone && !dets.bar) {
     return {
@@ -201,7 +232,9 @@ function renderNoData(st) {
   $('sysDets').innerHTML = [dets.bar, dets.skillbar, dets.countdown]
     .map((on) => `<i class="${on ? 'on' : ''}"></i>`).join('');
   $('liveDot').className = 'live-dot' + (st._stale ? ' warn' : ' off');
-  $('sysState').textContent = st._stale ? '数据过期' : '未在战斗';
+  // 有 error 时状态栏直接说"读不到"，比"未在战斗"准确
+  $('sysState').textContent = st.error ? '读取失败'
+    : st._stale ? '数据过期' : '未在战斗';
   const sb = $('btnStartBot');
   if (sb) sb.hidden = true;
   const badge = $('sysStandalone');

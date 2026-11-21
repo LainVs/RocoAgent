@@ -584,6 +584,91 @@ def start_warmup():
     return t
 
 
+# ---------------------------------------------------------------- 克制关系
+
+def _matchup(my_types, foe_types):
+    """双方属性 -> 克制关系 dict。任一方缺属性就返回 None（绝不瞎算）。
+
+    与 `robot.py` 的实现保持一致（那边是机器人模式用的）。
+    抽出来是因为独立模式原来硬编码 `"matchup": None`，
+    导致 UI 明明有双方属性却显示「属性未知」。
+
+    实测（2026-11-21）：
+        冰 打 [幻, 机械] -> 0.5
+        [幻, 机械] 打我冰 -> max(1.0, 2.0) = 2.0
+        -> {"out": 0.5, "in": 2.0, "tag": "被克制"}
+
+    为什么取 max 而不是累乘：游戏里双属性对单属性只取最高倍率，
+    不叠加（实测 冰打火+草 是 2.0 不是 4.0）。
+    """
+    if not my_types or not foe_types:
+        return None
+    try:
+        import statmodel as S
+        outs = [S.type_effect(t, foe_types) for t in my_types]
+        ins = [S.type_effect(t, my_types) for t in foe_types]
+        out_m = max(outs) if outs else 1.0
+        in_m = max(ins) if ins else 1.0
+    except Exception:
+        return None
+
+    if out_m >= 3:
+        tag = "双重克制"
+    elif out_m >= 2:
+        tag = "克制"
+    elif in_m >= 3:
+        tag = "被双重克制"
+    elif in_m >= 2:
+        tag = "被克制"
+    else:
+        tag = "互不克制"
+    return {"out": round(out_m, 2), "in": round(in_m, 2), "tag": tag}
+
+
+_DEF_CACHE = {}
+
+
+def _foe_def_range(foe_name):
+    """种族名 -> 物防区间 [lo, hi]。查不到返回 None。
+
+    为什么只给区间不给确定值
+    ------------------------
+    物防受「个体值 + 是否点满 + 性格」三个未知量影响，独立模式
+    （只看屏幕）一个都读不到。硬给一个确定值会让用户以为是真的。
+
+    `statmodel.def_range` 给的正是这四种组合的上下界 —— 区间越宽，
+    越说明"我们不知道"，这是诚实表达不确定性。
+
+    带缓存：`/api/state` 是秒级轮询，而种族基础值一辈子不变。
+    实测单次查库 + 计算约 2~3ms，缓存后 <0.01ms。
+    """
+    if not foe_name:
+        return None
+    hit = _DEF_CACHE.get(foe_name)
+    if hit is not None:
+        return list(hit) if hit else None
+    try:
+        import portrait_db as P
+        db = P.connect()
+        try:
+            r = db.execute(
+                "SELECT def FROM species WHERE name=? "
+                "ORDER BY implemented DESC, total DESC LIMIT 1",
+                (foe_name,)).fetchone()
+        finally:
+            db.close()
+        if not r or r["def"] is None:
+            _DEF_CACHE[foe_name] = ()
+            return None
+        import statmodel as S
+        lo, hi = S.def_range({"pdef": int(r["def"])})
+        out = (int(lo), int(hi))
+        _DEF_CACHE[foe_name] = out
+        return [out[0], out[1]]
+    except Exception:
+        return None
+
+
 def observe(force=False):
     """从屏幕读一帧状态，打包成和 live_state 同构的 dict。
 
@@ -704,7 +789,6 @@ def observe(force=False):
     #     max_hp = 401        hp_band = (401, 461)
     # 拿 401 作分母会把 330 的伤害算成 82%，实际只有 72%。
     foe_hp_hi = foe_hp_range[1] if foe_hp_range else foe_max
-
     skills = []
     for i, s in enumerate(raw.get("skills") or [], 1):
         if not s:
@@ -769,7 +853,7 @@ def observe(force=False):
             "types": foe_types,
             "hp_pct": raw.get("foe_pct"),
             "hp_range": foe_hp_range,
-            "def_range": None,
+            "def_range": _foe_def_range(foe_name),
             "nature": None,
             "nature_conf": None,
             "known_skills": [],
@@ -779,7 +863,7 @@ def observe(force=False):
             "nickname": foe_nick,
         },
         "skills": skills,
-        "matchup": None,
+        "matchup": _matchup(my_types, foe_types),
         "verdict": None,
         "bench": [],
         "system": {

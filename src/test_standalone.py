@@ -306,6 +306,55 @@ def main():
     check(ok, "hud_ident.read_types(空屏) 返回 []")
 
     print()
+    print("[9] 克制关系：有属性才算，缺属性不瞎算")
+    #
+    # 背景（2026-11-21）：`observe()` 里 matchup 原来是硬编码 None，
+    # UI 明明有双方属性却显示「属性未知」。接上之后必须保证：
+    #   · 双方属性齐 -> 数值正确
+    #   · 任一方缺   -> None（不能拿默认 1.0 假装"互不克制"）
+    m = standalone._matchup(["冰"], ["幻", "机械"])
+    check(m is not None, "双方属性齐 -> 有 matchup")
+    if m:
+        check(m.get("out") == 0.5, "out=0.5（冰打幻/机械）", str(m.get("out")))
+        check(m.get("in") == 2.0, "in=2.0（机械打冰）", str(m.get("in")))
+        check(m.get("tag") == "被克制", "tag=被克制", str(m.get("tag")))
+
+    check(standalone._matchup(["冰"], []) is None,
+          "对面属性空 -> None（不瞎算）")
+    check(standalone._matchup([], ["幻"]) is None,
+          "我方属性空 -> None（不瞎算）")
+    check(standalone._matchup(None, None) is None,
+          "双方都 None -> None")
+
+    # 互不克制也要给出 1.0/1.0 而不是 None（那是有效结论）
+    m2 = standalone._matchup(["普通"], ["普通"])
+    check(m2 is not None and m2.get("out") == 1.0,
+          "互不克制 -> out=1.0（不是 None）",
+          str(m2.get("out")) if m2 else "None")
+
+    print()
+    print("[10] 物防区间：查得到才给，查不到给 None")
+    dr = standalone._foe_def_range("离心舞者")
+    check(isinstance(dr, list) and len(dr) == 2,
+          "离心舞者 -> [lo, hi]", str(dr))
+    if isinstance(dr, list) and len(dr) == 2:
+        check(dr[0] < dr[1], "lo < hi", str(dr))
+        # 区间不能宽到没意义（正常应是 40~120 这个量级）
+        check(0 < dr[0] and dr[1] < 500, "区间在合理范围", str(dr))
+
+    check(standalone._foe_def_range("不存在的精灵名") is None,
+          "查不到 -> None")
+    check(standalone._foe_def_range(None) is None, "名字 None -> None")
+
+    # 缓存必须真的命中（/api/state 是秒级轮询）
+    import time as _t
+    _t0 = _t.perf_counter()
+    for _ in range(50):
+        standalone._foe_def_range("离心舞者")
+    _dt = (_t.perf_counter() - _t0) * 1000
+    check(_dt < 20, "50 次缓存查询 < 20ms", "%.2fms" % _dt)
+
+    print()
     if fails:
         print("%d FAILURE(S)" % fails)
         return 1
