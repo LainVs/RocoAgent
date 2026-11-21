@@ -1980,4 +1980,117 @@ ABILITY_EFFECTS = {
         ]),
     ],
 
+    # ============================================================
+    #  本项目补丁（2026-11-21）—— 补齐缺失的特性效果
+    #  来源：data/external/roco-cal/traits/ 结构化 JSON（mode 摘要）+ features 表 desc
+    #  ============================================================
+
+    # ──────────────────────────────────────────────────────────
+    #  部分特性引擎无对应原语 / condition，已按规则跳过（见报告），
+    #  下方只配置 roco-cal mode 能用现有 E 原语表达的效果。
+    # ──────────────────────────────────────────────────────────
+
+    # 完全偏振 (12只): 抵抗自己携带技能系别的攻击伤害
+    #   roco-cal mode="same_skill_as_attack" advantage 0.5
+    #   复用偏振的 DAMAGE_RESIST_SAME_TYPE（引擎检查自身系别，近似携带技能系别）
+    "完全偏振": [
+        AE(Timing.PASSIVE, [T(E.DAMAGE_RESIST_SAME_TYPE, resist_pct=0.5)]),
+    ],
+
+    # 淬炼火 (3只): 入场前己方精灵每使用1次火系技能，获得攻防+10%，速度+10（最多10次）
+    #   roco-cal mode="fire_skill_count"（spd 原为 flat +10/次，速度按引擎百分比近似 +10%/次）
+    "淬炼火": [
+        AE(Timing.ON_ENTER, [T(E.ENTRY_BUFF_PER_SKILL_COUNT,
+            count_key="火",
+            _params={"per_count": {"buff": {"atk": 0.1, "def": 0.1, "speed": 0.1}}})]),
+    ],
+
+    # 剪影 (2只): 敌方精灵离场时，自己获得技能威力+20（可叠加）
+    #   roco-cal mode="enemy_switch_out" power_bonus per_stack=20
+    "剪影": [
+        AE(Timing.ON_ENEMY_SWITCH, [T(E.PERMANENT_MOD, target="power", delta=20)]),
+    ],
+
+    # 齐鸣 (2只): 自己携带的「虫鸣」技能威力+20
+    #   roco-cal mode="chongming_bonus" skill_names=["虫鸣"] value=20
+    #   （己方虫系"巧变：虫鸣"无引擎原语，忽略）
+    "齐鸣": [
+        AE(Timing.ON_ENTER, [T(E.SPECIFIC_SKILL_POWER_BONUS, skill_name="虫鸣", power_bonus=20)]),
+    ],
+
+    # 噼啪噼啪！ (1只): 入场后首次行动，所选技能使用次数+1
+    #   roco-cal mode="first_turn" usage_time_plus=1（同 噼啪！ 的 FIRST_ACTION_HIT_BONUS）
+    #   （"该回合每次行动后回复2能量"无引擎原语，忽略）
+    "噼啪噼啪！": [
+        AE(Timing.ON_ENTER, [T(E.FIRST_ACTION_HIT_BONUS)]),
+        AE(Timing.ON_USE_SKILL, [T(E.FIRST_ACTION_HIT_BONUS)]),
+    ],
+
+    # 滋养 (1只): 造成克制伤害后，获得攻防速+20%，回复2能量
+    #   roco-cal mode="advantage_damage" stat_buff atk/mag/def/res/spd 0.2
+    #   （"首个技能替换为草系愿力冲击"无引擎原语，忽略）
+    "滋养": [
+        AE(Timing.ON_USE_SKILL,
+           [T(E.ON_SUPER_EFFECTIVE_BUFF, energy=2,
+               _params={"buff": {"atk": 0.2, "def": 0.2, "speed": 0.2}})]),
+    ],
+
+    # 点燃 (1只): 同滋养，替换技能为火系愿力冲击（同上忽略替换部分）
+    "点燃": [
+        AE(Timing.ON_USE_SKILL,
+           [T(E.ON_SUPER_EFFECTIVE_BUFF, energy=2,
+               _params={"buff": {"atk": 0.2, "def": 0.2, "speed": 0.2}})]),
+    ],
+
+    # 先知 (1只): 敌方技能足够击败自己时，回合开始速度+50
+    #   roco-cal mode="predict_dead" stat_buff spd=50
+    #   复用预警/哨兵的 THREAT_SPEED_BUFF（击杀威胁判定）
+    #   （双攻+50% 无同源原语，忽略）
+    "先知": [
+        AE(Timing.ON_TURN_START, [T(E.THREAT_SPEED_BUFF, speed=0.5)]),
+    ],
+
+    # 强制过滤 (1只): 在场时，所有精灵连击数固定为1
+    #   roco-cal mode="combo_fix" combo=1（同 无差别过滤 的 FIXED_HIT_COUNT_ALL）
+    "强制过滤": [
+        AE(Timing.PASSIVE, [T(E.FIXED_HIT_COUNT_ALL, count=1)]),
+    ],
+
+    # 贪得无厌 (1只): 入场时获得50%吸血
+    #   roco-cal mode="over_heal_5"（入场吸血部分含在 desc 中）
+    #   （"每过量回复5%生命转化为10%物攻"无引擎原语，忽略）
+    "贪得无厌": [
+        AE(Timing.ON_ENTER, [T(E.ON_ENTER_GRANT_DRAIN, pct=0.5)]),
+    ],
+
+    # 蒸汽革命 (1只): 己方精灵每使用1次火系技能，自己入场时获得全技能威力+10和物防+5%
+    #   roco-cal mode="fire_skill_count"（fire_skill_count 同 蒸汽膨胀 的 count_key="火"）
+    "蒸汽革命": [
+        AE(Timing.ON_ENTER, [T(E.ENTRY_BUFF_PER_SKILL_COUNT,
+            count_key="火",
+            _params={"per_count": {"power_bonus": 10, "buff": {"def": 0.05}}})]),
+    ],
+
+    # 烈冰钻 (1只): 敌方携带技能总能耗每有1点，自己攻击时威力+10%
+    #   roco-cal mode="skills_total_cost" power_multiplier 0.1/点（同 冰钻 写法）
+    #   （"敌方总能耗>15 时速度+75"无条件原语，忽略）
+    "烈冰钻": [
+        AE(Timing.ON_BATTLE_START, [
+            T(E.ABILITY_COMPUTE, action="modify_matching_skills",
+              count_source="enemy_energy_sum", power_pct=0.1, attack_only=True)
+        ]),
+        AE(Timing.ON_ENTER, [
+            T(E.ABILITY_COMPUTE, action="modify_matching_skills",
+              count_source="enemy_energy_sum", power_pct=0.1, attack_only=True)
+        ]),
+    ],
+
+    # 裁决 (1只): 造成克制伤害后，获得攻防速+20%，回复2能量
+    #   roco-cal mode="advantage_damage"（替换技能为光系愿力冲击，忽略）
+    "裁决": [
+        AE(Timing.ON_USE_SKILL,
+           [T(E.ON_SUPER_EFFECTIVE_BUFF, energy=2,
+               _params={"buff": {"atk": 0.2, "def": 0.2, "speed": 0.2}})]),
+    ],
+
 }
