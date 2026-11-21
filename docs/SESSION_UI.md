@@ -165,3 +165,22 @@ GetClientRect -> 2048x1536   （纯客户区，Screen.scale() 用的是这个）
 | 22:27 | `1bad3a1` | U25 补 DPI 声明（之前读到逻辑坐标，差 2 倍） |
 | 22:35 | `0224095` | 文档：DPI 要求 |
 | 22:44 | `a9de6fd` | 分辨率改读客户区（2048×1536，与主会话同口径） |
+| 22:50 | `ce8f0b6` | U27 图鉴按名字去重（857 → 683） |
+| 22:56 | `2ca18d5` | U28 过期数据不再出绿灯 |
+| 23:00 | `6350c2a` | 文档：U27 / U28 |
+
+---
+
+## 八、与主会话的接口点（随时可能需要确认）
+
+| 事项 | 状态 |
+|---|---|
+| `standalone` 写自己的日志文件 | 已提建议，我用前缀过滤绕过，不阻塞 |
+| `winio.client_size` 只读访问 | 我自己 `GetClientRect` 实现了，不阻塞 |
+| `data/roco.sqlite3` 里的 103 个重名 | **只读去重**，没改数据。如果主会话要清理库，建议保留 `total` 最大的那条 |
+| `my_team` 只录 5 / 6 只 | 属于数据，未动 |
+
+**我没有改过**：`robot.py` / `standalone.py` / `hud_ident.py` / `foe_ident.py`
+/ `portraits.py` / `portrait_onnx.py` / `perceive.py` / `winio.py` /
+`matdet.py` / `data/roco.sqlite3`。
+
