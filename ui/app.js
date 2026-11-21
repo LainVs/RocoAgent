@@ -171,6 +171,13 @@ function render(st) {
   const sb = $('btnStartBot');
   if (sb) sb.hidden = true;
 
+  // ★ 独立模式：数据是**服务端自己看屏幕**读的，不是机器人推的
+  //
+  // 必须让用户一眼看出来，否则会以为"对面是谁/技能名"这些字段
+  // 是真的读出来了，实际它们需要机器人（决策层 + 数据库）。
+  const badge = $('sysStandalone');
+  if (badge) badge.hidden = !st.standalone;
+
   // ── 我方
   const me = st.me || {};
   $('meName').textContent = me.name || '未知';

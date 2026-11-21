@@ -279,6 +279,20 @@ body.embedded .overlay .panel {
 .hdr-start:hover { background: rgba(127, 211, 232, .22); }
 .hdr-start:disabled { opacity: .5; cursor: default; }
 .hdr-start[hidden] { display: none; }
+
+/* 独立感知标记：数据是服务端自己看屏幕读的，不是机器人推的。
+   必须显眼 —— 否则用户会以为对面身份/技能名也读出来了。 */
+.hdr-sa {
+  font-size: 9.5px;
+  line-height: 15px;
+  padding: 0 5px;
+  border-radius: 3px;
+  letter-spacing: .05em;
+  color: #E8C24A;
+  background: rgba(232, 194, 74, .12);
+  border: 1px solid rgba(232, 194, 74, .35);
+}
+.hdr-sa[hidden] { display: none; }
 .hdr-turn  {
   font-family: var(--font-num);
   font-size: 11px;

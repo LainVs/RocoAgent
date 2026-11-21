@@ -435,22 +435,40 @@ def bot_status():
 
 # ============================================================ 实时状态
 def live_state():
-    """机器人推送的实时状态。机器人没跑就返回 null（前端显示空态）。"""
-    if not os.path.exists(LIVE_STATE):
-        return None
+    """实时状态。
+
+    优先级：
+      1. 机器人推送的 logs/live_state.json（最完整：含对面身份、技能名、
+         伤害预测 —— 那些需要决策层和数据库）
+      2. 机器人没跑 -> **自己抓屏读**（standalone.py）
+         纯视觉能拿到血条、技能卡伤害数字、倒计时；拿不到身份和预测。
+
+    这就是"伤害计算器能脱离机器人使用"的实现：没有机器人时，
+    服务端自己看屏幕，至少把四张卡的伤害数字显示出来。
+    """
+    st = None
+    if os.path.exists(LIVE_STATE):
+        try:
+            age = time.time() - os.path.getmtime(LIVE_STATE)
+        except OSError:
+            age = 1e9
+        st = _read_json(LIVE_STATE)
+        if st is not None and age > STALE_S:
+            # 过期数据不能当实时用 —— 宁可说"没数据"
+            st = dict(st)
+            st["_stale"] = True
+            st["_age"] = round(age, 2)
+        if st is not None:
+            return st
+
+    # ---- 机器人没在推：自己看屏幕
     try:
-        age = time.time() - os.path.getmtime(LIVE_STATE)
-    except OSError:
-        return None
-    st = _read_json(LIVE_STATE)
-    if st is None:
-        return None
-    if age > STALE_S:
-        # 过期数据不能当实时用 —— 宁可说"没数据"
-        st = dict(st)
-        st["_stale"] = True
-        st["_age"] = round(age, 2)
-    return st
+        import standalone
+        if standalone.available():
+            return standalone.observe()
+    except Exception:
+        pass
+    return None
 
 
 # ============================================================ 统计
