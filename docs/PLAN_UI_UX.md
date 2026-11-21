@@ -78,27 +78,62 @@ git 约定：
 
 ---
 
-### P4 · 后续（U13/U14 已在本轮追加完成）
+### P4 · 后续
 
 | # | 内容 | 状态 |
 |---|---|---|
 | U13 | 对局表行点击 → 右侧抽屉渲染 `match_detail`（`/api/match` 早就实现但前端从未调用） | ✅ `b38e42a` |
 | U14 | 日志页按 `classifyLine` 分类做筛选 chips（全部/决策/异常，带计数） | ✅ `789d8a0` |
-| U15 | 悬浮窗显示 `plan{action,why}`（需要改 `robot.py` 的 `_publish_state`） | ⬜ 依赖 A 会话 |
+| U15 | 机器人"这一手"：`/api/decision` + 概览页一张卡（**只读 `turns.jsonl`，不改 `robot.py`**） | ✅ `f96c130` |
 | U16 | `docs/FRONTEND.md` 里 `data.html` 段落与实现对齐 | ✅ `3394cbb` |
-| U17 | `bot_stdout.log` 被 `standalone` 的日志污染：48KB 尾部 0 条机器人事件 | ⬜ 待定（属 standalone/ config 层） |
+| U17 | `bot_stdout.log` 被 `[standalone]` 日志污染 | ✅ `5bab168` |
+| U18 | 回合明细把轮询行当手数（同一手最多重复 5 次） | ✅ `fba9e28` |
 
-**U17 的现场**（2026-11-21 20:30）：
+#### U15 为什么不改 `robot.py`
+
+原计划是在 `_publish_state()` 里加 `plan{action, why}`。但那份文件同时被
+另一个会话在改（`standalone.py` / `app.js` 20:43 还在写），而动主循环的
+风险远高于收益 —— 决策**本来就在 `turns.jsonl`**（`action` + `why`），
+只是没人读。所以改成服务端只读日志的 `/api/decision`：
+
+```jsonc
+{ "action": ["skill", 1], "why": "best affordable dmg 107 (red)",
+  "turn": 3, "ts": "16:06:20", "age": 16835.7,
+  "mid": "20261121-160432", "my_pct": 45.9, "foe_pct": 100.0, "energy": 0 }
+```
+
+前端在概览页显示成「出招 1 · T3 · 46% / 100%」+ 一行理由；
+`age > 180s` 时整块降透明度并标成「5h前」，不会被误读成当前这一手。
+
+#### U17 的现场与修法（2026-11-21 20:48）
 
 ```
-Get-Content logs/bot_stdout.log | 取最后 48KB | 匹配 BLE/GATE/SKILL => 0 条
+bot_stdout.log 最后 48KB，匹配 BLE/GATE/SKILL => 0 条
 ```
 
-尾部全是 `[standalone] FOE -> ...` 和 `WINDOW client 0x0 -> 1280x800`。
-`standalone.py` 用的是 `config.log()`，和机器人写同一个文件。
-后果：控制台的日志页在 UI 服务常驻时会被感知日志刷掉，看不到机器人的
-`GATE/SKILL/BLE` 行。修法要么 standalone 写自己的 `logs/standalone.log`，
-要么在 `/api/log` 里按前缀过滤 —— 两者都要动 A 会话的文件，所以先记录。
+`standalone.py` 用 `config.log()` 往同一个文件写 `[standalone] FOE -> ...`，
+UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None，
+**刚做完的 phase 推断整个失效**（退回 live/stale，看不出等待板子）。
+
+修法选了**按前缀过滤 + 窗口放大到 256KB**，而不是改 `standalone.py`：
+后者是另一个会话的文件，而且它写日志是有意的（独立模式要留痕）。
+修完实测：
+
+```
+{"event": "running", "counts": {"waiting_board": 1, "focus_lost": 2,
+ "board_offline": 10, "match_end": 13, "lobby": 58, "running": 384}}
+```
+
+之前这些计数全是 0。回归测试会先写一条 `BLE waiting for board`，
+再压 400 行 `[standalone]`，断言仍然读得到 `waiting_board`。
+
+#### U18 的现场
+
+`turns.jsonl` 是**轮询日志**：同一手每帧写一行。实测尾部 100 行里只有
+94 手，最多一手重复 5 次。前端直接倒序显示，看起来像"机器人连按 5 次
+同一张卡"。现在按 `(mid, turn, 血量, 动作)` 去重并显示
+「最近 100 条轮询 → 94 手（已去重）」。
+
 
 
 ---
@@ -136,13 +171,15 @@ Get-Content logs/bot_stdout.log | 取最后 48KB | 匹配 BLE/GATE/SKILL => 0 �
 | U12 | `console.js refreshStats()` 两格 | 战绩页 5→7 格 |
 | U13 | `console.js openMatch()` + `console.html #matchDrawer` | 渲染实测：点行打开抽屉、含回合表 |
 | U14 | `console.js renderLog()` + `#logFilter` chips | 渲染实测：全部 887 行 → 异常 0 行 |
+| U15 | `ui_server.last_decision()` + `/api/decision` + `console.js refreshDecision()` | 实测返回真实决策；渲染「出招 1 T3 46% / 100% best affordable dmg 107」 |
 | U16 | `docs/FRONTEND.md` §3.1 / §3.2 / §4.2 / §4.3 | — |
+| U17 | `ui_server._robot_lines()` 按 `[standalone]` 前缀过滤 + 窗口 16KB→256KB | 计数从全 0 变成 `board_offline:10 / focus_lost:2 / waiting_board:1` |
+| U18 | `console.js refreshTurns()` 按 `(mid,turn,hp,action)` 去重 | 渲染实测：100 条轮询 → 94 手 |
 
 **验证基线**：`python src/test_ui.py` → 88 项全过（原 62）；
-`--no-dom` 75 项；`test_record.py` / `test_imports.py` ALL PASS。
+`--no-dom` 81 项；`test_record.py` / `test_imports.py` ALL PASS。
 
-**未做（下一轮）**：U15（悬浮窗显示 plan/why —— 依赖 A 会话的 `robot.py`）、
-U17（`bot_stdout.log` 被 standalone 日志污染）。
+**未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
 ---
 

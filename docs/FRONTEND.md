@@ -216,6 +216,41 @@
 `board.state == "connected"` 也可能是**很久以前**的日志（espfast 停了不写新行），
 所以前端在 `age > 600s` 时降级成「最后已连 X 前」（琥珀），不按绿色处理。
 
+### 3.3 `/api/decision`（2026-11-21 新增）
+
+`live_state.json` 只有"我看到什么"，没有"我要做什么"。决策在
+`turns.jsonl` 里（`action` + `why`），服务端直接捞最后一条：
+
+```jsonc
+{
+  "action": ["skill", 1],          // skill / energy / switch + 槽位
+  "why": "best affordable dmg 107 (red)",
+  "turn": 3, "ts": "16:06:20",
+  "age": 16835.7,                  // 由 ts 算出来，前端判断是否过期
+  "mid": "20261121-160432",
+  "my_pct": 45.9, "foe_pct": 100.0, "energy": 0
+}
+```
+
+**为什么是只读日志，而不是给 `live_state` 加字段**：`_publish_state()` 在
+机器人主循环里，改它要动实时回路；而决策本来就已经落盘，读日志零风险。
+`action` 为空的行（轮询行）会被跳过。
+
+前端规则：`age > 180s` 时整块降透明度并标「5h前」—— 决策是历史事件，
+不能因为机器人停了就把它当成"现在要做的事"。
+
+### 3.4 `bot_stdout.log` 的两类写入者
+
+| 写入者 | 前缀 | 频率 |
+|---|---|---|
+| `robot.py`（`config.log`） | `HH:MM:SS ...` | 心跳 15s 一行，出招时密集 |
+| `standalone.py`（独立模式） | `HH:MM:SS [standalone] ...` | UI 服务常驻时每秒 2~4 行 |
+
+`/api/bot` 的 phase 推断**必须过滤掉 `[standalone]`**，否则窗口里全是感知
+日志，机器人事件被挤出去，phase 静默退回 live/stale（2026-11-21 实测：
+48KB 尾部 0 条机器人事件）。所以 `ui_server._robot_lines()` 按前缀过滤，
+窗口 256KB。日志页（`/api/log`）不过滤 —— 那边要看到全部原始输出。
+
 ---
 
 ## 四、页面设计
