@@ -875,3 +875,71 @@ button, input, select {
   .nav-label { display: none; }
   .brand small { display: none; }
 }
+
+/* ── Toast（替代 alert）─────────────────────────────────
+   为什么不用 alert：WebView2 里它会阻塞渲染；而且启动/停止/标注都是
+   异步的，弹窗一关页面还是旧数据，用户拿不到"已生效"的证据。 */
+.toasts {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 60;
+  pointer-events: none;
+}
+.toast {
+  pointer-events: auto;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 220px;
+  max-width: 420px;
+  padding: 9px 11px;
+  border-radius: 8px;
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+  color: var(--ink-1);
+  font-size: 12px;
+  line-height: 1.5;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .38);
+  animation: toast-in .16s ease-out;
+}
+.toast .tdot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex: none;
+  background: var(--ink-3);
+}
+.toast.ok   { border-color: rgba(78, 201, 176, .40); }
+.toast.ok   .tdot { background: var(--win); }
+.toast.warn { border-color: rgba(232, 163, 61, .40); }
+.toast.warn .tdot { background: var(--warn); }
+.toast.err  { border-color: rgba(232, 102, 74, .46); }
+.toast.err  .tdot { background: var(--lose); }
+.toast .tmsg { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+.toast .tclose {
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 0 2px;
+}
+.toast .tclose:hover { color: var(--ink-0); }
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* 表格横向滚动容器：8 列表格在 900px 窗口下会被裁列。
+   grid 子项默认 min-width:auto，必须显式给 overflow。 */
+.tbl-wrap {
+  overflow-x: auto;
+  min-width: 0;
+}
+

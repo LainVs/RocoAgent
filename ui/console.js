@@ -63,6 +63,35 @@ function fmtPct(v) {
   return v == null ? '—' : Math.round(v) + '%';
 }
 
+/* ---------------------------------------------------------------- 反馈 */
+// toast：右下角堆叠，可手动关。ms <= 0 表示不自动消失。
+function toast(msg, kind = 'ok', ms = 4200) {
+  const host = $('toasts');
+  if (!host) return null;
+  const el = document.createElement('div');
+  el.className = 'toast ' + kind;
+  el.innerHTML = `<i class="tdot"></i><span class="tmsg">${esc(msg)}</span>` +
+                 `<button class="tclose" aria-label="关闭">×</button>`;
+  const drop = () => { if (el.parentNode) el.parentNode.removeChild(el); };
+  el.querySelector('.tclose').addEventListener('click', drop);
+  host.appendChild(el);
+  if (ms > 0) setTimeout(drop, ms);
+  return el;
+}
+
+// 连接状态只在"变化"时提示一次 —— 每 3 秒弹一条"服务未连接"等于刷屏。
+let connState = null;      // null=还没判断过 / 'ok' / 'down'
+function setConn(ok) {
+  if (ok) {
+    if (connState === 'down') toast('已重新连上本地服务', 'ok', 2500);
+    connState = 'ok';
+  } else if (connState !== 'down') {
+    // 首次就失败时不弹（可能页面刚打开、服务还没起）
+    if (connState !== null) toast('与本地服务断开，正在重试…', 'err', 0);
+    connState = 'down';
+  }
+}
+
 /* ================================================================
    机器人状态
    ================================================================ */
@@ -100,9 +129,13 @@ async function refreshBot() {
   let b;
   try {
     b = await get('/api/bot');
+    setConn(true);
   } catch (e) {
+    setConn(false);
     $('botText').textContent = '服务未连接';
     $('botDot').className = 'dot off';
+    const link = $('botLink');
+    if (link) link.hidden = true;
     return;
   }
 
@@ -914,7 +947,7 @@ async function refreshLabel() {
       } else {
         input.style.borderColor = 'var(--lose)';
         setTimeout(() => { input.style.borderColor = ''; }, 1500);
-        alert(r.msg || '标注失败');
+        toast(r.msg || '标注失败', 'err');
       }
     };
 
@@ -976,11 +1009,11 @@ function bindAuto() {
     btn.textContent = '批量确认';
 
     if (!dry.ok) {
-      alert(dry.msg || '统计失败');
+      toast(dry.msg || '统计失败', 'err');
       return;
     }
     if (!dry.n) {
-      alert('没有可批量确认的（需要 OCR 精确匹配且置信度 ≥ 90%）');
+      toast('没有可批量确认的（需要 OCR 精确匹配且置信度 ≥ 90%）', 'warn');
       return;
     }
 
@@ -1006,7 +1039,7 @@ function bindAuto() {
       extra = `\n失败 ${r.fails.length} 张：\n` +
         r.fails.slice(0, 5).map((f) => `  ${f.stem}: ${f.msg}`).join('\n');
     }
-    alert((r.msg || '完成') + extra);
+    toast((r.msg || '完成') + extra, r.ok ? 'ok' : 'err', r.ok ? 4200 : 8000);
     refreshLabel();
   });
 }
@@ -1030,7 +1063,7 @@ function bindPurge() {
     const r = await post('/api/portrait/purge_junk', { side: labelSide });
     btn.disabled = false;
     btn.textContent = '清理垃圾';
-    alert(r.msg || '完成');
+    toast(r.msg || '完成', r.ok ? 'ok' : 'err');
     refreshLabel();
   });
 }
@@ -1089,9 +1122,18 @@ $('btnStart').addEventListener('click', async () => {
   const btn = $('btnStart');
   btn.disabled = true;
   btn.textContent = '启动中…';
-  const r = await post('/api/bot/start', { supervisor: true });
+  let r;
+  try {
+    r = await post('/api/bot/start', { supervisor: true });
+  } catch (e) {
+    r = { ok: false, msg: '请求失败：' + e.message };
+  }
   btn.textContent = '启动';
-  if (!r.ok) alert(r.msg || '启动失败');
+  if (r.ok) {
+    toast('机器人已启动，正在等板子…', 'ok');
+  } else {
+    toast(r.msg || '启动失败', 'err', 7000);
+  }
   setTimeout(() => { refreshBot(); startTimers(); }, 1500);
 });
 
@@ -1099,8 +1141,14 @@ $('btnStop').addEventListener('click', async () => {
   if (!confirm('确定停止机器人？')) return;
   const btn = $('btnStop');
   btn.disabled = true;
-  const r = await post('/api/bot/stop');
-  if (!r.ok) alert(r.msg || '停止失败');
+  let r;
+  try {
+    r = await post('/api/bot/stop');
+  } catch (e) {
+    r = { ok: false, msg: '请求失败：' + e.message };
+  }
+  if (r.ok) toast('机器人已停止', 'ok');
+  else toast(r.msg || '停止失败', 'err', 7000);
   setTimeout(refreshBot, 1200);
 });
 

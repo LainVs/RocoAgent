@@ -275,6 +275,10 @@
   </div>
 </div>
 
+<!-- 操作反馈：替代 alert()。异步操作（启动/停止/标注）必须有"已生效"的证据，
+     原生 alert 会阻塞渲染，且弹窗消失后页面还是旧数据。 -->
+<div class="toasts" id="toasts" aria-live="polite"></div>
+
 <script src="console.js"></script>
 </body>
 </html>
