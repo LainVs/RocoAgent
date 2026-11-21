@@ -134,14 +134,28 @@ function skillTier(s) {
  * 用户看到这个的第一反应是"这东西坏了"，而不是"现在不在战斗"。
  * **信息噪声伪装成信息，比没有信息更糟。**
  *
- * 判定要保守：只有三个区块**全都**没数据才算空帧。
- * 只有血条没名字（很常见：刚进战斗还没识别身份）不算空 —— 血条是真数据。
+ * ★ 血条要配合检测器一起看（2026-11-21 20:50 实机）
+ * ------------------------------------------------
+ * 实测 `/api/state` 返回 `foe.hp_pct = 8.6` 但 `detectors.bar = false`。
+ * 那个 8.6 是**没检测到血条时的残留噪声**，不是真读数。
+ *
+ * 如果只看 `hp_pct != null` 就判"有数据"，面板会显示一个假的 9% 血条，
+ * 比显示"没有对战画面"更糟 —— 用户会以为对面快死了。
+ *
+ * 所以血条只有在 `detectors.bar` 为真时才算有效数据。
  */
 function isEmptyFrame(st) {
   const me = st.me || {};
   const foe = st.foe || {};
-  const noMe = me.hp_pct == null && !me.name;
-  const noFoe = foe.hp_pct == null && !foe.name;
+  const dets = (st.system || {}).detectors || {};
+
+  // 没有血条检测器时，hp_pct 一律当噪声（见上面 8.6 的例子）
+  const barOk = !!dets.bar;
+  const meHp = barOk ? me.hp_pct : null;
+  const foeHp = barOk ? foe.hp_pct : null;
+
+  const noMe = meHp == null && !me.name;
+  const noFoe = foeHp == null && !foe.name;
   const noSkill = !(st.skills || []).some((s) => s && s.dmg != null);
   return noMe && noFoe && noSkill;
 }
@@ -170,8 +184,9 @@ function emptyReason(st) {
 function renderNoData(st) {
   const r = emptyReason(st);
   const panel = $('panel');
+  // 记录进入空态 —— 用于判断"是否刚从有数据切过来"
+  const wasEmpty = panel.dataset.empty === '1';
   panel.dataset.empty = '1';
-
   // 系统栏照常更新 —— 它是"服务活着"的唯一证据，不能停
   $('sysTurn').textContent = st.turn != null ? 'T' + st.turn : 'T—';
   $('sysClock').textContent = '';
@@ -204,7 +219,8 @@ function renderNoData(st) {
   root.style.setProperty('--foe-p', '0');
   root.style.setProperty('--foe-g', '0');
   setAccent('even');
-  scheduleFit();
+  // 刚从有数据切到空态 -> 强制重测（高度会大幅缩小）
+  scheduleFit(!wasEmpty);
 }
 
 function render(st) {
@@ -214,8 +230,31 @@ function render(st) {
     return;
   }
   const panel = $('panel');
-  if (panel.dataset.empty) delete panel.dataset.empty;
+  // 刚从空态切回有数据 -> 强制重测（高度会大幅增长）
+  const wasEmpty = panel.dataset.empty === '1';
+  if (wasEmpty) delete panel.dataset.empty;
 
+  try {
+    renderBody(st);
+  } catch (e) {
+    // ★ 单点异常不能让整块面板停摆（2026-11-21 实机）
+    // -------------------------------------------------
+    // 实测：`skills` 是 [null,null,null,null] 时，`s.dmg` 抛 TypeError，
+    // render() 从中断点往后全部不执行 —— 技能区、结论区、替补区都不渲染，
+    // 面板只剩两行血条，看起来像"坏了"。
+    //
+    // 现在异常被兜住：前面已经渲染的部分保留，后面的不渲染，
+    // 但至少**不会整块空白**，而且控制台能看到真实错误。
+    console.error('[render]', e);
+    const stateEl = $('sysState');
+    if (stateEl && !stateEl.textContent) stateEl.textContent = '渲染出错';
+  }
+
+  // 内容高度变了就通知原生侧重算窗口尺寸
+  scheduleFit(wasEmpty);
+}
+
+function renderBody(st) {
   // ── 系统栏
   const sys = st.system || {};
   const dets = sys.detectors || {};
@@ -382,9 +421,19 @@ function render(st) {
 
   // ── 技能
   // 机器人只读卡面伤害，不读技能名。名字为空时显示"卡 N"，绝不编造。
+  //
+  // ★ `skills` 里可能是 null（2026-11-21 实机）
+  // ------------------------------------------
+  // 服务端在"还没识别到技能栏"时会返回 [null, null, null, null]，
+  // 而不是空数组。原代码 `forEach((s) => s.dmg)` 直接抛 TypeError，
+  // **整个 render() 从这里中断** —— 表现为技能区、结论区、替补区全部
+  // 不渲染，窗口高度只有 151，看起来像"面板坏了"。
+  //
+  // 这里统一成"null 槽位 = 没有数据"，用占位卡渲染，不让异常逃出去。
   const wrap = $('skills');
   wrap.innerHTML = '';
-  (st.skills || []).forEach((s, i) => {
+  const slotList = (st.skills || []).map((s, i) => s || { i: i + 1 });
+  slotList.forEach((s, i) => {
     const na = s.dmg == null;
     const idx = s.i != null ? s.i : i + 1;
     const row = document.createElement('div');
@@ -458,15 +507,7 @@ function render(st) {
     order.className = '';
   }
 
-  // ★ 内容高度变了就通知原生侧重算窗口尺寸
-  //
-  // 踩过的坑（2026-11-21）：fit_window 只在启动时跑一次。
-  // 技能卡从"未识别占位"（65px）变成 4 张真卡（约 180px）时，
-  // 窗口不会自动变高 —— 实测内容 438 但视口只有 365，**被裁 73px**。
-  //
-  // 为什么不用 ResizeObserver：面板是 flex 容器，窗口高度会反过来
-  // 影响内容高度，形成正反馈。改成"测一次内容高度，变了才调"。
-  scheduleFit();
+  // 内容高度自适应由外层 render() 统一调用 scheduleFit()
 }
 
 // 内容高度自适应：变化超过 6px 才通知原生侧。
@@ -476,13 +517,34 @@ function render(st) {
 let _fitTimer = 0;
 let _lastFitH = 0;
 
-function scheduleFit() {
+function scheduleFit(force) {
   if (!hasNative()) return;
+  // force=true：状态切换（空态 <-> 有数据）时立刻重测，
+  // 跳过 250ms 防抖和 6px 阈值 —— 这两种情况高度变化很大，
+  // 且用户会立刻看到（面板从一条提示变成完整对战信息）。
+  if (force) {
+    _lastFitH = 0;
+    if (_fitTimer) { clearTimeout(_fitTimer); _fitTimer = 0; }
+    try {
+      const h = measureContentHeight();
+      if (h > 0) {
+        _lastFitH = h;
+        callNative('fit_window', true);
+      }
+    } catch (_) {}
+    return;
+  }
   if (_fitTimer) return;
   _fitTimer = setTimeout(() => {
     _fitTimer = 0;
     try {
       const h = measureContentHeight();
+      // ★ 诊断用：把测量值暴露出去，便于排查"窗口不跟着长"
+      // 实测（2026-11-21）出现过"面板明明有内容但 measured 一直是 151"，
+      // 从日志完全看不出量到了什么。这个全局变量可以在 DevTools /
+      // evaluate_js 里直接读。
+      window.__lastMeasure = h;
+      window.__lastFitH = _lastFitH;
       if (h > 0 && Math.abs(h - _lastFitH) > 6) {
         _lastFitH = h;
         callNative('fit_window', true);
@@ -501,23 +563,90 @@ function measureContentHeight() {
   const prevMin = p.style.minHeight;
   const prevH = p.style.height;
   const prevFlex = p.style.flex;
+
+  // ★ 整条祖先链都要解除高度约束（2026-11-21）
+  // -------------------------------------------------
+  // `body.embedded` 和 `.overlay` 都有 height:100%，panel 又有
+  // min-height:100%，所以窗口矮时整条链把内容压死。
+  //
+  // 实测对比（同一份 DOM、同一个 measureContentHeight）：
+  //     独立 webview，窗口 620 高  -> 438 ✓
+  //     真实悬浮窗，  窗口 153 高  -> 151 ✗
+  //     独立 webview，窗口 118 高  -> 438 ✓（说明窗口高度不是唯一因素）
+  //
+  // 差异在 `body` 的样式：真实悬浮窗里 body 被 WebView2 固定成视口高度，
+  // 子元素 `height:100%` 会跟着被限制。必须把 body/overlay 也改成 auto。
+  const b = document.body;
+  const ov = document.getElementById('overlay');
+  const prevBH = b.style.height;
+  const prevBMin = b.style.minHeight;
+  const prevOH = ov ? ov.style.height : '';
+  const prevOMin = ov ? ov.style.minHeight : '';
+  const prevOPos = ov ? ov.style.position : '';
+  const prevOInset = ov ? ov.style.inset : '';
+
   p.style.minHeight = '0';
   p.style.height = 'auto';
   p.style.flex = '0 0 auto';
+  b.style.height = 'auto';
+  b.style.minHeight = '0';
+  if (ov) {
+    ov.style.height = 'auto';
+    ov.style.minHeight = '0';
+    // ★ 这是最关键的一条（2026-11-21）
+    // -----------------------------------
+    // `body.embedded .overlay { position: fixed; inset: 0 }` ——
+    // fixed 定位让 overlay **完全脱离文档流**，它的尺寸由视口决定，
+    // 而不是由内容决定。panel 作为它的子元素（min-height:100%）
+    // 就永远等于视口高度。
+    //
+    // 于是窗口 153 高时，不管内容多少，panel 都只有 153 —— 这就是
+    // 独立 webview（窗口 620）能量出 438、真实悬浮窗只量出 151 的原因。
+    //
+    // 测量期间必须临时改成 static，让 overlay 按内容撑开。
+    ov.style.position = 'static';
+    ov.style.inset = 'auto';
+  }
+
+  // ★ flex-shrink 是"量到 151"的另一半原因
+  // -------------------------------------------------
+  // 只解除 panel 自己的约束不够。子元素在 flex 容器里默认
+  // `flex-shrink: 1`，会被压扁，`getBoundingClientRect()` 返回
+  // 的是**压缩后**的高度。
+  const saved = [];
+  for (const el of p.children) {
+    saved.push(el.style.flexShrink);
+    el.style.flexShrink = '0';
+  }
 
   let sum = 0;
   for (const el of p.children) {
     const st = getComputedStyle(el);
     if (st.display === 'none') continue;
-    sum += el.getBoundingClientRect().height;
+    sum += Math.max(el.getBoundingClientRect().height,
+                    el.scrollHeight || 0);
   }
   const cs = getComputedStyle(p);
   sum += parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
   sum += parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
 
+  // 还原
+  let i = 0;
+  for (const el of p.children) {
+    el.style.flexShrink = saved[i];
+    i += 1;
+  }
   p.style.minHeight = prevMin;
   p.style.height = prevH;
   p.style.flex = prevFlex;
+  b.style.height = prevBH;
+  b.style.minHeight = prevBMin;
+  if (ov) {
+    ov.style.height = prevOH;
+    ov.style.minHeight = prevOMin;
+    ov.style.position = prevOPos;
+    ov.style.inset = prevOInset;
+  }
   return Math.round(sum);
 }
 

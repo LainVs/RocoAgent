@@ -1052,6 +1052,56 @@ input[type="range"]::-webkit-slider-thumb {
   text-shadow: var(--halo);
 }
 
+/* ── 空帧态 ──────────────────────────────────────────────
+ *
+ * 独立模式下服务在跑、屏幕能抓，但游戏黑屏/加载/不在战斗时，
+ * 每个字段各自兜底成 '—'，面板会变成 12 个破折号 + 4 个「未知」。
+ * 用户看到的第一反应是"坏了"，不是"不在战斗"。
+ *
+ * 所以整帧无数据时给 .panel 打 data-empty，把细节区收起，
+ * 只留一条说清原因的提示。
+ *
+ * 用 display:none 而不是 opacity:0 —— 用户明确要求不能卡顿，
+ * 折叠要立即生效，不做过渡动画。
+ */
+.panel[data-empty="1"] .side,
+.panel[data-empty="1"] .matchup,
+.panel[data-empty="1"] .skills,
+.panel[data-empty="1"] .verdict,
+.panel[data-empty="1"] .bench {
+  display: none;
+}
+
+.panel[data-empty="1"] .nodata {
+  display: flex;
+}
+
+.nodata {
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 26px 16px 28px;
+  text-align: center;
+  border-top: 1px solid var(--line-soft);
+}
+
+.nodata b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+  text-shadow: var(--halo);
+  letter-spacing: 0.01em;
+}
+
+.nodata span {
+  font-size: 11px;
+  color: var(--ink-3);
+  text-shadow: var(--halo);
+  line-height: 1.45;
+}
+
 /* ── 拖动时提升层级 ─────────────────────────────────── */
 .overlay.dragging .panel {
   box-shadow: 0 22px 52px -16px rgba(0, 0, 0, 0.86);

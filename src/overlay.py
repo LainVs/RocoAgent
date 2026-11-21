@@ -841,7 +841,19 @@ def _run(args):
         if not port:
             print("无法启动 ui_server（端口 %d）" % args.port)
             return 2
-        url = "http://127.0.0.1:%d/%s" % (port, args.page)
+        # ★ cache-busting（2026-11-21）
+        # ----------------------------
+        # WebView2 会缓存 app.js / style.css。改了前端代码后重启悬浮窗，
+        # 实际加载的还是**旧缓存** —— 表现为"改了半天没效果"，
+        # 而 `evaluate_js` 调新函数会报 undefined。
+        #
+        # 实测踩坑：加了 measureContentHeight() 的 flexShrink 修复，
+        # 但真实悬浮窗一直量出 151（旧代码行为），独立 webview 却量出 438。
+        # 排查了半小时才发现是缓存。
+        #
+        # 用启动时间戳当 query 参数，保证每次都是新资源。
+        url = "http://127.0.0.1:%d/%s?_=%d" % (port, args.page,
+                                                int(time.time()))
 
     try:
         import webview
@@ -1149,57 +1161,44 @@ def _run(args):
                 #
                 # 必须先把 panel 的高度约束去掉、改成 auto，让它按内容自然撑开，
                 # 量到的才是"内容真实需要多高"。
-                h = win.evaluate_js("""
-                  (() => {
-                    const p = document.getElementById('panel');
-                    if (!p) return 0;
-                    // 临时解除约束
-                    const prevMin = p.style.minHeight;
-                    const prevH = p.style.height;
-                    const prevFlex = p.style.flex;
-                    p.style.minHeight = '0';
-                    p.style.height = 'auto';
-                    p.style.flex = '0 0 auto';
-
-                    let sum = 0;
-                    for (const el of p.children) {
-                      const st = getComputedStyle(el);
-                      if (st.display === 'none') continue;
-                      sum += el.getBoundingClientRect().height;
-                    }
-                    // 加上 panel 自己的 padding/border（当前是 0，但别假设）
-                    const cs = getComputedStyle(p);
-                    sum += parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom);
-                    sum += parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth);
-
-                    // 还原
-                    p.style.minHeight = prevMin;
-                    p.style.height = prevH;
-                    p.style.flex = prevFlex;
-                    return Math.round(sum);
-                  })()
-                """)
+                # ★ 直接复用前端的 measureContentHeight()（2026-11-21）
+                # ----------------------------------------------------
+                # 以前 Python 侧自己写了一份测量脚本，和 ui/app.js 里的
+                # `measureContentHeight()` 逻辑重复，且**没有同步修复**
+                # flex-shrink 那个坑 —— 结果前端量对（394/436）、
+                # 后端量错（151），窗口永远长不回来。
+                #
+                # 现在只保留一份实现（前端），Python 通过 evaluate_js 调用它。
+                # 单一事实来源，改一处就够。
+                h = win.evaluate_js(
+                    "typeof measureContentHeight === 'function'"
+                    " ? measureContentHeight() : 0")
+                # 顺手把前端记录的最近一次测量值也打出来，便于对照
+                try:
+                    dbg = win.evaluate_js(
+                        "JSON.stringify({m: window.__lastMeasure,"
+                        " f: window.__lastFitH,"
+                        " e: (document.getElementById('panel')||{}).dataset"
+                        "    ? document.getElementById('panel').dataset.empty"
+                        "    : null,"
+                        " vh: window.innerHeight})")
+                    _log("fit: py=%s js=%s" % (h, dbg))
+                except Exception:
+                    pass
                 if not h or int(h) < 40:
-                    # embedded 刚加时布局可能还没完成，等一帧再试一次。
+                    # 页面可能还没加载完 measureContentHeight
                     time.sleep(0.25)
-                    h = win.evaluate_js("""
-                      (() => {
-                        const p = document.getElementById('panel');
-                        if (!p) return 0;
-                        const prevMin = p.style.minHeight;
-                        p.style.minHeight = '0';
-                        p.style.height = 'auto';
-                        let sum = 0;
-                        for (const el of p.children) {
-                          const st = getComputedStyle(el);
-                          if (st.display === 'none') continue;
-                          sum += el.getBoundingClientRect().height;
-                        }
-                        p.style.minHeight = prevMin;
-                        p.style.height = '';
-                        return Math.round(sum);
-                      })()
-                    """)
+                    h = win.evaluate_js(
+                        "typeof measureContentHeight === 'function'"
+                        " ? measureContentHeight() : 0")
+                if not h or int(h) < 40:
+                    # 页面可能还没加载完 measureContentHeight，等一帧再试。
+                    # 注意：这里**不另写一份测量逻辑** —— 之前两份实现
+                    # 不同步，前端量对后端量错，导致窗口长不回来。
+                    time.sleep(0.25)
+                    h = win.evaluate_js(
+                        "typeof measureContentHeight === 'function'"
+                        " ? measureContentHeight() : 0")
                 if not h or int(h) < 40:
                     _log("fit: measured=%s (too small, skip)" % h)
                     return False
@@ -1210,12 +1209,39 @@ def _run(args):
                 # **153**，窗口被缩成 153 高，整块内容被裁掉。
                 # 40 这个下限只挡住"完全没渲染"，挡不住这种"量到半截"。
                 #
-                # 这里不直接拒绝（那样遇到真的紧凑布局会永远调不下来），
-                # 而是记下来并**保持当前高度**，等下一次测量。
-                if int(h) < 200 and state.get("css_h"):
-                    _log("fit: measured=%s 明显偏小（当前 %s），跳过"
-                         % (h, state.get("css_h")))
-                    return False
+                # ★ 小高度有两种来源，靠**当前窗口高度**区分
+                # ------------------------------------------
+                #   a) 空态（面板折叠成一条提示）：真实高度 131~151
+                #   b) 裁切死锁（窗口矮，内容撑不出来）：假高度 ≈ 150
+                #
+                # 两者量出来都是 150 左右，**但当前窗口高度不同**：
+                #
+                #   a) 从战斗（436）退回空态  -> cur_h = 436（高）
+                #   b) 已经卡在矮窗口里       -> cur_h = 153（矮）
+                #
+                # 判据：
+                #   measured < 200 且 cur_h < 200 -> 可能是裁切假测量
+                #   measured < 200 且 cur_h >= 200 -> 从有内容退回空态，允许缩
+                #
+                # ★ 但"都偏小"不等于"一定是死锁"（2026-11-21 21:08）
+                # --------------------------------------------------
+                # 实测空态量出 151、窗口 153，差 2px 也被挡住 ——
+                # 那不是死锁，只是正常的小幅调整。真正要防的是
+                # "量出比当前小很多"（比如窗口 436、量出 151），那才是
+                # 子元素被 flex 压扁的假测量。
+                #
+                # 所以加一条：差异 <= 40px 时照常调整，不做死锁保护。
+                cur_h = int(state.get("css_h") or 0)
+                if int(h) < 200 and cur_h and cur_h < 200:
+                    if abs(int(h) - cur_h) > 40:
+                        _log("fit: measured=%s 远小于当前 %s，"
+                             "判定裁切假测量，跳过" % (h, cur_h))
+                        return False
+                    _log("fit: measured=%s 与当前 %s 接近，正常调整"
+                         % (h, cur_h))
+                elif int(h) < 200:
+                    _log("fit: measured=%s 偏小但当前 %s 是高的，按空态收缩"
+                         % (h, cur_h))
 
                 # 宽度固定用启动时的值，**绝不能读 window.innerWidth**：
                 # resize 之后 innerWidth 会变，再拿它去算会形成正反馈，
@@ -1281,7 +1307,11 @@ def _run(args):
                 except Exception as e:
                     _log("SetWindowPos FAIL: %s: %s" % (type(e).__name__, e))
                     return False
-            except Exception:
+            except Exception as e:
+                # 以前这里是裸 `return False`，异常被完全吞掉 ——
+                # 实测表现为"fit_window 进来了但没有任何 measured 日志"，
+                # 排查时完全看不出是 evaluate_js 抛的错。
+                _log("fit_window FAIL: %s: %s" % (type(e).__name__, e))
                 return False
 
     api = Api()
@@ -1487,6 +1517,21 @@ def _run(args):
             time.sleep(0.4)
             _log("pin size (%dx%d css, mul=%.2f) -> rect=%s"
                  % (args.width, args.height, mul, _rect_str(hwnd)))
+            # ★ 必须同步 state（2026-11-21）
+            # -------------------------------
+            # 这里用 SetWindowPos 把窗口设成 args.height（620），但**没有**
+            # 更新 state["css_h"]。之后 enter_embedded 调 fit_window(force=False)
+            # 时，它拿 state["css_h"]（可能还是之前测出的 134）和刚测的 132
+            # 比较，`abs(134-134)=0 <= 4` -> 判定"不用改" -> **直接 return**。
+            #
+            # 结果：窗口停在 620，面板只有 132 高，下面一大片空白。
+            # 实测 21:20:50 日志：
+            #     pin size (360x620) -> rect=720x1240
+            #     fit_window(force=False) in, rect=720x1240
+            #     fit: py=132 js={"e":"1","vh":620}
+            #     （没有后续 SetWindowPos，窗口保持 1240）
+            state["css_h"] = args.height
+            state["css_w"] = args.width
         except Exception as e:
             _log("initial SetWindowPos FAIL: %s" % e)
 

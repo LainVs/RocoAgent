@@ -986,6 +986,51 @@ def test_resilience(port):
        "结论区正常渲染", str(e.get("nullSkillsVerdict")))
 
 
+# ============================================================ 3b4. fit 状态同步
+def test_fit_state_sync():
+    """pin size 之后 state["css_h"] 必须同步成新高度。
+
+    背景（2026-11-21 21:20:50 实机）
+    -------------------------------
+    日志：
+        pin size (360x620 css) -> rect=720x1240
+        fit_window(force=False) in, rect=720x1240
+        fit: py=132 js={"e":"1","vh":620}
+        （没有后续 SetWindowPos，窗口停在 1240 = 620 CSS）
+
+    原因：pin size 用 SetWindowPos 把窗口设成 620，但没更新
+    `state["css_h"]`（还是之前测出的 134）。随后 fit_window 拿
+    `css_h=134` 和刚测的 132 比较，差 2 <= 4 判定"不用改"直接 return。
+
+    表现：空态面板只有 132 高，窗口却是 620，下面一大片空白。
+
+    这里锁住"源码里 pin size 之后确实写了 state"，属于静态检查 ——
+    真正跑 SetWindowPos 需要完整窗口环境，成本太高。
+    """
+    print("\n[3b4] fit 状态同步（静态检查）")
+    try:
+        with open(os.path.join(SRC, "overlay.py"), encoding="utf-8") as f:
+            src = f.read()
+    except OSError as e:
+        ok(False, "读 overlay.py", str(e)[:60])
+        return
+
+    # pin size 那段日志之后必须紧跟 state 赋值
+    idx = src.find('pin size (%dx%d css, mul=%.2f) -> rect=%s')
+    if idx < 0:
+        ok(False, "找到 pin size 日志语句")
+        return
+    ok(True, "找到 pin size 日志语句")
+
+    tail = src[idx:idx + 1200]
+    ok('state["css_h"] = args.height' in tail,
+       "pin size 后同步 state['css_h']",
+       "" if 'state["css_h"] = args.height' in tail else "缺失")
+    ok('state["css_w"] = args.width' in tail,
+       "pin size 后同步 state['css_w']",
+       "" if 'state["css_w"] = args.width' in tail else "缺失")
+
+
 # ============================================================ 3c. 对比度
 def test_contrast():
     """设计 token 的对比度回归。
@@ -1253,6 +1298,7 @@ def main():
         test_api(port)
         test_static(port)
         test_contract()
+        test_fit_state_sync()
         test_contrast()
         test_phase_infer()
         test_label(port)
