@@ -184,3 +184,75 @@ GetClientRect -> 2048x1536   （纯客户区，Screen.scale() 用的是这个）
 / `portraits.py` / `portrait_onnx.py` / `perceive.py` / `winio.py` /
 `matdet.py` / `data/roco.sqlite3`。
 
+---
+
+## 九、我在日志里看到的两件事（证据，交给主会话判断）
+
+### 9.1 双实例：22:59:32 起了 2 个 botsup，各拉 1 个 robot
+
+```
+172368  22:59:32  botsup
+180596  22:59:32  botsup
+177760  22:59:33  robot   ← 父进程 180596
+180292  22:59:33  robot   ← 父进程 172368
+```
+
+`logs/bot_stdout.log` 里只有 **180292** 写了 `boot pid=`：
+
+```
+22:59:34 boot pid=180292 python=3.14.3
+```
+
+也就是说 177760 **没拿到锁、但也没退出** —— 它还活着（内存/线程都在），
+只是没写任何日志。`robot.py:3729` 的逻辑是：
+
+```python
+if not acquire_lock():
+    print("another robot.py is already running; exiting")
+    return 3
+```
+
+如果它真的走到这一行，进程应该已经没了。它没死，说明**卡在
+`acquire_lock()` 内部**（`msvcrt.locking(LK_NBLCK)` 在文件被
+另一个实例同时打开/重建时可能阻塞或抛异常被吞）。
+
+**影响**：两个 robot 同时活着 = 双倍按键 + 抢 BLE + 日志交错。
+这正是 `docs/MULTI_SESSION.md` 记录过的事故类型。
+
+**建议**（属主会话）：
+1. `acquire_lock()` 加超时 + 失败后 `os._exit(3)`，不要只 `return`
+2. 或者改成 `msvcrt.locking(LK_NBLCK)` 失败立刻返回，并打印 pid
+
+### 9.2 `STUCK recovery failed: TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'`
+
+日志连续两条：
+
+```
+23:00:33 STUCK on result screen (battle=False, turn=0) -> click 退出
+23:00:35 STUCK recovery failed: TypeError: unsupported operand type(s) for -: 'float' and 'NoneType'
+23:00:41 STUCK on result screen (battle=False, turn=0) -> click 退出
+23:00:41 STUCK recovery failed: TypeError: ...
+```
+
+`robot.py:766` 那个 `except Exception as e` 把真实错误吞成了这行日志。
+从报错类型看，是某个 `float - None`（大概率是 `now - self.some_at`
+而 `some_at` 是 `None`）。**恢复逻辑本身在抛异常，等于恢复失效**，
+机器人会一直卡在结算页。
+
+**建议**（属主会话）：把 `robot.py:766` 的 `except` 改成打印
+`traceback.format_exc()`，否则永远只能看到类型名。
+
+### 9.3 `standalone warmup: 23046ms`
+
+```
+23:01:23 standalone warmup: 23046ms
+```
+
+23 秒。主会话上一轮说"冷启动 24 秒"—— 现在预热跑在后台线程，
+但**它和机器人抢 CPU**（同一时刻 `perceive` 也要 OCR）。
+如果机器人正在出招，这个 23 秒预热会拖慢感知。
+
+**建议**：`ui_server` 预热时判断机器人是否在跑（`bot.pid` 存活），
+在跑就跳过或延迟 —— 但这条要改 `standalone`，属主会话。
+
+
