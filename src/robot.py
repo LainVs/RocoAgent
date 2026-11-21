@@ -64,6 +64,7 @@ import esp_shim as rocs  # noqa: E402  (BLE via the espfast daemon)
 import asyncio  # noqa: E402
 import portraits  # noqa: E402  (top-left HUD bust -> active pet)
 import portrait_onnx  # noqa: E402  (roco-cal 620 类立绘识别)
+import matches as _matches  # noqa: E402  (场次 id + 日志对齐)
 
 try:
     ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -225,6 +226,8 @@ class Bot:
         self.turn = 0
         self.match_started = None
         self.match_count = 0
+        self.match_mid = None
+        self.last_match_mid = None
         self.last_state = None
         self.focused_at = 0.0
         self._titlebar_at = 0.0
@@ -500,6 +503,11 @@ class Bot:
         last_log = 0.0
         self.match_started = None
         self.match_count = 0
+        # 场次 id：三份日志（rounds/turns/results）靠它对齐。
+        # 没有它的时候，3168 条回合里只有 45.6% 能唯一归属到某一场，
+        # 44.5% 落在多场重叠区（时间戳没有日期）。
+        self.match_mid = None
+        self.last_match_mid = None
         self.deadline = (time.time() + self.args.seconds) if self.args.seconds else None
         # 看门狗：进程僵死时硬退出，释放 robot.lock（见 _start_watchdog）
         self._start_watchdog()
@@ -593,6 +601,7 @@ class Bot:
                     if live:
                         self.match_started = now
                         self.match_count += 1
+                        self.match_mid = _matches.new_mid(now)
                         self.turn = 0
                         self.turn_key = None
                         self.prev_key = None
@@ -2809,7 +2818,8 @@ class Bot:
                     if verdict and prev:
                         # 注意 prev/cur 都是 (wins, losses) 元组。
                         # 总场次 = 赢 + 输（用 cur 的最新值）。
-                        rec = {"ts": time.strftime("%H:%M:%S"),
+                        rec = {"mid": getattr(self, "last_match_mid", None),
+                               "ts": time.strftime("%H:%M:%S"),
                                "before": prev[0], "after": cur[0],
                                "before_losses": prev[1],
                                "after_losses": cur[1],
@@ -3085,6 +3095,9 @@ class Bot:
         """
         path = os.path.join(LOG_DIR, "results.jsonl")
         rec = {
+            # 归属到「刚结束的那一场」。胜负是在回大厅后判定的，
+            # 那时 match_mid 已清空，所以用 last_match_mid。
+            "mid": getattr(self, "last_match_mid", None),
             "ts": time.strftime("%H:%M:%S"),
             "before": before["stars"],
             "after": after["stars"],
@@ -3114,12 +3127,14 @@ class Bot:
         # when the match began; the delta is resolved on the next lobby visit by
         # rank_after(). Record what we have so nothing is lost.
         badge_before = getattr(self, "card_prev", None)
-        log("=== MATCH %d END (%.0fs, %d actions) rank_before=%s ===" % (
-            self.match_count, dur, self.turn,
+        mid = self.match_mid
+        log("=== MATCH %s END (%.0fs, %d actions) rank_before=%s ===" % (
+            mid or self.match_count, dur, self.turn,
             badge_before.get("stars") if badge_before else "?"))
         try:
             with open(ROUND_LOG, "a", encoding="utf-8") as f:
                 f.write(json.dumps({
+                    "mid": mid,
                     "match": self.match_count,
                     "start": time.strftime("%H:%M:%S", time.localtime(started)),
                     "end": time.strftime("%H:%M:%S", time.localtime(ended)),
@@ -3129,6 +3144,11 @@ class Bot:
                 }, ensure_ascii=False) + "\n")
         except Exception:
             pass
+        # 胜负是在**回到大厅之后**才判定的（读段位卡 / 历史战绩面板），
+        # 那时 match_mid 已经清空，所以要把刚结束的那一场记下来。
+        if mid:
+            self.last_match_mid = mid
+        self.match_mid = None
         self._spawn_review(started, ended)
 
     def _spawn_review(self, started, ended):
@@ -3437,6 +3457,9 @@ class Bot:
 
     def _dump(self, st, action, why):
         rec = {
+            # 场次 id：三份日志靠它对齐（以前只有 hourly ts + 进程内计数，
+            # 3168 条回合里 44.5% 无法确定属于哪一场）。
+            "mid": getattr(self, "match_mid", None),
             "ts": time.strftime("%H:%M:%S", time.localtime(st["t"])),
             "turn": self.turn,
             "my_pct": st["my_pct"], "foe_pct": st["foe_pct"],

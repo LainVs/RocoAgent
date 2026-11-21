@@ -1222,6 +1222,34 @@ def portrait_purge_junk(side, limit=400):
             "msg": "检查 %d 张，删除 %d 个文件" % (checked, removed)}
 
 
+# ============================================================ 场次对齐
+def matches_summary(limit=40):
+    """每场一行：rounds / turns / results 三份日志按 mid 拼起来。
+
+    以前三份日志没有共同标识，3168 条回合里只有 45.6% 能唯一归属到
+    某一场（时间戳只有时分秒，没有日期）。老记录没有 mid，这里**不猜**
+    归属，只标 legacy。
+    """
+    try:
+        import matches as M
+        items = M.summarize(int(limit))
+        return {"items": items, "total": len(M.summarize())}
+    except Exception as e:
+        return {"items": [], "total": 0, "error": "%s: %s"
+                % (type(e).__name__, e)}
+
+
+def match_detail(mid):
+    try:
+        import matches as M
+        d = M.match_detail(mid)
+        if not d:
+            return {"ok": False, "msg": "没有这一场：%s" % mid}
+        return {"ok": True, **d}
+    except Exception as e:
+        return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+
+
 # ============================================================ HTTP
 class Handler(SimpleHTTPRequestHandler):
     server_version = "RocoUI/1.0"
@@ -1277,6 +1305,12 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/rounds":
             return self._json({"items": rounds(int(q.get("limit") or 50))})
+
+        if path == "/api/matches":
+            return self._json(matches_summary(int(q.get("limit") or 40)))
+
+        if path == "/api/match":
+            return self._json(match_detail(q.get("mid") or ""))
 
         if path == "/api/dex":
             return self._json(dex(q.get("q") or "",

@@ -352,6 +352,31 @@ button, input, select {
 }
 .tbl .muted { color: var(--ink-3); }
 
+/* 对局记录里的胜负徽标。
+   用底色而不是纯文字，是因为这一列要能一眼扫过去 —— 44.8% 的胜率
+   意味着大部分是红点，扫视比读字快。 */
+.tbl .res {
+  display: inline-block;
+  min-width: 15px;
+  text-align: center;
+  font-size: 10.5px;
+  line-height: 15px;
+  padding: 0 4px;
+  border-radius: 3px;
+}
+.tbl .res.win  { color: var(--win);  background: rgba(78, 201, 176, .13); }
+.tbl .res.lose { color: var(--lose); background: rgba(232, 102, 74, .13); }
+.tbl .res.flat { color: var(--ink-3); background: rgba(255, 255, 255, .05); }
+.tbl .res.muted { color: var(--ink-3); }
+/* 段位卡推断出来的胜负可信度低，标一个星号提示 */
+.tbl .res-src {
+  font-style: normal;
+  font-size: 9px;
+  color: var(--warn);
+  margin-left: 2px;
+  vertical-align: super;
+}
+
 /* ── 队伍槽 ─────────────────────────────────────────── */
 .team-hint {
   grid-column: 1 / -1;

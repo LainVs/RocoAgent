@@ -405,27 +405,51 @@ async function refreshStats() {
       stuck ? '疑似假平局' : '未判定胜负');
 }
 
-async function refreshRounds() {
+async function refreshMatches() {
   let d;
   try {
-    d = await get('/api/rounds?limit=40');
+    d = await get('/api/matches?limit=40');
   } catch (e) {
     return;
   }
-  const rows = (d.items || []).slice().reverse();
-  const tb = $('roundsTbl').querySelector('tbody');
+  const rows = d.items || [];
+  const tb = $('matchesTbl').querySelector('tbody');
+  const sub = $('matchesSub');
+  if (sub) {
+    const linked = rows.filter((r) => !r.legacy).length;
+    sub.textContent = rows.length
+      ? `${rows.length} 场，其中 ${linked} 场可按 id 对齐（其余是没有场次 id 的老记录）`
+      : '还没有对局记录';
+  }
   if (!rows.length) {
-    tb.innerHTML = `<tr><td colspan="5" class="muted">还没有对局记录</td></tr>`;
+    tb.innerHTML = `<tr><td colspan="8" class="muted">还没有对局记录</td></tr>`;
     return;
   }
-  tb.innerHTML = rows.map((r) => `
-    <tr>
-      <td class="num muted">${r.match != null ? r.match : '—'}</td>
+  const RES = { win: ['胜', 'win'], loss: ['负', 'lose'],
+                flat: ['平', 'flat'], unknown: ['—', 'muted'] };
+  tb.innerHTML = rows.map((r) => {
+    const [txt, cls] = RES[r.result] || RES.unknown;
+    // 读数 = 可读槽位 / 总槽位；老记录没有回合数据就留空
+    const rate = r.slots
+      ? `${r.slots - r.slots_bad}/${r.slots}`
+      : '—';
+    // 备注：优先提示会直接影响出招质量的东西
+    const notes = [];
+    if (r.legacy) notes.push('老记录(无 id)');
+    if (r.blind) notes.push(`盲打 ${r.blind}`);
+    if (r.unreadable) notes.push(`无数字 ${r.unreadable}`);
+    return `<tr>
+      <td class="num" title="${esc(r.mid)}">${esc(r.short)}</td>
       <td class="num muted">${esc(r.start || '—')}</td>
-      <td class="num muted">${esc(r.end || '—')}</td>
       <td class="num">${r.seconds != null ? Math.round(r.seconds) + 's' : '—'}</td>
-      <td class="num">${r.actions != null ? r.actions : '—'}</td>
-    </tr>`).join('');
+      <td class="num">${r.decisions != null ? r.decisions : '—'}</td>
+      <td><span class="res ${cls}">${txt}</span>${
+        r.result_src === 'badge' ? '<i class="res-src" title="来自段位卡推断，可信度低">*</i>' : ''}</td>
+      <td class="muted">${esc(r.foe || '—')}</td>
+      <td class="num">${rate}</td>
+      <td class="muted">${esc(notes.join(' · ') || '—')}</td>
+    </tr>`;
+  }).join('');
 }
 
 /* ================================================================
@@ -935,7 +959,7 @@ const REFRESH = {
   overview: [['health', refreshHealth, 1500], ['live', refreshLive, 1000],
              ['stats', refreshStats, 8000]],
   logs: [['log', pollLog, 700]],
-  stats: [['stats', refreshStats, 8000], ['rounds', refreshRounds, 15000]],
+  stats: [['stats', refreshStats, 8000], ['matches', refreshMatches, 8000]],
   team: [['team', refreshTeam, 30000]],
   // 图鉴是静态数据，进页面拉一次就够，不轮询
   dex: [['dex', () => refreshDex($('dexSearch').value.trim()), 0]],

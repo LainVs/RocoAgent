@@ -93,6 +93,7 @@ def test_api(port):
         ("/api/bot", ("running", "phase")),
         ("/api/stats", ("wins", "losses", "decided",
                         "season", "badge_stuck", "primary")),
+        ("/api/matches?limit=3", ("items", "total")),
         ("/api/team", ("slots",)),
         ("/api/turns?limit=2", ("items",)),
         ("/api/rounds?limit=2", ("items",)),
