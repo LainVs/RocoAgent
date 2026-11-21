@@ -588,6 +588,69 @@ overlay 是脱离父进程跑的（`creationflags=DETACHED`），**stdout 拿不
 | 窗口被别的程序盖住后不刷新 | 少见，但发生过 | 无需处理，WebView2 146 已自动重绘 |
 | 圆角外面是白色而不是桌面 | 透明没生效 | 检查 `WS_EX_LAYERED` + 上面的顺序 |
 | `backdrop-filter` 看不出效果 | 悬浮窗是独立合成层，采不到背后像素 | 用实心半透明 + 噪点 + 顶部高光 |
+| **拉透明度滑块完全没反应，面板一直纯白** | **CSS `rgba` 半透明透出的是 WinForms Form 的浅灰底 #F0F0F0，不是游戏画面** | **改用整窗 alpha，CSS 固定不透明（见 8.1.1）** |
+| **`DefaultBackgroundColor = Color.Transparent` 后整个窗口只剩桌面，内容全没了** | 它把 WebView2 的**整个网页画布**挖空，不是"背景透明" | 不要碰这个属性（见 8.1.1） |
+| **设 `DefaultBackgroundColor` 报 `InvalidOperationException: CoreWebView2Controller members can only be accessed from the UI thread`** | 从后台线程访问 COM 属性 | 见 8.1.1 第三条 |
+| **`webview.start(setup)` 之后窗口不显示、日志停在某一行** | `setup` 占住了 UI 线程，里面 `evaluate_js` 需要消息循环 → **死锁** | `setup` 必须留在 `threading.Thread` 里 |
+| **`add_layered` 后窗口仍完全不透明** | 只加了 `WS_EX_LAYERED` 标志，没调 `SetLayeredWindowAttributes` → `GetLayeredWindowAttributes` 返回 `flags=0`，alpha 不参与合成 | 加标志后**立即**设 `LWA_ALPHA, 255` |
+
+#### 8.1.1 为什么"CSS 半透明"这条路走不通（2026-11-21 彻查）
+
+现象：滑块拉到 42%，面板还是纯白。
+
+排查链（全部实测）：
+
+```
+1. DOM 完全正确
+     panelBg = rgba(250,249,245,0.42)
+     alpha   = 0.42
+     stage   = none（模拟背景已隐藏）
+
+2. 但像素不对
+     窗口外亮度 22，面板区域 241
+     rgba(250,249,245,0.42) 压 22 应该是 0.42×250+0.58×22 = 118
+
+3. 读 WinForms 控件树
+     Form.BackColor     = A255 R240 G240 B240   (#F0F0F0 浅灰)
+     WebView2.BackColor = A255 R240 G240 B240
+
+4. pywebview 的 transparent=True **从不设 Form.BackColor**
+     if window.transparent and self.browser:
+         self.SetStyle(SupportsTransparentBackColor, True)
+         self.browser.DefaultBackgroundColor = Color.Transparent
+     else:
+         self.BackColor = ColorTranslator.FromHtml(...)   # 只在 else 里
+
+5. 设 WebView2.DefaultBackgroundColor -> InvalidOperationException（UI 线程）
+6. 改 setup 到 UI 线程 -> 死锁（evaluate_js 需要消息循环）
+7. DefaultBackgroundColor=Transparent -> 整个画布被挖空，内容消失
+8. DefaultBackgroundColor=不透明     -> 内容也不显示
+9. DWM blur-behind -> API 返回 OK，但窗口不透明时模糊被盖住
+```
+
+**结论：WebView2 的透明链路在 pywebview 6.x + 本机环境下不可靠。**
+
+**最终方案：整窗 alpha + CSS 固定不透明**
+
+```
+整窗 alpha   -> 面板整体变淡，背后游戏画面透出来（真正的透明）
+CSS --alpha  -> 固定 1.0，面板底色够实，文字对比度稳定
+```
+
+两层都改会**相乘**：`0.78 × 0.78 = 0.61` → 灰雾（实测踩过）。
+
+实测数据（浅色面板压深色背景，背景亮度 23）：
+
+| 整窗 alpha | 面板亮度 | 文字对比度 | 评价 |
+|---|---|---|---|
+| 255 | 246 | 7.2 | 优秀（不透明） |
+| 230 | 224 | 6.6 | 优秀 |
+| 200 | 198 | 5.8 | 优秀（推荐） |
+| 180 | 181 | 5.3 | 优秀（下限） |
+| 150 | 154 | 4.4 | 浅色背景下文字糊掉 |
+
+**下限取 180**：深色背景 5.3:1 宽裕，浅色背景仍可分辨。
+150 那张截图（`E2E_alpha150.png`）里面板几乎消失。
 
 ### 8.2 文字可读性
 
@@ -620,11 +683,16 @@ overlay 是脱离父进程跑的（`creationflags=DETACHED`），**stdout 拿不
 
 | 现象 | 原因 | 解法 |
 |---|---|---|
-| `WM_NCLBUTTONDOWN` + `HTCAPTION` 完全不动 | 无边框窗口没有 `WS_CAPTION` | 自己实现：记基准点 + 逐帧移动 |
-| `SetWindowPos` 移动窗口不动 | pywebview 的窗口约束挡住 | 必须用 `win.move()` |
+| `WM_NCLBUTTONDOWN` + `HTCAPTION` 完全不动 | 无边框窗口没有 `WS_CAPTION`（实测 SendMessage 返回 0，窗口纹丝不动） | 自己实现：记基准点 + 逐帧移动 |
+| **鼠标一离开标题栏窗口就卡住；在外面松手后鼠标一动窗口跟着跑** | **原生拖动分支里直接 `return`，跳过了 `setPointerCapture`** | **无论走哪条路径都先 `setPointerCapture`** |
+| **拖动一顿一顿，最后猛地跳过去** | 每个 `pointermove` 都走一次 pywebview JS 桥（120Hz = 每秒 120 次 IPC） | 用 `requestAnimationFrame` 合并，一帧最多发一次 |
+| **窗口只走鼠标的一半距离** | `set_drag_pos` 里 `w.move(int(nx/d), ...)` 除以 dpr，但两者**同口径**（实测 SetWindowPos(400)→rect 400） | 位移直接相加，**不做 dpr 换算** |
 | 拖动有固定偏移 (-40,-28) | 第一帧位移被吃掉 | `begin_drag` 时就用按下点坐标做基准 |
 | 拖动后窗口飞出屏幕 | 坐标口径混用（CSS / 逻辑 / 物理差 2 倍） | 只换算**位移增量**，起点用窗口 rect |
 | `SetCursorPos` 后 `GetCursorPos` 不匹配 | 输入模拟被安全软件拦截 | 完全不用光标坐标，靠前端传 `e.screenX/Y` |
+| **重启后窗口跑到屏幕外，任务栏有但屏幕上看不见** | `config/overlay.json` 存的位置越界（换显示器/改分辨率/存了坏值） | `clamp_to_virtual_screen()` 自愈，并把修正结果写回配置 |
+| **配置改了没生效** | 文件带 BOM（PowerShell 的 `Set-Content -Encoding UTF8` 会写），`json.load` 抛异常被吞掉 | 用 `encoding="utf-8-sig"` 读 |
+| **没拖窗口也触发了 drag_end，位置被写成中间值** | 前端 `pointerup` 只要经过页头就调 | 只在 `\|Δ\| > 2px` 时才保存 |
 
 ### 8.6 pywebview / JS 桥
 
@@ -633,6 +701,24 @@ overlay 是脱离父进程跑的（`creationflags=DETACHED`），**stdout 拿不
 | `const NATIVE = window.pywebview.api` 永远是 null | api 是**异步注入**的 | 每次调用时现取（`nativeApi()`） |
 | `evaluate_js` 对 Promise 返回 `{}` | pywebview 不 await | 用 `window.__r` 中转 + 轮询 |
 | DOM 测试把整个进程卡死 | `webview.start()` 阻塞 GUI 循环 | 放子进程跑，用文件传结果 |
+| **`PrintWindow` 抓到的图和实际显示不一样** | WebView2 窗口上抓到的是**缓存的静态帧**（实测连续三次像素均值完全相同） | 用屏幕 BitBlt；判断内容完整性用 DOM 测量 |
+| **`BitBlt` 抓到的不是我的窗口** | 窗口坐标是负数（在屏幕外）或窗口被遮挡 | 先把窗口挪到屏幕中间；或改用 DOM 测量 |
+| **从外部改不了页面的 CSS 变量** | 跨进程 | 加 `window.__setAlpha()` + `--alpha N` 启动参数 |
+| **`webview.start(setup)` 后窗口不出现** | `setup` 占住 UI 线程，内部 `evaluate_js` 需要消息循环 → 死锁 | `setup` 留在 `threading.Thread` 里 |
+
+#### 8.6.1 排查手段的优先级（这几轮被骗过多次）
+
+判断「渲染对不对」时，按这个顺序选手段：
+
+| 手段 | 可信度 | 适用 |
+|---|---|---|
+| **DOM 测量**（`clientWidth` vs `scrollWidth`、`getComputedStyle`） | 最准 | 布局、样式、变量值 |
+| **屏幕 BitBlt**（`BitBlt(mem, ..., screen, rect.left, rect.top, SRCCOPY)`） | 真实 | 最终视觉效果，但会被遮挡 |
+| **`PrintWindow(PW_RENDERFULLCONTENT)`** | **WebView2 上不可信** | 只用于普通 Win32 窗口 |
+| **截图肉眼判断** | 受前两条影响 | 只能做最终确认 |
+
+本轮实测教训：`PrintWindow` 连续三次返回完全相同的图（像素均值都是 20.6），
+让我以为修复没生效、继续瞎改。而 DOM 测量早就显示 `overflowX: false` 了。
 
 ### 8.7 服务端 / 数据
 
