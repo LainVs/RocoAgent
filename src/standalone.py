@@ -413,9 +413,16 @@ def _get():
     同样的代码在独立脚本里（单线程）完全正常，所以一开始查了很久。
 
     修法：按线程 id 各存一份 Screen/Perc。
+
+    注意：如果外部**显式注入**了 `_perc`（测试会这么做），而 `_thread_state`
+    还是空的，就**直接接管**它而不是重建 —— 否则测试注入会被静默覆盖，
+    所有断言都读到真实屏幕的数据（实测踩过，表现是"期望 78% 得到 None"）。
     """
     global _perc, _screen
     tid = threading.get_ident()
+    if _perc is not None and _thread_state.get("tid") is None:
+        _thread_state["tid"] = tid          # 接管外部注入的对象
+        return _screen, _perc
     if _perc is None or _thread_state.get("tid") != tid:
         import perceive as P
         import winio
