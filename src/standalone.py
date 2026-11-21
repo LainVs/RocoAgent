@@ -54,6 +54,7 @@ import hud_ident                      # noqa: E402
 _lock = threading.Lock()
 _perc = None
 _screen = None
+_thread_state = {"tid": None}      # Screen/mss 绑线程，见 _get() 的注释
 _last = {"t": 0.0, "st": None}
 _cache = {"at": 0.0, "state": None}
 MIN_INTERVAL = 0.10       # 最快 10Hz，和机器人推送同量级
@@ -346,13 +347,29 @@ def _log(msg):
 
 
 def _get():
-    """惰性初始化 Screen + Perc（导入很重，不要放在模块级）。"""
+    """惰性初始化 Screen + Perc（导入很重，不要放在模块级）。
+
+    为什么必须按线程隔离（2026-11-21 实盘踩到）
+    -----------------------------------------
+    `winio.Screen` 内部持有 `mss.mss()` 实例，而 **mss 的对象绑定在创建它的
+    线程上**。`ui_server` 是 HTTP 服务，每个请求都在不同线程里跑，
+    于是第二次请求就报：
+
+        ScreenShotError: Windows graphics function failed:
+        BitBlt: 系统找不到指定的文件。
+
+    同样的代码在独立脚本里（单线程）完全正常，所以一开始查了很久。
+
+    修法：按线程 id 各存一份 Screen/Perc。
+    """
     global _perc, _screen
-    if _perc is None:
+    tid = threading.get_ident()
+    if _perc is None or _thread_state.get("tid") != tid:
         import perceive as P
         import winio
         _screen = winio.Screen()
         _perc = P.Perc(_screen)
+        _thread_state["tid"] = tid
     return _screen, _perc
 
 
