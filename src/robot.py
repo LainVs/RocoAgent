@@ -222,6 +222,9 @@ class Bot:
         self._board_offline_since = None
         self._board_log_at = 0.0
         self._cover_log_at = 0.0
+        # 上一手读到的技能卡（对面上回合时技能栏不画，UI 不能清空 -> 会闪）
+        self._skill_hold = None
+        self._skill_hold_at = 0.0
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -727,6 +730,12 @@ class Bot:
                         # 否则整晚只会存到第一局的几只。
                         self._pet_unknown_sigs = []
                         self._foe_unknown_sigs = []
+                        # 新一局：上一局的技能卡不能再显示
+                        self._skill_hold = None
+                        self._skill_hold_at = 0.0
+                        # 新一局：画面静止计时重新开始
+                        self._still_fp = None
+                        self._still_at = 0.0
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -768,7 +777,7 @@ class Bot:
                 #   · 结算页的"退出"按钮（排除 VS 准备页，它也有白胶囊）
                 # 两者都没有 = 只是对面的回合，**什么都不做**（也绝不点按钮）。
                 if (self.match_started is not None
-                        and now - self.battle_false_since > 6.0
+                        and now - self.battle_false_since > 20.0
                         and now - getattr(self, "_end_probe_at", 0.0) > 1.0):
                     self._end_probe_at = now
                     ended = None
@@ -781,13 +790,33 @@ class Bot:
                             ended = "result"
                     except Exception:
                         ended = None
+                    # ---- 画面静止兜底（2026-11-22）
+                    #
+                    # 有些结算/奖励页既没有"开始挑战"也没有"退出"按钮
+                    # （实测：排位结算页只剩「我方战况」+「今日获得」），
+                    # 但它**完全静止**；而对面的回合一定有动画。
+                    # 所以"20 秒不在战斗 + 画面指纹连续 8 秒不变"也算结束。
+                    # 这条是老机器人能自己走出结算页的原因，不能丢。
+                    if not ended:
+                        fp = self._screen_fingerprint()
+                        if fp != getattr(self, "_still_fp", None):
+                            self._still_fp = fp
+                            self._still_at = now
+                        elif now - getattr(self, "_still_at", now) > 8.0:
+                            ended = "static"
                     if ended:
                         log("match over (%s)" % ended)
                         self._end_match()
                 # 只有确认不在对局里才走 idle。否则会对着一场还在进行的
                 # 对局点"开始挑战"/"跳过"，等于自己把对局点掉。
-                if self.match_started is None:
-                    self._idle_tick(now)
+                #
+                # 2026-11-22 修正：**不能因此完全不跑 _idle_tick**。
+                # 有些结算/奖励页（只剩「我方战况」+「今日获得」）既没有
+                # "开始挑战"也没有"退出"按钮，老机器人是靠 _idle_tick 的
+                # "advance splash"（点屏幕正中偏下几下）走出去的。
+                # 所以这里照常调用；对局中的安全由 _idle_tick 内部的
+                # "画面静止才允许推进"保证。
+                self._idle_tick(now)
 
             # ---- the result screen keeps the HP bars drawn, so the branch above
             # never runs. Without this check the bot sits on the summary screen
@@ -1088,6 +1117,22 @@ class Bot:
                     usable=bool(s.get("lit", True)) and dmg is not None,
                     note=note,
                 ))
+
+            # 技能卡只在**我方回合**画出来（对面出招/动画期间技能栏是空的）。
+            # 如果这里直接发布空数组，悬浮窗每 0.4 秒就在"4 张卡"和
+            # "技能栏未识别"之间闪一次（用户反馈"乱闪乱闪的"）。
+            #
+            # 所以保留上一手读到的卡片，同一场对局内最多 90 秒，并标
+            # stale=True，前端显示"上回合"而不是清空。
+            if skills:
+                self._skill_hold = skills
+                self._skill_hold_at = now
+            elif (self.match_started is not None
+                  and getattr(self, "_skill_hold", None)
+                  and now - getattr(self, "_skill_hold_at", 0.0) < 90.0):
+                age = now - self._skill_hold_at
+                skills = [dict(s, stale=True, stale_age=round(age, 1))
+                          if s else s for s in self._skill_hold]
 
             # 克制关系
             matchup = None
@@ -3178,7 +3223,10 @@ class Bot:
         # pre-match lineup shares the teal/orange palette with the VS splash and
         # the guard would otherwise block the very click that starts the match.
         btn = find_action_button(self.screen)
-        if btn is not None and now - self.clicked_at >= CLICK_COOLDOWN_S:
+        # 对局进行中不点"开始挑战/确认"：那个位置在战斗里可能是别的东西，
+        # 而且真正要推进的是结算页（走下面的 advance splash）。
+        if (self.match_started is None
+                and btn is not None and now - self.clicked_at >= CLICK_COOLDOWN_S):
             log("action button -> click %d,%d" % btn)
             self.ensure_focus()
             self.click_abs(*btn)
@@ -3218,10 +3266,14 @@ class Bot:
         # 结算页只负责"点略略略跳过"。胜负判定统一在大厅排队时读段位卡
         # 完成（那里卡片位置固定、可以慢慢读，也不会一个页面读两次）。?
         import rank as _rank_now
-        try:
-            _card = _rank_now.read_card(self.screen)
-        except Exception:
-            _card = None
+        # 对局进行中不读段位卡：这个分支会点右上角 X，战斗中那是危险位置。
+        # 对局结束（match_started=None）后才需要它。
+        _card = None
+        if self.match_started is None:
+            try:
+                _card = _rank_now.read_card(self.screen)
+            except Exception:
+                _card = None
         if _card is not None:
             if now - self.advance_at >= ADVANCE_COOLDOWN_S:
                 if not getattr(self, "_skip_logged", False):
@@ -3243,8 +3295,23 @@ class Bot:
             # Splash screens (ALL CLEAR / rank / reward) only follow a finished
             # match. Advancing during a live match risks forfeiting it, so the
             # advance click is locked out until a match has actually ended.
+            #
+            # ★ 2026-11-22：加"画面静止"例外
+            # ----------------------------------
+            # 排位结算页只剩「我方战况」+「今日获得」，既没有"开始挑战"
+            # 也没有"退出"按钮，match_ended_at 也还没被置上。老机器人靠
+            # 这里连点几下屏幕正中偏下就走出去了。
+            # 对面上回合一定有动画，所以**画面指纹连续 6 秒不变**才允许推进，
+            # 不会误点正在进行的对局。
             may_advance = (self.match_count == 0) or (
                 self.match_ended_at and now - self.match_ended_at < 120.0)
+            if not may_advance and self.match_started is not None:
+                fp = self._screen_fingerprint()
+                if fp != getattr(self, "_still_fp", None):
+                    self._still_fp = fp
+                    self._still_at = now
+                elif now - getattr(self, "_still_at", now) > 6.0:
+                    may_advance = True
             if not may_advance:
                 return
             if now - self.advance_at < ADVANCE_COOLDOWN_S:

@@ -57,6 +57,8 @@ _screen = None
 _thread_state = {"tid": None}      # Screen/mss 绑线程，见 _get() 的注释
 _last = {"t": 0.0, "st": None}
 _cache = {"at": 0.0, "state": None}
+# 上一手读到的技能卡：对面上回合时技能栏不画，直接清空会让悬浮窗闪。
+_skill_hold = {"skills": None, "at": 0.0}
 
 # 状态缓存时间（秒）。
 #
@@ -329,6 +331,9 @@ def reset_identity():
         "foe_types": [], "foe_candidates": [],
         "foe_nickname": None, "foe_source": None, "foe_detail": {},
     })
+    # 结算了：上一局的技能卡不能再显示（否则下一局开局会看到上一局的卡）
+    _skill_hold["skills"] = None
+    _skill_hold["at"] = 0.0
 
 
 def _in_my_team(name):
@@ -831,8 +836,20 @@ def observe(force=False):
             "_kind": s.get("kind"),
         })
 
+    # 技能卡只在**我方回合**画出来。对面上回合/动画期间 raw["skills"] 全是
+    # None，直接发布空列表会让悬浮窗每 0.4 秒闪一次"技能栏未识别"。
+    # 保留上一手（同一局内最多 90 秒），标 stale=True，前端显示"上回合"。
+    if any(skills):
+        _skill_hold["skills"] = skills
+        _skill_hold["at"] = now
+    elif (_BG.get("in_battle")
+          and _skill_hold.get("skills")
+          and now - _skill_hold.get("at", 0.0) < 90.0):
+        _age = now - _skill_hold["at"]
+        skills = [dict(s, stale=True, stale_age=round(_age, 1)) if s else s
+                  for s in _skill_hold["skills"]]
+
     # ---- "有可用数据"的判据（2026-11-21 实测修正）
-    #
     # 原来用 `raw["battle"]`（`perceive.Perc.observe()` 的判定）：
     #     bars = my_pct and foe_pct
     #     battle = bars and my_ui and foe_ui     （或 bars and 技能栏可见）

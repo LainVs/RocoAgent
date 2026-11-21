@@ -960,6 +960,22 @@ input[type="range"]::-webkit-slider-thumb {
   flex: none;
 }
 
+/* 「上回合」：技能卡是上一手读到的（当前帧技能栏没画，比如对面的回合）。
+   保留数据但明确标注，避免把旧读数当成实时。 */
+.sk-stale {
+  margin-left: 4px;
+  padding: 0 3px;
+  font-size: 9px;
+  line-height: 1.5;
+  color: var(--ink-3);
+  border: 1px solid var(--line-soft);
+  border-radius: 3px;
+  font-family: var(--font-num);
+  flex: none;
+}
+
+.skill.stale { opacity: .66; }
+
 .sk-dmg {
   font-family: var(--font-num);
   font-variant-numeric: tabular-nums;

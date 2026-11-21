@@ -71,6 +71,8 @@ const root = document.documentElement;
 
 let folded = false;
 let lastSig = '';
+// 技能区单独一份签名：整块 innerHTML 重建会闪，只有内容真的变了才重建。
+let lastSkillSig = '';
 let pollTimer = null;
 let polling = false;
 
@@ -500,35 +502,44 @@ function renderBody(st) {
   //
   // 这里统一成"null 槽位 = 没有数据"，用占位卡渲染，不让异常逃出去。
   const wrap = $('skills');
-  wrap.innerHTML = '';
-  const slotList = (st.skills || []).map((s, i) => s || { i: i + 1 });
-  slotList.forEach((s, i) => {
-    const na = s.dmg == null;
-    const idx = s.i != null ? s.i : i + 1;
-    const row = document.createElement('div');
-    row.className = 'skill' + (na ? ' na' : '') + skillTier(s);
-    row.style.setProperty('--w', na || s.pct == null ? 0
-      : Math.min(1, s.pct / 100).toFixed(4));
+  // 只有内容真的变了才重建（见上面 lastSkillSig 的说明）。
+  const skillSig = JSON.stringify(st.skills || []);
+  if (skillSig !== lastSkillSig) {
+    lastSkillSig = skillSig;
+    wrap.innerHTML = '';
+    const slotList = (st.skills || []).map((s, i) => s || { i: i + 1 });
+    slotList.forEach((s, i) => {
+      const na = s.dmg == null;
+      const idx = s.i != null ? s.i : i + 1;
+      const row = document.createElement('div');
+      row.className = 'skill' + (na ? ' na' : '') + skillTier(s)
+        + (s.stale ? ' stale' : '');
+      row.style.setProperty('--w', na || s.pct == null ? 0
+        : Math.min(1, s.pct / 100).toFixed(4));
 
-    const meta = [s.element, s.cost != null ? s.cost : null]
-      .filter((x) => x != null).join('·');
-    const label = s.name || `卡 ${idx}`;
+      const meta = [s.element, s.cost != null ? s.cost : null]
+        .filter((x) => x != null).join('·');
+      const label = s.name || `卡 ${idx}`;
 
-    row.innerHTML = `
-      <span class="sk-idx">${idx}</span>
-      <span class="sk-name${s.name ? '' : ' unnamed'}">${label}${
-        meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>
-      <span class="sk-dmg">${na ? '—' : s.dmg}</span>
-      <span class="sk-pct">${na ? (s.note || '—')
-        : (s.pct != null ? Math.round(s.pct) + '%' : '—')}</span>
-      <span class="sk-bar"><i></i></span>
-    `;
-    wrap.appendChild(row);
-  });
+      // `stale` = 这是上一手读到的卡面，当前帧技能栏没画（对面的回合）。
+      // 保留它比清空成"技能栏未识别"有用得多，但要标出来，不能冒充实时。
+      row.innerHTML = `
+        <span class="sk-idx">${idx}</span>
+        <span class="sk-name${s.name ? '' : ' unnamed'}">${label}${
+          s.stale ? '<span class="sk-stale">上回合</span>' : ''}${
+          meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>
+        <span class="sk-dmg">${na ? '—' : s.dmg}</span>
+        <span class="sk-pct">${na ? (s.note || '—')
+          : (s.pct != null ? Math.round(s.pct) + '%' : '—')}</span>
+        <span class="sk-bar"><i></i></span>
+      `;
+      wrap.appendChild(row);
+    });
 
-  // 没有技能数据时给个占位
-  if (!(st.skills || []).length) {
-    wrap.innerHTML = `<div class="empty-skills">技能栏未识别</div>`;
+    // 没有技能数据时给个占位
+    if (!(st.skills || []).length) {
+      wrap.innerHTML = `<div class="empty-skills">技能栏未识别</div>`;
+    }
   }
 
   // ── 替补队伍
@@ -747,8 +758,15 @@ async function poll() {
   }
 
   // 无变化就不碰 DOM —— 这是 10Hz 下不卡的关键
+  //
+  // ★ 不能把 `st.seq` 放进签名（2026-11-22）
+  // --------------------------------------
+  // `seq` 每次 build 都 +1（机器人 5Hz、独立模式 10Hz），所以签名**永远
+  // 不同**，下面的去重等于没生效：每 400ms 把整块面板 innerHTML 重建一次，
+  // 技能区在"4 张卡 / 技能栏未识别"之间来回闪。用户反馈的"乱闪乱闪的"
+  // 就是这个。签名只放**会影响渲染的字段**。
   const sig = [
-    st.seq, st.turn, st.clock,
+    st.turn, st.clock,
     st.me && st.me.hp_pct, st.me && st.me.energy,
     st.foe && st.foe.hp_pct, st.foe && st.foe.name,
     (st.skills || []).map((s) => `${s.dmg}|${s.pct}|${s.name}`).join(','),
