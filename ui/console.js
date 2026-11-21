@@ -490,6 +490,30 @@ async function refreshStats() {
   }
   if (stuck) sub += ' · 段位卡读数卡死，已改用权威战绩';
 
+  // 增量口径：今日 / 近 20 局。
+  //
+  // 为什么需要（2026-11-21）：赛季累计胜率一天动不了 0.3 个百分点，
+  // 拿它判断"这次改动有没有用"等于没有反馈。这两个数由逐场快照
+  // （logs/record_snapshots.jsonl）算出来，没有快照时显示 — 而不是 0。
+  const pg = s.progress || null;
+  const today = pg && pg.today ? pg.today : null;
+  const recent = pg && pg.recent20 ? pg.recent20 : null;
+  const todayDecided = today ? today.decided : 0;
+  const todayVal = todayDecided
+    ? `${today.wins} 胜 / ${today.losses} 负`
+    : '—';
+  const todayNote = todayDecided
+    ? `胜率 ${today.rate}%`
+    : '跑完一局后出现';
+  const clsOf = (r) => (r == null ? ''
+    : r >= 55 ? 'win' : r >= 45 ? 'warn' : 'lose');
+  const todayCls = todayDecided ? clsOf(today.rate) : '';
+  const recentVal = recent && recent.rate != null ? recent.rate : '—';
+  const recentNote = recent && recent.decided
+    ? `${recent.decided} 场`
+    : '快照不足';
+  const recentCls = clsOf(recent && recent.rate);
+
   // 概览页
   if ($('statSub')) $('statSub').textContent = sub;
   const rateCls = rate == null ? '' : (rate >= 55 ? 'win' : rate >= 45 ? 'warn' : 'lose');
@@ -497,6 +521,7 @@ async function refreshStats() {
     metricHtml('胜率', rate == null ? '—' : rate, '%',
       season ? '游戏内累计战绩' : '', rateCls) +
     metricHtml('胜 / 负', `${wins} / ${losses}`, '', '', '') +
+    metricHtml('今日', todayVal, '', todayNote, todayCls) +
     metricHtml('段位', s.rank ? `${s.rank.now}/${s.rank.of}` : '—', '',
       s.rank ? '星 / 本段' : '', '') +
     metricHtml('近 20 场', s.rate20 == null ? '—' : s.rate20, '%',
@@ -516,6 +541,8 @@ async function refreshStats() {
       season ? `${wins} 胜 / ${losses} 负` : '', rateCls) +
     metricHtml('胜', wins, '场', '', 'win') +
     metricHtml('负', losses, '场', '', 'lose') +
+    metricHtml('今日战绩', todayVal, '', todayNote, todayCls) +
+    metricHtml('近 20 局增量', recentVal, '%', recentNote, recentCls) +
     metricHtml('段位卡推断', `${s.wins} / ${s.losses}`, '',
       stuck ? '读数卡死，不可用' : 'results.jsonl 的已判定项',
       stuck ? 'warn' : '') +
