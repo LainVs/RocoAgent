@@ -463,11 +463,35 @@ def learn_from_panel(screen, session=None, ocr=None, click=None, esc=None,
         return data
 
     if bust is not None and bust.size:
-        fname = "%s.png" % data["name"]
+        # 文件名优先用 OCR 读到的名字；读不到就用 sid 反查库里的种族名。
+        #
+        # 为什么（2026-11-21 实盘踩到）
+        # --------------------------
+        # 面板上的名字 OCR 经常读不到（`data["name"]` 为 None），但 sid 是
+        # 通过**特性反查**确定的（日志：`FOE SCAN -> 阿布 (name<-trait)`）。
+        # 于是 `"%s.png" % None` 生成了 `None.png`，**每次采到新精灵都覆盖
+        # 同一个文件**，前面采的全丢。
+        #
+        # 实测 22:42:52 那条：sid=3168（阿布）写进了 `None.png`。
+        fname_base = data.get("name")
+        if not fname_base:
+            try:
+                from portrait_db import DB_PATH as _DBP
+                db2 = sqlite3.connect(_DBP)
+                row = db2.execute("SELECT name FROM species WHERE id=?",
+                                  (sid,)).fetchone()
+                db2.close()
+                fname_base = row[0] if row else None
+            except Exception:
+                fname_base = None
+        if not fname_base:
+            fname_base = "sid%d" % sid          # 最后兜底：用 id 命名
+        fname = "%s.png" % fname_base
         path = os.path.join(P.dir_for("foe"), fname)
         buf = cv2.imencode(".png", cv2.cvtColor(bust, cv2.COLOR_RGB2BGR))[1]
         buf.tofile(path)
         P.add_portrait(fname, sid, "普通", "foe", "panel")
+        data["saved_as"] = fname
 
     # 特性是用来"反查 id"的，不是用来"补数据"的。
     # 库里已经有 269 条特性；读到的名字应该去匹配，匹配不上说明 OCR 错了
