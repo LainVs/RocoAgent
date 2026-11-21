@@ -99,3 +99,5 @@ logs/live_state.json.tmp
 # overlay window state (per-machine)
 config/overlay.json
 config/overlay.json.tmp
+# console window position (per-machine，UI 会话在写)
+config/console_window.json
