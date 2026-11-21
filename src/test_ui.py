@@ -28,61 +28,21 @@ import sys
 import time
 import urllib.request
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src")
-UI = os.path.join(ROOT, "ui")
-
-FAILS = []
-PASSES = 0
-
-
-def ok(cond, msg, detail=""):
-    global PASSES
-    if cond:
-        PASSES += 1
-        print("  OK    %s%s" % (msg, ("  " + detail) if detail else ""))
-    else:
-        FAILS.append(msg + (("  " + detail) if detail else ""))
-        print("  FAIL  %s%s" % (msg, ("  " + detail) if detail else ""))
-    return cond
-
-
-def port_free(port):
-    s = socket.socket()
-    try:
-        s.bind(("127.0.0.1", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
-
-
-def wait_health(port, timeout=12):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            with urllib.request.urlopen(
-                    "http://127.0.0.1:%d/api/health" % port,
-                    timeout=1.2) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.3)
-    return False
-
-
-def get(port, path, timeout=6):
-    with urllib.request.urlopen(
-            "http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def get_raw(port, path, timeout=6):
-    with urllib.request.urlopen(
-            "http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as r:
-        return r.status, r.read()
+# 共享层（2026-11-21，见 docs/PLAN_TEST_SPLIT.md）
+#
+# 三个会话都在改这个文件，而 ROOT/SRC/UI + ok/port_free/wait_health/
+# get/get_raw 拆分成 test_ui.py + test_console.py 后两边都要用。
+# 抽到 test_ui_common.py 保证只有一个来源。
+#
+# ★ 不要 `from test_ui_common import PASSES`：
+#   int 不可变，导入拿到的是**快照**。`ok()` 内部 `global PASSES` 改的是
+#   test_ui_common 里的那个，本地永远是 0。要读计数用 `summary()`。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_ui_common as C  # noqa: E402,F401
+from test_ui_common import (  # noqa: E402
+    ROOT, SRC, UI,
+    get, get_raw, ok, port_free, summary, wait_health,
+)
 
 
 # ============================================================ 1. API
@@ -1674,15 +1634,7 @@ def main():
         except Exception:
             pass
 
-    print()
-    print("=" * 66)
-    if FAILS:
-        print("%d 项失败 / %d 项通过" % (len(FAILS), PASSES))
-        for f in FAILS:
-            print("  - %s" % f)
-        return 1
-    print("全部通过（%d 项）" % PASSES)
-    return 0
+    return summary()
 
 
 if __name__ == "__main__":
