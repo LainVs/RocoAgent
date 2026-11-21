@@ -2779,9 +2779,13 @@ class Bot:
                     # 只建立基线，不判胜负。原来这里会直接 prev[0] 崩掉
                     # （日志 "record read failed: 0"）。
                     if verdict and prev:
+                        # 注意 prev/cur 都是 (wins, losses) 元组。
+                        # 总场次 = 赢 + 输（用 cur 的最新值）。
                         rec = {"ts": time.strftime("%H:%M:%S"),
                                "before": prev[0], "after": cur[0],
-                               "of": prev[1] + cur[0],
+                               "before_losses": prev[1],
+                               "after_losses": cur[1],
+                               "total": cur[0] + cur[1],
                                "delta": 1 if verdict == "win" else -1,
                                "result": verdict}
                         try:

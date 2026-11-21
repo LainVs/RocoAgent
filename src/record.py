@@ -95,10 +95,40 @@ def read(screen, click, log=None):
 
 
 def load_state():
+    """读上次的战绩基线，返回 (wins, losses) 或 None。
+
+    踩过的坑（2026-11-21 09:30，用户报"对局记录没有输赢"）
+    --------------------------------------------------
+    原来这里是：
+
+        return json.load(f)          # 返回 {"wins":113,"losses":106,"at":...}
+
+    但 diff() 期望的是 tuple：
+
+        if after[0] > before[0] ...  # <== KeyError: 0
+
+    dict 没有整数键 0/1，所以每次调用 diff() 都抛 KeyError，
+    被外层 except 吞掉，results.jsonl 永远写不进去（全是 flat）。
+
+    日志里能看到 record_state.json 停在 2026-11-19（基线建立那天），
+    之后再没更新过 —— 因为 save_state 只在 diff 成功后才调用。
+
+    现在统一返回 tuple，与 save_state 的参数形式对齐。
+    """
     import json
     try:
         with open(STATE, encoding="utf-8") as f:
-            return json.load(f)
+            d = json.load(f)
+        # 兼容两种格式：dict（现在）和 list（更早的版本）
+        if isinstance(d, dict):
+            w, l = d.get("wins"), d.get("losses")
+        elif isinstance(d, (list, tuple)) and len(d) >= 2:
+            w, l = d[0], d[1]
+        else:
+            return None
+        if w is None or l is None:
+            return None
+        return (int(w), int(l))
     except Exception:
         return None
 
@@ -114,8 +144,25 @@ def save_state(wins, losses):
 
 
 def diff(before, after):
-    """(wins, losses) 两次读数 -> 'win' / 'loss' / None。"""
+    """(wins, losses) 两次读数 -> 'win' / 'loss' / None。
+
+    严格条件：赢和输只有一项变化，另一项必须完全不变。
+
+    为什么必须严格（2026-11-21）：一局只该改变一个数字。
+    如果两个都变，说明跨了多局（机器人卡住没读）或者读数错乱，
+    这种情况宁可不判（返回 None），也不能记错胜负 —— 错的战绩
+    会污染胜率统计，比没有更糟。
+    """
     if not before or not after:
+        return None
+    # 兼容 dict 传入（防止调用方直接传 load_state 的原始结果）
+    if isinstance(before, dict):
+        before = (before.get("wins"), before.get("losses"))
+    if isinstance(after, dict):
+        after = (after.get("wins"), after.get("losses"))
+    if before[0] is None or before[1] is None:
+        return None
+    if after[0] is None or after[1] is None:
         return None
     if after[0] > before[0] and after[1] == before[1]:
         return "win"
