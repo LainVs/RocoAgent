@@ -108,12 +108,19 @@ summary() -> int        # 打印汇总并返回退出码
 ### 4.3 `test_console.py`（控制台）
 
 ```
-[1]   API 契约
+[1]   API 契约（含 dex 去重 / team skills 展开 / matches 分页，比原来多 11 项）
 [2]   静态资源
 [3]   live_state 契约
-[3b]  日志尾推断
+[3b]  日志尾推断 —— 实际是**四组**共 23 项：
+        · phase / board / progress
+        · game_status
+        · last_decision
+        · log_chunk
 [3c]  控制台对比度
 ```
+
+**行数修正**（2026-11-21，控制台会话指出）：原来估 800 行偏低。
+`[1]` 长了 11 项、`[3b]` 是四组 23 项 —— 实际约 **1000 行**。
 
 ---
 
