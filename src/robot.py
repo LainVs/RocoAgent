@@ -757,6 +757,9 @@ class Bot:
                         # 否则整晚只会存到第一局的几只。
                         self._pet_unknown_sigs = []
                         self._foe_unknown_sigs = []
+                        # 新一局：头像投票历史清空
+                        if getattr(self, "_pet_votes", None):
+                            self._pet_votes.clear()
                         # 新一局：上一局的技能卡不能再显示
                         self._skill_hold = None
                         self._skill_hold_at = 0.0
@@ -1587,6 +1590,32 @@ class Bot:
         if img is None or img.size == 0:
             return
         name, sc, margin = self._identify_with_margin(img, box, m)
+        # ---- 多帧投票（2026-11-22）
+        #
+        # HUD 头像有入场/待机动画，单帧分数抖动很大：实测同一只精灵
+        # 连续帧的分数在 0.34~0.82 之间跳。单帧定生死会导致
+        # "有时认得出、有时认不出"，进而 `pet identity unknown`。
+        #
+        # 这里把最近几次的候选累积起来，取"累计得分最高的名字"：
+        # 只要有一两帧够好，身份就能定下来；真换了精灵时，
+        # `active_pet` 变化会清空历史（见下方 reset）。
+        votes = getattr(self, "_pet_votes", None)
+        if votes is None:
+            votes = {}
+            self._pet_votes = votes
+        if name is not None:
+            votes[name] = votes.get(name, 0.0) + max(0.0, sc - 0.45)
+        # 只保留前 6 个，防止无限增长
+        if len(votes) > 6:
+            keep = sorted(votes.items(), key=lambda kv: -kv[1])[:6]
+            votes.clear()
+            votes.update(keep)
+        if votes:
+            best_name, best_w = max(votes.items(), key=lambda kv: kv[1])
+            if best_w >= 0.25 and best_name != self.active_pet:
+                # 累计权重够了 -> 采纳
+                name, sc = best_name, max(sc, 0.0)
+                margin = max(margin, 0.06)
         # 阈?+ 领先优势：只?0.02 ?最，?很可能是两个相似头像在打架，
         # 那种情况宁可，?不确?（实测把我方卡瓦重认成音速犬）。?
         # 阈值 + 领先幅度。
@@ -1604,6 +1633,8 @@ class Bot:
                 log("PET -> %s (%.2f)" % (name, sc))
                 self.active_pet = name
                 self.pet_at = now
+                # 真的换了一只 -> 投票历史作废，避免旧名字拖住新身份
+                getattr(self, "_pet_votes", {}).clear()
             # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）。?
             self.my_score = sc
             sp = self._portrait_species(name, "self")
