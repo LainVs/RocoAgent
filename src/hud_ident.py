@@ -414,23 +414,39 @@ def _ncc(a, b):
     return float((a2 * b2).sum() / d) if d > 0 else 0.0
 
 
-def _ncc_rot(a, b, step=15):
-    """旋转搜索取最大 NCC。
+def _ncc_rot(a, b, step=15, scales=(1.0, 1.10, 0.92)):
+    """旋转 + 缩放搜索取最大 NCC。
 
-    螺旋、星形这类图案在 HUD 上可能带轻微旋转（图标有浮动动画），
-    15° 步长已能覆盖，24 次旋转 × 18 个模板 = 432 次 NCC，
-    单次约 0.02ms，整帧 10ms 量级，可接受。
+    为什么要缩放
+    -----------
+    官方图标是 198x198 的矢量级清晰图，HUD 上只有 26px 再放大到 32x32。
+    放大过程会让笔画变粗，直接比 NCC 只有 0.46。
+    实测（月牙雪熊的幻系螺旋）：
+        旋转 315° + 缩放 1.00 -> NCC 0.461
+        旋转 315° + 缩放 1.10 -> NCC 0.564   <- 提升 0.10
+        旋转 315° + 缩放 1.15 -> NCC 0.524
+    所以 1.10 附近是笔画粗细的最佳匹配点。
+
+    为什么要旋转
+    -----------
+    HUD 图标有浮动动画，螺旋这类图案对相位极敏感。
+
+    代价：3 个缩放 x 24 个角度 = 72 次 NCC，单次约 0.02ms，
+    18 个模板合计约 26ms，可接受。
     """
     import cv2
     best = _ncc(a, b)
     h, w = b.shape
     c = (w / 2.0, h / 2.0)
-    for ang in range(step, 360, step):
-        M = cv2.getRotationMatrix2D(c, ang, 1.0)
-        br = cv2.warpAffine(b, M, (w, h), flags=cv2.INTER_LINEAR)
-        s = _ncc(a, br)
-        if s > best:
-            best = s
+    for sc in scales:
+        for ang in range(0, 360, step):
+            if sc == 1.0 and ang == 0:
+                continue
+            M = cv2.getRotationMatrix2D(c, ang, sc)
+            br = cv2.warpAffine(b, M, (w, h), flags=cv2.INTER_LINEAR)
+            s = _ncc(a, br)
+            if s > best:
+                best = s
     return best
 
 
