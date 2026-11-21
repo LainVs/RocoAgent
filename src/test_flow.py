@@ -31,8 +31,21 @@ class FakeScreen:
         x, y, w, h = box
         return self.im[y:y + h, x:x + w]
 
+    # 这些帧是**整窗**截图（2586x1671，含 13px 边框 + 58px 标题栏），
+    # box 也是窗口坐标，所以 grab_s 直接等价于 grab。
+    # 缺这个方法时 ui_probe.find_action_button 会抛 AttributeError（不是断言失败，
+    # 看起来像崩溃，实际是测试替身没跟上接口）。
+    grab_s = grab
+
     def grab_full(self):
         return self.im
+
+    def abs_point(self, box, cx, cy):
+        """ui_probe.find_action_button 用它把按钮中心换算成点击坐标。
+
+        这个测试只关心"有没有找到按钮"，所以返回图内坐标即可。
+        """
+        return (box[0] + cx, box[1] + cy)
 
 
 # frame -> expected action-button presence

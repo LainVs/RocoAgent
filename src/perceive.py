@@ -145,6 +145,7 @@ class Perc:
         self.tpl = dr.load_templates()
 
     def _bar(self, box):
+        """逐区域抓血条。只在 Screen 没有 grab_frame（测试替身）时用。"""
         x, y, w, h = box
         crop = self.screen.grab_s((x, y - 2, w, h + 4))
         if crop is None:
@@ -153,9 +154,33 @@ class Perc:
             return {"pct": None, "color": "none", "ui": False}
         return _read_bar(crop, (0, 2, w, h))
 
+    def _bar_from(self, frame, scale, box):
+        """同 _bar，但从已经抓好的一整帧里切（省一次 16ms 的抓屏）。"""
+        x, y, w, h = box
+        if frame is None:
+            return self._bar(box)
+        crop = self.screen.crop_frame(frame, (x, y - 2, w, h + 4), scale)
+        if crop is None:
+            return {"pct": None, "color": "none", "ui": False}
+        return _read_bar(crop, (0, 2, w, h))
+
+    def _grab(self, frame, scale, box):
+        """同 screen.grab_s(box)，但走整帧切片。"""
+        if frame is None:
+            return self.screen.grab_s(box)
+        return self.screen.crop_frame(frame, box, scale)
+
     def observe(self):
-        my = self._bar(MY_BAR)
-        foe = self._bar(FOE_BAR)
+        # 一次抓屏，切出全部区域。实测把 5 次 16ms 的 mss 开销压成 1 次 51ms。
+        #
+        # 外部可能注入自己的 Screen 实现（providers.py 允许传 screen=...），
+        # 没有 grab_frame 就退回逐区域抓，行为与重构前完全一致。
+        if hasattr(self.screen, "grab_frame"):
+            frame, scale = self.screen.grab_frame()
+        else:
+            frame, scale = None, (1.0, 1.0)
+        my = self._bar_from(frame, scale, MY_BAR)
+        foe = self._bar_from(frame, scale, FOE_BAR)
         # 两边血条都能读出数? 只说??HUD"。S5 赛季大厅左上那条金色横幅
         # 正好压在 MY_BAR/FOE_BAR ? 于是大厅被读?battle=1, 机器人对着
         # "开始挑战站一晚上也不点。真血条有灰色底板 (ui), 横幅没有;
@@ -165,7 +190,7 @@ class Perc:
 
         x0, y0, x1, y1 = SKILL_BOX
         cw, ch = x1 - x0, y1 - y0
-        crop = self.screen.grab_s((x0, y0, cw, ch))
+        crop = self._grab(frame, scale, (x0, y0, cw, ch))
         skills = [None] * 4
         visible, npills = False, 0
         if crop is not None:
@@ -206,7 +231,7 @@ class Perc:
         if bars:
             # Grab the numeral's own ROI instead of the whole 2586x1671 window:
             # the full grab cost ~100 ms to read a 340x150 region.
-            cnt_crop = self.screen.grab_s(CNT_ROI)
+            cnt_crop = self._grab(frame, scale, CNT_ROI)
             cnt = countdown_visible_crop(cnt_crop) if cnt_crop is not None else False
         # 底板判据失效但技能栏画着 -> 仍然是在战斗。
         #
@@ -228,7 +253,7 @@ class Perc:
         if battle:
             try:
                 import energy as _energy
-                pip = self.screen.grab_s(_energy.PIP_BAND)
+                pip = self._grab(frame, scale, _energy.PIP_BAND)
                 if pip is not None:
                     en = _energy.read_energy(pip)
             except Exception:
@@ -591,6 +616,89 @@ def _slots(crop, region, pills=None):
     return slots
 
 
+# ---------------------------------------------------------------- 技能表缓存
+#
+# `_fix_status_kinds` 和 `attach_skill_names` 每帧各开一次 sqlite 连接
+# （sqlite3.connect + team_db.dump_team()），实测 27ms + 24ms = **51ms**，
+# 比整个技能栏图像处理（32ms）还贵。但它们查的东西**只跟 my_name 有关**：
+# 我方 4 个槽位装的是哪 4 个技能，一局里只有换精灵时才变。
+#
+# 所以把「查数据库」和「按帧判断」拆开：前者按 my_name 缓存，后者保持纯计算。
+# 换队/改队伍配置最多 30s 内生效（_META_TTL），对实战足够。
+
+_TEAM_TTL = 15.0
+_team_cache = {"at": 0.0, "team": None}
+
+_META_TTL = 30.0
+_meta_cache = {}
+
+
+def _team_snapshot():
+    """team_db 的队伍配置，15s 内复用。"""
+    now = time.time()
+    c = _team_cache
+    if c["team"] is not None and now - c["at"] < _TEAM_TTL:
+        return c["team"]
+    try:
+        import team_db
+        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
+    except Exception:
+        team = {}
+    c["at"] = now
+    c["team"] = team
+    return team
+
+
+def _skill_meta(my_name):
+    """我方某只精灵的技能表：moves / 每个槽位的 power 与 name / 变化技能耗能集合。
+
+    返回 None 表示查不到（调用方按"未知"处理）。结果按 my_name 缓存 30s。
+    """
+    if not my_name:
+        return None
+    now = time.time()
+    hit = _meta_cache.get(my_name)
+    if hit is not None and now - hit["at"] < _META_TTL:
+        return hit
+    meta = {"at": now, "moves": [], "powers": {}, "names": {},
+            "dash_costs": None}
+    team = _team_snapshot()
+    meta["moves"] = list((team.get(my_name) or {}).get("moves") or [])
+    try:
+        import sqlite3
+        from portrait_db import DB_PATH
+        db = sqlite3.connect(DB_PATH)
+        try:
+            for i, sid in enumerate(meta["moves"][:4]):
+                row = db.execute("SELECT power, name FROM skills WHERE id=?",
+                                 (int(sid),)).fetchone()
+                if row:
+                    meta["powers"][i] = row[0] or 0
+                    meta["names"][i] = row[1]
+            if not meta["moves"]:
+                # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
+                row = db.execute(
+                    "SELECT id FROM species WHERE name=? "
+                    "ORDER BY implemented DESC, total DESC LIMIT 1",
+                    (my_name,)).fetchone()
+                if row:
+                    costs = set()
+                    for r in db.execute(
+                            "SELECT DISTINCT s.cost FROM species_skills ss "
+                            "JOIN skills s ON s.id=ss.skill_id "
+                            "WHERE ss.species_id=? "
+                            "AND (s.power IS NULL OR s.power<=0)", (row[0],)):
+                        if r[0] is not None:
+                            costs.add(int(r[0]))
+                    meta["dash_costs"] = costs
+        finally:
+            db.close()
+    except Exception:
+        pass
+    _meta_cache[my_name] = meta
+    return meta
+
+
 def _fix_status_kinds(slots, my_name):
     """用我方装备的技能表纠正 num/dash 误判（模块级辅助）。
 
@@ -613,57 +721,39 @@ def _fix_status_kinds(slots, my_name):
     if not slots or not my_name:
         return slots
     try:
-        import sqlite3
-        import team_db
-        from portrait_db import DB_PATH
-        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
-        moves = (team.get(my_name) or {}).get("moves") or []
-        db = sqlite3.connect(DB_PATH)
-        try:
-            if moves:
-                # 路线 1：队伍配置了 moves，直接查 power
-                for slot in range(1, min(4, len(moves)) + 1):
-                    row = db.execute("SELECT power FROM skills WHERE id=?",
-                                     (int(moves[slot - 1]),)).fetchone()
-                    if row and (row[0] or 0) <= 0:
-                        s = slots[slot - 1]
-                        if s is not None:
-                            s["kind"] = "dash"
-                            s["value"] = None
-                            s["color"] = None
-            else:
-                # 路线 2：队伍没配 -> 用这只精灵的"变化技能耗能集合"推断
-                row = db.execute(
-                    "SELECT id FROM species WHERE name=? "
-                    "ORDER BY implemented DESC, total DESC LIMIT 1",
-                    (my_name,)).fetchone()
-                if not row:
-                    return slots
-                dash_costs = set()
-                for r in db.execute(
-                        "SELECT DISTINCT s.cost FROM species_skills ss "
-                        "JOIN skills s ON s.id=ss.skill_id "
-                        "WHERE ss.species_id=? AND (s.power IS NULL OR s.power<=0)",
-                        (row[0],)):
-                    if r[0] is not None:
-                        dash_costs.add(int(r[0]))
-                # 卡面耗能如果唯一对应一个"变化技能耗能"，且该槽位读到的
-                # 数值不合理（<=60，远低于同卡组其他伤害），标 dash
-                for idx, s in enumerate(slots):
-                    if s is None or s.get("kind") != "num":
-                        continue
-                    v = s.get("value")
-                    if v is not None and v <= 60:
-                        # 小数值极可能是变化技能（伤害卡很少低于 60）
-                        others = [x.get("value") for x in slots
-                                  if x is not None and x is not s
-                                  and x.get("value") is not None]
-                        if others and max(others) >= 100:
-                            s["kind"] = "dash"
-                            s["value"] = None
-                            s["color"] = None
-        finally:
-            db.close()
+        meta = _skill_meta(my_name)
+        if meta is None:
+            return slots
+        moves = meta["moves"]
+        if moves:
+            # 路线 1：队伍配置了 moves，直接查 power（已缓存在 meta["powers"]）
+            for slot in range(1, min(4, len(moves)) + 1):
+                if (meta["powers"].get(slot - 1) or 0) <= 0:
+                    s = slots[slot - 1]
+                    if s is not None:
+                        s["kind"] = "dash"
+                        s["value"] = None
+                        s["color"] = None
+        else:
+            # 路线 2：队伍没配 -> 用这只精灵的"变化技能耗能集合"推断
+            dash_costs = meta.get("dash_costs")
+            if not dash_costs:
+                return slots
+            # 卡面耗能如果唯一对应一个"变化技能耗能"，且该槽位读到的
+            # 数值不合理（<=60，远低于同卡组其他伤害），标 dash
+            for idx, s in enumerate(slots):
+                if s is None or s.get("kind") != "num":
+                    continue
+                v = s.get("value")
+                if v is not None and v <= 60:
+                    # 小数值极可能是变化技能（伤害卡很少低于 60）
+                    others = [x.get("value") for x in slots
+                              if x is not None and x is not s
+                              and x.get("value") is not None]
+                    if others and max(others) >= 100:
+                        s["kind"] = "dash"
+                        s["value"] = None
+                        s["color"] = None
     except Exception:
         pass
     return slots
@@ -720,28 +810,21 @@ def attach_skill_names(slots, my_name):
     if not slots or not my_name:
         return slots
     try:
-        import sqlite3
-        import team_db
-        from portrait_db import DB_PATH
         import skill_kind as SK
-        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
-        moves = (team.get(my_name) or {}).get("moves") or []
+        meta = _skill_meta(my_name)
+        if meta is None:
+            return slots
+        moves = meta["moves"]
         if not moves:
             return slots
-        db = sqlite3.connect(DB_PATH)
-        try:
-            for i, sid in enumerate(moves[:4]):
-                if i >= len(slots) or slots[i] is None:
-                    continue
-                row = db.execute("SELECT name FROM skills WHERE id=?",
-                                 (int(sid),)).fetchone()
-                if not row or not row[0]:
-                    continue
-                name = row[0]
-                slots[i]["skill_name"] = name
-                slots[i]["skill_kind"] = SK.classify(name)
-        finally:
-            db.close()
+        for i, sid in enumerate(moves[:4]):
+            if i >= len(slots) or slots[i] is None:
+                continue
+            name = meta["names"].get(i)
+            if not name:
+                continue
+            slots[i]["skill_name"] = name
+            slots[i]["skill_kind"] = SK.classify(name)
     except Exception:
         pass
     return slots

@@ -47,6 +47,12 @@ class FakeScreen:
         x, y, w, h = box
         return self.im[y:y + h, x:x + w]
 
+    # 这些帧是**整窗**截图（2586x1671，含 13px 边框 + 58px 标题栏），
+    # box 也是窗口坐标，所以 grab_s 直接等价于 grab。
+    # 缺这个方法时 ui_probe.find_action_button 会抛 AttributeError（不是断言失败，
+    # 看起来像崩溃，实际是测试替身没跟上接口）。
+    grab_s = grab
+
     def grab_full(self):
         return self.im
 
@@ -96,7 +102,10 @@ def main():
 
     print()
     print("--- mid-battle switch slot range (party list is 1-6) ---")
-    bot = types.SimpleNamespace(switch_count=0)
+    # next_switch_slot() 后来改成按血量/属性挑，不再是固定轮转，
+    # 所以要补上它现在读的字段（这里只关心"选出来的是 1..6"）。
+    bot = types.SimpleNamespace(switch_count=0, cur_slot=1, slot_hp={},
+                                _matchup_score=lambda s: 0.0)
     seen = []
     for i in range(12):
         bot.switch_count = i

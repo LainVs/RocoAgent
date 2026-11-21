@@ -219,6 +219,71 @@ class Screen:
         """整块客户区，基准尺寸。"""
         return self.grab_client((0, 0, self.BASE_CLIENT_W, self.BASE_CLIENT_H))
 
+    # ---- 单帧多切：把 5 次抓屏压成 1 次 -------------------------------
+    #
+    # 实测（2026-11-21，2560x1600 客户端）：mss 每次 grab 都有 ~16ms 的
+    # **固定开销**，跟区域大小几乎无关 —— 抓 244x20 的血条和抓 530x1040
+    # 的技能栏都是 17ms。Perc.observe() 要抓 MY_BAR / FOE_BAR /
+    # SKILL_BOX / CNT_ROI / PIP_BAND 五个区域 = 85ms，占了感知耗时的一半。
+    #
+    # 一次整块客户区 grab 只要 51ms，切出来的 5 块完全一样。
+    # 另外整帧**不转 RGB**：4MP 的 cvtColor 要 ~20ms，而切片是小图，
+    # 每块转一次总共不到 1ms。
+    #
+    # 实测：85.7ms -> 51.8ms（省 34ms / 40%）。
+
+    def grab_frame(self):
+        """整块客户区，BGRA 原样。返回 (frame, (sx, sy))。
+
+        失败返回 (None, (1.0, 1.0))，调用方按"抓不到"处理。
+        """
+        if self.rect is None or time.time() - self.last_refresh > 2.0:
+            self.refresh()
+            if self.rect is None:
+                return None, (1.0, 1.0)
+        ox, oy = getattr(self, "client_off", (0, 0))
+        cw, ch = getattr(self, "client_size", None) \
+            or (self.BASE_CLIENT_W, self.BASE_CLIENT_H)
+        try:
+            shot = self.sct.grab({"left": self.rect[0] + ox,
+                                  "top": self.rect[1] + oy,
+                                  "width": cw, "height": ch})
+        except Exception:
+            return None, (1.0, 1.0)
+        return np.asarray(shot), (cw / float(self.BASE_CLIENT_W),
+                                  ch / float(self.BASE_CLIENT_H))
+
+    def crop_frame(self, frame, box, scale=None, client=False):
+        """从 grab_frame() 的整帧切一块 -> RGB，缩回基准尺寸。
+
+        box 默认是**窗口坐标**（和 grab_s 一致）；client=True 时按
+        客户区坐标（和 grab_client 一致）。
+        """
+        if frame is None:
+            return None
+        sx, sy = scale or self.scale()
+        x0, y0, w0, h0 = box
+        if client:
+            px = int(round(x0 * sx))
+            py = int(round(y0 * sy))
+        else:
+            px = int(round((x0 - self.BASE_OFF_X) * sx))
+            py = int(round((y0 - self.BASE_OFF_Y) * sy))
+        pw = max(1, int(round(w0 * sx)))
+        ph = max(1, int(round(h0 * sy)))
+        if py < 0 or px < 0:
+            return None
+        if py + ph > frame.shape[0] or px + pw > frame.shape[1]:
+            return None
+        sub = frame[py:py + ph, px:px + pw]
+        if sub.size == 0:
+            return None
+        rgb = cv2.cvtColor(sub, cv2.COLOR_BGRA2RGB)
+        if abs(sx - 1.0) >= 0.004 or abs(sy - 1.0) >= 0.004:
+            rgb = cv2.resize(rgb, (max(1, int(w0)), max(1, int(h0))),
+                             interpolation=cv2.INTER_AREA)
+        return rgb
+
     def phys(self, x, y):
         """窗口坐标（基准）-> 屏幕物理坐标。"""
         cr = self.client_rect_on_screen()
