@@ -3492,6 +3492,25 @@ class Bot:
 
 
     def _dump(self, st, action, why):
+        # 对面属性：以前直接记 self.foe_types，而那个字段**只有"点开对面
+        # 特性面板"那条路径才赋值**，所以日志里 97% 是 None —— 看起来像
+        # "属性从不识别"，其实悬浮窗和决策层都是从 foe_name 查库推导的。
+        # 现在 species() 有缓存（见 foe_hp），这里顺手算出来，让日志不再骗人。
+        foe_types = None
+        foe_types_conf = "none"
+        try:
+            import foe_hp as _FH
+            foe_name_now = getattr(self, "foe_name", None)
+            if foe_name_now:
+                foe_types = _FH.types_of(foe_name_now) or None
+                if foe_types:
+                    # "model" = 按名字查库推导（和 _publish_state 一致）
+                    foe_types_conf = "model"
+            scanned = getattr(self, "foe_types_conf", None)
+            if scanned in ("high", "low"):
+                foe_types_conf = scanned     # 特性面板扫出来的更可靠
+        except Exception:
+            foe_types = None
         rec = {
             # 场次 id：三份日志靠它对齐（以前只有 hourly ts + 进程内计数，
             # 3168 条回合里 44.5% 无法确定属于哪一场）。
@@ -3504,10 +3523,11 @@ class Bot:
             # 身份字段：只有头像库认得出来时才有值（目前只有恶魔狼）
             "our_pet": getattr(self, "active_pet", None),
             "foe_pet": getattr(self, "foe_name", None),
-            # 对面属性是怎么来的：high=特性唯一/同名，low=多候选取多数，
-            # none=没有。复盘时用它区分"属性确定"和"属性是猜的"。
-            "foe_types": getattr(self, "foe_types", None),
-            "foe_types_conf": getattr(self, "foe_types_conf", "none"),
+            # 对面属性是怎么来的：high=特性扫描唯一，low=多候选取多数，
+            # model=按名字查库推导，none=没有。
+            # 复盘时用它区分"属性确定"和"属性是猜的"。
+            "foe_types": foe_types,
+            "foe_types_conf": foe_types_conf,
             # lit/plate 一定要记：否则离线分析"为什么没选最大伤，?时，
             # 分不，?那张卡是灰的"?决策算错?。?
             "skills": [{"i": s["index"], "v": s["value"], "c": s["color"],
