@@ -91,6 +91,8 @@ git 约定：
 | U19 | 队伍页把 `my_team.moves` 原样返回却从不显示（配置过期是最隐蔽的 bug） | ✅ `7f4455a` |
 | U20 | 段位卡读数卡死时，走势图仍画着 100 根假柱子 | ✅ `44e37b1` |
 | U21 | 头像标注只取前 60 张、无翻页 —— 我方 561 张永远标不完 | ✅ `e150fe2` |
+| U22 | 对局记录只取最近 40 场 / 517 场，无翻页；且每次请求跑两遍 `summarize()` | ✅ `ab4978d` |
+| U23 | 图鉴 857 只只显示前 120 只，无「加载更多」 | ✅ `f93cd57` |
 
 #### U15 为什么不改 `robot.py`
 
@@ -171,8 +173,21 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 **没法翻到第二页**，等于积压永远清不掉。现在加 offset 分页（60/页），
 显示「1–60 / 561 张待标注」+ 上一页/下一页，切 side 时重置到第 1 页。
 
+#### U22 / U23：长列表都没有第二页
 
+同一类问题在另外两处长列表上重复出现：
 
+| 接口 | 实测总量 | 原来显示 | 修法 |
+|---|---|---|---|
+| `/api/matches` | 517 场 | 最近 40 场 | offset 分页，40/页，`1–40 / 517` |
+| `/api/dex` | 857 只 | 前 120 只 | 「加载更多」追加，120/次 |
+
+图鉴用追加而不是翻页：网格布局下滚到底继续加载更自然，也不会丢掉
+已经浏览的位置。实测点击一次 120 → 240 张。
+
+顺带修掉 `/api/matches` 的性能问题：原来一次请求调
+`summarize(limit)` 和 `summarize()` **两遍**，每遍都要把三份 jsonl
+全量过一遍（517 场 / 3181 条回合）。现在只跑一遍再切片。
 
 ---
 
@@ -216,9 +231,11 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 | U19 | `ui_server.team()` 联表展开技能 + `console.js skillRows()` | 渲染实测：5 只 / 20 个技能块，`借用 普通·0费` 等可读 |
 | U20 | `console.js refreshStats()` 的走势分支 | 渲染实测：`spark_bars=0`，显示"段位卡读数卡死" |
 | U21 | `console.js refreshLabel()` + `#labelPager` | 渲染实测：`1–60 / 64`、`第 1 / 2 页` |
+| U22 | `ui_server.matches_summary(offset)` + `console.js renderMatchPager()` | 单测：`offset=3` 与 `offset=0` 无重叠、total 一致；渲染 `1–40 / 517`、`第 1 / 13 页` |
+| U23 | `console.js loadDex()` + `#dexMore` | 渲染实测：点一次 120 → 240 张，`还有 737 只` |
 
-**验证基线**：`python src/test_ui.py` → 117 项全过（原 62）；
-`--no-dom` 85 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
+**验证基线**：`python src/test_ui.py` → 127 项全过（原 62）；
+`--no-dom` 91 项；`test_record.py` / `test_imports.py` / `test_policy_cost.py` ALL PASS。
 
 **未做**：无（U15 用只读方案绕开了对 `robot.py` 的依赖）。
 
@@ -230,8 +247,8 @@ UI 服务常驻时每秒 2~4 行。后果：`bot_activity()` 永远返回 None�
 $py = "C:\Users\Lenovo\Desktop\hardwork\CV_ESP_Game_1\.venv\Scripts\python.exe"
 
 # 契约 + 静态资源 + 对比度 + 日志尾推断 + DOM（DOM 需要系统 Python，它才有 pywebview）
-python src\test_ui.py --no-dom        # 85 项，约 4 秒
-python src\test_ui.py                 # 117 项，约 60 秒，含真实渲染
+python src\test_ui.py --no-dom        # 91 项，约 5 秒
+python src\test_ui.py                 # 127 项，约 90 秒，含真实渲染
 
 # 数值/逻辑回归（UI 改动不该影响它们，跑一遍确认）
 & $py src\test_record.py              # 战绩读写 + 快照
@@ -239,7 +256,7 @@ python src\test_ui.py                 # 117 项，约 60 秒，含真实渲染
 & $py src\test_policy_cost.py         # 耗能参与决策
 ```
 
-**基线（本轮结束）**：`test_ui.py` 113 项、`--no-dom` 81 项、
+**基线（本轮结束）**：`test_ui.py` 127 项、`--no-dom` 91 项、
 其余三个脚本 ALL PASS。
 
 ---
