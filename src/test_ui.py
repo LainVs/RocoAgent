@@ -28,61 +28,23 @@ import sys
 import time
 import urllib.request
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SRC = os.path.join(ROOT, "src")
-UI = os.path.join(ROOT, "ui")
-
-FAILS = []
-PASSES = 0
-
-
-def ok(cond, msg, detail=""):
-    global PASSES
-    if cond:
-        PASSES += 1
-        print("  OK    %s%s" % (msg, ("  " + detail) if detail else ""))
-    else:
-        FAILS.append(msg + (("  " + detail) if detail else ""))
-        print("  FAIL  %s%s" % (msg, ("  " + detail) if detail else ""))
-    return cond
-
-
-def port_free(port):
-    s = socket.socket()
-    try:
-        s.bind(("127.0.0.1", port))
-        return True
-    except OSError:
-        return False
-    finally:
-        s.close()
-
-
-def wait_health(port, timeout=12):
-    end = time.time() + timeout
-    while time.time() < end:
-        try:
-            with urllib.request.urlopen(
-                    "http://127.0.0.1:%d/api/health" % port,
-                    timeout=1.2) as r:
-                if r.status == 200:
-                    return True
-        except Exception:
-            pass
-        time.sleep(0.3)
-    return False
-
-
-def get(port, path, timeout=6):
-    with urllib.request.urlopen(
-            "http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as r:
-        return json.loads(r.read().decode("utf-8"))
-
-
-def get_raw(port, path, timeout=6):
-    with urllib.request.urlopen(
-            "http://127.0.0.1:%d%s" % (port, path), timeout=timeout) as r:
-        return r.status, r.read()
+# 共享层（2026-11-21 拆分，见 docs/PLAN_TEST_SPLIT.md）
+#
+# 为什么不直接留着本地定义：三个会话都在改这个文件，
+# 而 ROOT/SRC/UI + ok/port_free/wait_health/get/get_raw 两边都要用。
+# 抽到 test_ui_common.py 后，拆分时两边 import 同一个来源，
+# 不会出现"改了一边忘另一边"。
+#
+# ★ 不要 `from test_ui_common import PASSES`：
+#   int 是不可变的，导入拿到的是**快照**，`ok()` 内部 `global PASSES`
+#   改的是 test_ui_common 里的那个，本地这个永远是 0。
+#   要读当前计数用 `test_ui_common.PASSES`。
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import test_ui_common as C  # noqa: E402
+from test_ui_common import (  # noqa: E402
+    ROOT, SRC, UI,
+    get, get_raw, ok, port_free, summary, wait_health,
+)
 
 
 # ============================================================ 1. API
@@ -706,23 +668,54 @@ def worker():
                     "document.getElementById('sysState').textContent"),
             }
 
+        # ★ 用轮询等待代替固定 sleep（2026-11-21 修 flaky）
+        #
+        # 原来每步都是 `time.sleep(1.8)` / `2.0`，然后立刻 snap()。
+        # 实测偶发失败（约 1/10）：
+        #
+        #     数据源恢复后跟上   pct=100     <- 期望 30
+        #     技能数正确        skills=0    <- 期望 2
+        #
+        # 原因：前端轮询是 400ms，但**渲染 + fit_window + IPC** 加起来
+        # 有时超过 2 秒（尤其机器忙的时候）。固定 sleep 撞上就失败。
+        #
+        # 固定 sleep 还有个反向问题：正常情况下它白等 2 秒 × 3 步，
+        # 整个韧性测试白耗 6 秒。
+        #
+        # 改成"等到条件满足或超时"，两个问题一起解决。
+        def wait_until(cond, timeout=8.0, step=0.25):
+            """轮询直到 cond(snap) 为真，返回最后一次 snap。"""
+            end = time.time() + timeout
+            last = None
+            while time.time() < end:
+                last = snap()
+                try:
+                    if cond(last):
+                        return last
+                except Exception:
+                    pass
+                time.sleep(step)
+            return last
+
         result["a_initial"] = snap()
 
         write_state(5, 60.0, 3)
-        time.sleep(1.8)
-        result["b_changed"] = snap()
+        result["b_changed"] = wait_until(
+            lambda s: s.get("pct") == "60" and s.get("turn") == "T5")
 
         live = os.path.join(iso, "live_state.json")
         try:
             os.remove(live)
         except OSError:
             pass
-        time.sleep(2.0)
-        result["c_removed"] = snap()
+        # 数据源消失后前端应清空血量（显示 —）
+        result["c_removed"] = wait_until(
+            lambda s: s.get("pct") == "—")
 
         write_state(9, 30.0, 2)
-        time.sleep(2.0)
-        result["d_restored"] = snap()
+        result["d_restored"] = wait_until(
+            lambda s: (s.get("pct") == "30"
+                       and int(s.get("skills") or 0) == 2))
 
         # ---- 空帧判定 + DOM 折叠（2026-11-21）
         #
@@ -1452,6 +1445,55 @@ def test_phase_infer():
         except OSError:
             pass
 
+    # /api/log 按字节 offset 增量拉：中文日志被切在多字节字符中间时，
+    # 旧实现会少推进 2~3 字节 -> 下次重复输出同一行（或丢行）。
+    # 这个项目的日志全是中文，几乎每次都会命中。
+    import io as _io
+    old_log = U.BOT_LOG
+    fd, logp = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    try:
+        U.BOT_LOG = logp
+        with _io.open(logp, "w", encoding="utf-8", newline="\n") as f:
+            for i in range(120):
+                f.write("23:%02d 中文日志测试第 %d 行 —— 音速犬 出招 SKILL\n"
+                        % (i % 60, i))
+        size = os.path.getsize(logp)
+        whole = U.log_chunk(0, max_bytes=size)
+        ok(len(whole["lines"]) == 120, "整文件一次读完 120 行",
+           str(len(whole["lines"])))
+        ok(whole["offset"] == size, "offset 到达 EOF")
+
+        # 切在一个多字节字符中间（找一个不是换行边界的偏移）
+        with open(logp, "rb") as f:
+            raw = f.read()
+        cut = 401
+        while raw[cut - 1:cut] == b"\n":
+            cut += 1
+        with open(logp, "wb") as f:
+            f.write(raw[:cut])
+        part = U.log_chunk(0, max_bytes=cut)
+        with open(logp, "rb") as f:
+            f.seek(part["offset"] - 1)
+            on_nl = f.read(1) == b"\n"
+        ok(on_nl, "中文字符中间切断后 offset 落在换行边界",
+           "offset=%d cut=%d" % (part["offset"], cut))
+
+        # 补回后半段续拉：不能重复、不能丢
+        with open(logp, "wb") as f:
+            f.write(raw)
+        rest = U.log_chunk(part["offset"], max_bytes=size - part["offset"])
+        joined = part["lines"] + rest["lines"]
+        ok(len(joined) == len(set(joined)), "续拉不重复",
+           "%d 行 / %d 唯一" % (len(joined), len(set(joined))))
+        ok(len(joined) == 120, "续拉后总行数不变", str(len(joined)))
+    finally:
+        U.BOT_LOG = old_log
+        try:
+            os.remove(logp)
+        except OSError:
+            pass
+
     # 游戏窗口：只读 HWND/rect。这里验证的是"算得对"，不是"能找到窗口"——
     # 测试机可能没开游戏，所以两种情况都要能通过。
     #
@@ -1627,15 +1669,7 @@ def main():
         except Exception:
             pass
 
-    print()
-    print("=" * 66)
-    if FAILS:
-        print("%d 项失败 / %d 项通过" % (len(FAILS), PASSES))
-        for f in FAILS:
-            print("  - %s" % f)
-        return 1
-    print("全部通过（%d 项）" % PASSES)
-    return 0
+    return summary()
 
 
 if __name__ == "__main__":

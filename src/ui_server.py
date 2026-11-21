@@ -1139,33 +1139,60 @@ def team():
 
 # ============================================================ 日志增量
 def log_chunk(offset=0, max_bytes=48 * 1024):
-    """按字节 offset 返回新增日志。前端带着上次的 offset 来拉。"""
+    """按字节 offset 返回新增日志。前端带着上次的 offset 来拉。
+
+    踩过的坑（2026-11-21）
+    --------------------
+    原来的"最后一行没写完就不要吃掉它"是这样切的：
+
+        data = data[:len(data) - len(text.splitlines()[-1].encode("utf-8", "replace"))]
+
+    但 `text` 是 `data.decode("utf-8", "replace")` 的结果 —— 如果
+    `max_bytes` 正好切在一个**中文字符中间**，那个残缺字节会被替换成
+    U+FFFD（3 字节），`encode` 回去就是 3 字节，而原始只占 1 字节。
+    于是 offset 少推进 2 字节，**下次请求把同一行再吐一遍**；
+    反过来切在 4 字节字符里时又会多推进。
+
+    中文日志（这个项目全是）几乎每次都会命中。
+
+    正确做法：**在字节层面找最后一个换行**，完全不碰字符串长度。
+    """
     try:
         size = os.path.getsize(BOT_LOG)
     except OSError:
         return {"offset": 0, "lines": [], "size": 0, "reset": True}
-    if offset > size:                      # 文件被轮转/清空
+    reset = False
+    if offset > size:                      # 文件被轮转 / 清空
         offset = 0
+        reset = True
     if size - offset > max_bytes:
         # 落后太多：只给最后 max_bytes，并告知新 offset
         offset = size - max_bytes
+        reset = True
     try:
         with open(BOT_LOG, "rb") as f:
             f.seek(offset)
             data = f.read(max_bytes)
     except OSError:
-        return {"offset": offset, "lines": [], "size": size, "reset": False}
-    text = data.decode("utf-8", "replace")
+        return {"offset": offset, "lines": [], "size": size, "reset": reset}
+
+    # 只交出**完整的行**：找到最后一个 b"\n"，它之后的是半行，留给下次。
+    # 全在字节层做，不 decode、不 re-encode。
+    cut = data.rfind(b"\n")
+    if cut < 0:
+        # 整块里一个换行都没有（单行超过 48KB）：交出去，否则永远卡住。
+        # 解码时用 errors="replace"，只影响显示，不影响 offset。
+        body, consumed = data, len(data)
+    else:
+        body, consumed = data[:cut + 1], cut + 1
+
+    text = body.decode("utf-8", "replace")
     lines = text.splitlines()
-    # 最后一行可能没写完，不要吃掉它
-    if lines and not text.endswith("\n"):
-        lines = lines[:-1]
-        data = data[:len(data) - len(text.splitlines()[-1].encode("utf-8", "replace"))]
     return {
-        "offset": offset + len(data),
+        "offset": offset + consumed,
         "lines": lines,
         "size": size,
-        "reset": False,
+        "reset": reset,
     }
 
 
