@@ -69,7 +69,15 @@ MIN_INTERVAL = 0.10       # 最快 10Hz，和机器人推送同量级
 # "明显换了"的判据：血量百分比突然变高（换人上场通常是满血）。
 # 这比像素指纹稳 —— 实测同一只精灵帧间指纹距离能到 27.6，
 # 拿指纹判换人会每帧都触发。
-ID_INTERVAL = 1.5
+# 识别节流间隔（秒）。
+#
+# 实测（2026-11-21，本机）：RapidOCR 单次推理 4.7~6.4 秒，
+# 属性图标匹配两侧 330ms。所以**一次完整识别要 5~10 秒**。
+#
+# 原来设 1.5 秒，等于每次轮询都在跑识别，/api/state 响应到 7 秒。
+# 改成 20 秒：身份一回合内不会变，20 秒足够跟上换人，
+# 又不会让 UI 卡住。名字和属性各自还有更细的缓存（hud_ident 里）。
+ID_INTERVAL = 20.0
 _ident = {
     "at": 0.0,
     "foe": None,        # 种族名
@@ -96,18 +104,29 @@ def identify(now=None, foe_hp_pct=None):
     我方身份不需要识别 —— 队伍是 `my_team` 表里已知的 5 只，
     头像模板只有 4/5 只覆盖。所以优先按头像模板匹配，命中就是确定答案。
 
-    为什么不能每帧跑：立绘 ONNX 一次 80~120ms + OCR 一次 1~2 秒，
-    10Hz 会占满 CPU。而且身份在**一回合内不会变**，没必要重复认。
+    为什么不能每帧跑：RapidOCR 单次 4.7~6.4 秒 + 属性匹配 330ms，
+    一次完整识别要 5~10 秒。而身份**一回合内不会变**，没必要重复认。
     """
     now = now or time.time()
-    if now - _ident["at"] < ID_INTERVAL:
-        return _ident
-    _ident["at"] = now
 
-    # 换人检测：血量突然变高说明对面换了只满血的上场
+    # 换人检测要在节流之前算 —— 换人要立刻重识别
     prev_hp = _ident.get("foe_hp_at_id")
     changed = (foe_hp_pct is not None and prev_hp is not None
                and foe_hp_pct > prev_hp + 25)
+    if changed:
+        _ident["at"] = 0.0
+        try:
+            import hud_ident
+            hud_ident.clear_name_cache()
+        except Exception:
+            pass
+
+    if now - _ident["at"] < ID_INTERVAL:
+        return _ident
+
+    # 注意：这里**不立刻**写 at。识别失败时要保持 0，让下次请求继续重试；
+    # 识别成功后才写，避免"第一次失败 -> 卡 20 秒"。
+    _ident["at"] = now
 
     try:
         _scr, _p = _get()
@@ -153,11 +172,11 @@ def identify(now=None, foe_hp_pct=None):
     # 但我方是**我们自己的队伍**，名字就那 5 个，且 OCR 能读到。
     if _ident.get("self") is None:
         try:
-            name = _self_by_name(_scr)
+            name, conf = _self_by_name(_scr)
             if name:
                 _ident["self"] = name
-                _ident["self_conf"] = 1.0
-                _log("SELF -> %s (名字)" % name)
+                _ident["self_conf"] = conf
+                _log("SELF -> %s (名字 %.2f)" % (name, conf))
         except Exception:
             pass
 
@@ -210,7 +229,37 @@ def identify(now=None, foe_hp_pct=None):
             pass
 
     _ident["foe_hp_at_id"] = foe_hp_pct
+
+    # 识别失败（两边都没定下来）时不锁 20 秒窗口，让下次请求继续重试。
+    # 实测：刚开局 HUD 还没画出来，第一次必然失败；如果锁住 at，
+    # 就要等 20 秒才能再试，UI 一直显示"未知"。
+    if not _ident.get("foe") and not _ident.get("self"):
+        _ident["at"] = 0.0
+
     return _ident
+
+
+def reset_identity():
+    """战斗结束时清空身份缓存。
+
+    为什么需要（2026-11-21 实盘）
+    ----------------------------
+    `_ident` 是跨帧保留的（识别一次要用 1~4 秒，不能每帧跑）。
+    但战斗结束后它不会自动清，于是下一局开局会沿用上一局的答案：
+
+        实测 mode 已变 idle，但 /api/state 仍返回
+        me=银月狼王 / foe=月牙雪熊（上一局的对手）
+
+    所以 UI 一检测到 `battle=False` 就调这个。
+    """
+    _ident.update({
+        "at": 0.0,
+        "foe": None, "foe_conf": 0.0,
+        "self": None, "self_conf": 0.0,
+        "foe_hp_at_id": None,
+        "foe_types": [], "foe_candidates": [],
+        "foe_nickname": None, "foe_source": None, "foe_detail": {},
+    })
 
 
 def _in_my_team(name):
@@ -223,38 +272,41 @@ def _in_my_team(name):
 
 
 def _self_by_name(screen):
-    """读我方 HUD 名字，命中 my_team 才返回。
+    """读我方 HUD 名字 -> 种族名。
 
     为什么我方可以用名字而敌方不行
     ------------------------------
     敌方名字是**玩家自己改的昵称**（排位里全是"漆黑的冥古龙""黑武士"），
-    所以我方绝不能用名字当身份。
-    但我方是**我们自己的队伍**，就那 5 只，且 HUD 上印的是种族名。
-    实测 2026-11-21 实盘：读到 "冰钻布鲁斯" conf=1.0，正好在队伍里。
+    所以敌方绝不能用名字当身份。
+    但我方是**我们自己的队伍**，HUD 上印的是种族名，不会错。
 
-    唯一的风险是 OCR 把名字读成队伍外的另一只 —— 所以这里要求
-    **必须命中 my_team**，否则返回 None（宁可认不出，也不认错）。
+    两条路（2026-11-21 实盘修正）
+    ----------------------------
+    1. 名字命中 `my_team` -> 直接采信，置信度 1.0（最可靠）
+    2. 名字**不在** my_team 里 -> 仍然采信，但标置信度 0.8
+
+    为什么加第 2 条：实盘发现当前对战用的队伍和 `my_team` 表**不一致**
+    （表里是 5 只 60 级，实际打的是冥古龙 89 级 462 血）。
+    只认 my_team 会让识别一直返回 None，整个计算器等于失效。
+    而"我方名字 OCR 读到的就是种族名"这个前提依然成立 ——
+    风险只是 OCR 读错字，用词表最近邻（要求 conf>=0.85）已经挡掉大部分。
     """
     try:
         team = _my_team_hp()
-        if not team:
-            return None
         raw, conf = hud_ident.read_name(screen, "my",
                                        vocab=hud_ident._species_vocab())
         if not raw:
-            return None
-        # 名字条可能带 "60级" 之类后缀，先做包含匹配
+            return None, 0.0
+        # 1. 命中队伍
         for name in team:
-            if name and name in raw:
-                return name
-        # 再做词表最近邻
+            if name and (name in raw or raw == name):
+                return name, 1.0
+        # 2. 不在队伍里：要求高置信度才采信
         if conf >= 0.85:
-            for name in team:
-                if raw == name:
-                    return name
-        return None
+            return raw, 0.8
+        return None, 0.0
     except Exception:
-        return None
+        return None, 0.0
 
 
 def _my_team_hp():
@@ -391,6 +443,54 @@ def available():
         return False
 
 
+def warmup():
+    """后台预热：把首次请求的 24 秒冷启动挪到启动时。
+
+    ★ 实测（2026-11-21，真实游戏画面）
+    -----------------------------------
+        冷启动 observe   23958ms
+        第 2 次           6804ms
+        第 3 次            450ms
+        第 4 次            240ms
+
+    前三秒的 24 秒卡顿来自三件事的叠加：
+      1. ONNX 模型冷加载（首次 785ms，之后 140ms）
+      2. foe_hp.species() 首次查库（之后缓存）
+      3. 立绘识别区域的首次图像处理（JIT / 内存分配）
+
+    如果这段跑在 HTTP 请求里，前端第一次拉 /api/state 会超时
+    （ui_server 的 handler 默认没有超时保护，浏览器 6 秒就放弃了）。
+
+    所以在服务启动时用后台线程预热，请求进来时已经是热的。
+    """
+    if not available():
+        return False
+    try:
+        t0 = time.perf_counter()
+        _scr, perc = _get()
+        perc.observe()
+        # 再跑一次 identify（它内部有 1.5s 节流，这里强制重置）
+        _ident["at"] = 0.0
+        identify(now=time.time())
+        _cache["state"] = None
+        dt = (time.perf_counter() - t0) * 1000
+        try:
+            import config
+            config.log("standalone warmup: %.0fms" % dt)
+        except Exception:
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def start_warmup():
+    """异步预热，不阻塞调用方。"""
+    t = threading.Thread(target=warmup, daemon=True)
+    t.start()
+    return t
+
+
 def observe(force=False):
     """从屏幕读一帧状态，打包成和 live_state 同构的 dict。
 
@@ -413,6 +513,9 @@ def observe(force=False):
     # ---- 身份识别（节流 1.5s，失败不影响主流程）
     ident = {}
     try:
+        # 不在战斗时清空身份缓存，避免下一局沿用上一局的答案
+        if not raw.get("battle"):
+            reset_identity()
         ident = identify(now=now, foe_hp_pct=raw.get("foe_pct"))
     except Exception:
         ident = {}
@@ -439,6 +542,9 @@ def observe(force=False):
             if not foe_types:
                 foe_types = FH.types_of(foe_name) or []
             foe_hp_range = FH.hp_band(foe_name)
+            # 契约要求 list（前端 `hp_range.join()` 会炸在 tuple 上）
+            if foe_hp_range:
+                foe_hp_range = list(foe_hp_range)
             foe_max = FH.max_hp(foe_name)
     except Exception:
         pass

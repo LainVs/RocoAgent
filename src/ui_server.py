@@ -1484,6 +1484,17 @@ def main():
     srv.daemon_threads = True
     url = "http://127.0.0.1:%d/%s" % (args.port, args.page)
 
+    # 后台预热独立感知。
+    #
+    # 实测冷启动 24 秒（ONNX 冷加载 + 首查库 + 图像处理），
+    # 如果这段跑在 HTTP 请求里，前端第一次拉 /api/state 会超时
+    # （浏览器 6 秒就放弃）。预热后请求进来时已经是热的（240ms）。
+    try:
+        import standalone
+        standalone.start_warmup()
+    except Exception:
+        pass
+
     print("RocoAgent 前端")
     print("  目录  %s" % UI)
     print("  地址  %s" % url)
