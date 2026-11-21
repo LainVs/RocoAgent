@@ -440,6 +440,59 @@ def ensure_server(port):
 
 
 # ============================================================ 主流程
+def _pid_alive(pid):
+    """进程是否还活着（Windows 安全版）。
+
+    为什么不用 os.kill(pid, 0)
+    ---------------------------
+    CPython 在 Windows 上把 os.kill 实现成
+        OpenProcess(...) -> TerminateProcess(handle, sig)
+    也就是说 `os.kill(pid, 0)` 会**真的把那个进程杀掉**（退出码 0）。
+    所以这里必须走 OpenProcess + GetExitCodeProcess。
+    """
+    import ctypes
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    STILL_ACTIVE = 259
+    try:
+        k = ctypes.windll.kernel32
+        h = k.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, int(pid))
+        if not h:
+            return False
+        try:
+            code = ctypes.c_ulong()
+            if not k.GetExitCodeProcess(h, ctypes.byref(code)):
+                return False
+            return code.value == STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    except Exception:
+        return False
+
+
+def _single_instance(pidfile):
+    """保证只有一个悬浮窗。
+
+    桌面快捷方式很容易被连点两次，以前的结果是**开出两个悬浮窗**叠在一起
+    （ui.py 只复用服务，不复用 overlay）。这里用 pid 文件挡住第二次。
+
+    返回 None 表示可以继续；返回 pid 表示已经有一个在跑。
+    """
+    try:
+        with open(pidfile, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except Exception:
+        pid = 0
+    if pid > 0 and _pid_alive(pid):
+        return pid
+    try:
+        os.makedirs(os.path.dirname(pidfile), exist_ok=True)
+        with open(pidfile, "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
+    return None
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8770)
@@ -449,6 +502,25 @@ def main():
     ap.add_argument("--page", default="index.html")
     args = ap.parse_args()
 
+    pidfile = os.path.join(ROOT, "logs", "overlay.pid")
+    running = _single_instance(pidfile)
+    if running:
+        print("悬浮窗已在运行（pid %d），不重复启动。" % running)
+        print("  要重启就先结束它，或删除 %s" % pidfile)
+        return 0
+    try:
+        return _run(args)
+    finally:
+        try:
+            # 只删自己写的，避免误删另一个实例的
+            with open(pidfile, encoding="utf-8") as f:
+                if int(f.read().strip()) == os.getpid():
+                    os.remove(pidfile)
+        except Exception:
+            pass
+
+
+def _run(args):
     if args.url:
         url = args.url
     else:
