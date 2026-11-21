@@ -35,20 +35,52 @@ NEW_GROUP = 0x00000200
 NO_WINDOW = 0x08000000
 
 
-def running(match="robot\\.py"):
-    """返回命令行里匹配 match 的进程 PID 列表。"""
+def running(match=r"(^|[\\\s])robot\.py(\s|$)"):
+    """返回**真的在跑 robot.py** 的进程 PID 列表。
+
+    ⚠ 别再用宽松正则匹配整个命令行（2026-11-21 自伤事故）
+    --------------------------------------------------
+    原来用 `robot\\.py` 匹配 `CommandLine`。而 `opencode run --session ... --auto "<很长的提示词>"`
+    的命令行**包含整个提示词**。我给并行会话发的协调消息里提到了
+    "robot.py"，于是三个 opencode 进程全被认成 robot：
+
+        opencode.exe run --session ses_xxx --auto "【主会话协调请求】...robot.py..."
+
+    结果 `run_bot.py --supervisor` 直接说"已经在跑"并退出，机器人根本起不来。
+
+    现在的判据：
+      1. 命令行里 `robot.py` 前后必须是分隔符（行首/反斜杠/空白 + 空白/结尾）
+      2. 并且命令行**必须同时包含 python 可执行文件**（robot.py 是用 python 跑的）
+
+    这样 `--auto "…robot.py…"` 那种（前面是空格、后面是中文标点）
+    仍可能误中第 1 条，但第 2 条会挡住 —— opencode.exe 不是 python。
+    """
     try:
         out = subprocess.run(
             ["powershell", "-NoProfile", "-Command",
              "Get-CimInstance Win32_Process | "
              "Where-Object { $_.CommandLine -match '%s' } | "
-             "ForEach-Object { $_.ProcessId }" % match],
+             "ForEach-Object { \"$($_.ProcessId)|$($_.Name)|$($_.CommandLine)\" }"
+             % match],
             capture_output=True, timeout=30,
             creationflags=NO_WINDOW)
         text = (out.stdout or b"").decode("utf-8", "replace")
-        return [int(x) for x in text.split() if x.strip().isdigit()]
     except Exception:
         return []
+    pids = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or "|" not in line:
+            continue
+        pid_s, _, rest = line.partition("|")
+        name, _, cmd = rest.partition("|")
+        if not pid_s.strip().isdigit():
+            continue
+        # 必须是 python 进程（robot.py 由 python 执行，opencode.exe 不是）
+        if "python" not in name.lower():
+            continue
+        pids.append(int(pid_s.strip()))
+    return pids
 
 
 def start():
