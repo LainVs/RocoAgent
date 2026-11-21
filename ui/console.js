@@ -1008,8 +1008,27 @@ async function refreshTurns() {
   } catch (e) {
     return;
   }
-  const rows = (d.items || []).slice().reverse();
   const tb = $('turnsTbl').querySelector('tbody');
+  const raw = d.items || [];
+  // turns.jsonl 是**轮询日志**：同一个回合每帧都会写一行（docs/AGENTS.md）。
+  // 直接倒序显示会看到"T3 SKILL 1"重复 5 次，用户会以为机器人连按了 5 次。
+  // 按 (mid, turn, 血量, 动作) 去重，保留最新的一条。
+  const seen = new Set();
+  const rows = [];
+  for (let i = raw.length - 1; i >= 0; i -= 1) {
+    const r = raw[i];
+    const key = [r.mid, r.turn, r.my_pct, r.foe_pct,
+      JSON.stringify(r.action || [])].join('|');
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rows.push(r);
+  }
+  const sub = $('turnsSub');
+  if (sub) {
+    sub.textContent = raw.length === rows.length
+      ? `最近 ${rows.length} 条`
+      : `最近 ${raw.length} 条轮询 → ${rows.length} 手（已去重）`;
+  }
   if (!rows.length) {
     tb.innerHTML = `<tr><td colspan="7" class="muted">还没有回合记录</td></tr>`;
     return;
