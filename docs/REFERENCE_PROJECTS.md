@@ -94,9 +94,80 @@ roco-cal 是自定义枚举）。
 | 4 | 性格反推 | RocoNatureCalc | 用伤害+血量变化推 ±20%/−10%，收窄防御区间 | 中，依赖伤害读数精度 |
 | 5 | 特性条件表（人类可读） | 9178 `calcAtkTraitMult` | 与 #1 交叉校验 | 小 |
 
-**获取方式备忘**：`raw.githubusercontent.com` 与 `codeload` 在本机不通；
-`api.github.com` 可用但限额 60 次/小时（未认证）。**265 个文件要分几次拉**，
-或者等有 GitHub token 时一次性拉。
+**获取方式备忘**（2026-11-21 更新）：`raw.githubusercontent.com` 与 `codeload`
+走 Clash 代理（`127.0.0.1:7897`）时**可用但不稳定**，会随机报
+`SSL: UNEXPECTED_EOF_WHILE_READING` 或 `early EOF`。对策：
+
+| 方式 | 稳定性 | 用在哪 |
+|---|---|---|
+| `git clone` | ❌ 会超时/early EOF | 别用 |
+| `codeload` tar.gz | ❌ 常返回 0 字节 | 别用 |
+| `api.github.com` contents | ✅ 稳定，但限额 60 次/小时（未认证） | `scripts/gh_fetch.py` |
+| `raw.githubusercontent.com` | ⚠️ 需重试 | `scripts/raw_get.py`（6 次重试） |
+
+`gh_fetch.py` 会自动处理 >1MB 的文件（转 raw 下载），`raw_get.py` 专门补大文件
+和根目录单文件。两个脚本都写死了代理端口。
+
+---
+
+## 六、2026-11-21 新增：效果系统相关项目
+
+### 6.1 NRC_AI（`ColinHong10/NRC_AI`）— **MIT，最高价值**
+
+已拉取到 `data/external/nrc-ai/`（2.44 MB / 54 文件）。
+
+| 项 | 内容 |
+|---|---|
+| 效果原语 | 100+ 种，数据驱动，零硬编码 |
+| 技能效果 | 472 / 495 已配置 |
+| 特性效果 | 68 / 170 |
+| 印记系统 | 12 种，完整实现 |
+| 战斗引擎 | `battle.py` 1869 行 |
+| AI | MCTS，150 次模拟/回合 |
+| 测试 | 14 文件 / 107 用例 |
+| 数据库 | `nrc.db`：461 精灵 / 491 技能 / 20433 关联 |
+
+**为什么重要**：我们的 `simulator.py` 只算伤害（504 行，没有任何效果）。
+NRC_AI 是目前找到的最完整的效果引擎，且 MIT 允许直接移植。
+
+**我们队伍的覆盖**：19 个技能 17 个已配置；5 个特性 4 个已配置
+（缺的只有「月蚀」「撞鬼」和「铭记于月亮」——后两者上游都承认未实现）。
+
+**已知缺陷**：自动生成部分有漏（筛管奔流缺"生命>80% 威力+75"、
+丢冰块缺"敌方速度-30"）。roco-cal 的数据更全，两者互补。
+详见 `data/external/nrc-ai/VERSION.md`。
+
+### 6.2 rocom-helper 解包数据（`innovationb1ue/rocom-helper`）— 未声明许可
+
+已拉取 `data/game/` 到 `data/external/rocom-helper/`（24.71 MB / 19 文件）。
+
+**只作数据参考，不复制代码**（无 LICENSE）。
+
+补上了我们缺的维度：
+
+| 文件 | 大小 | 内容 |
+|---|---|---|
+| `buff_map.json` | 871 KB | Buff 定义 1925 条 |
+| `buffbase_map.json` | 1.1 MB | Buff 基础定义 1879 条 |
+| `special_move_map.json` | 841 KB | 特殊招式 1443 条 |
+| `innate_skills.json` | 140 KB | 先天技能 |
+| `battle_config.json` | 71 KB | 战斗参数 |
+| `weather_map.json` | 6 KB | 天气定义 |
+
+数据来自 **BinData 解包**（不是爬 wiki），结构更接近游戏内部。
+但生成于 **2026-04-13**，比 roco-cal 的 S5 旧 —— 冲突时以 roco-cal 为准。
+
+可删项：`opcode_pb_map.json` / `pb_message_index.json` / `proto_schema.json`
+（抓包协议用，我们不监听流量，共约 4.5 MB）。
+
+### 6.3 其他评估过但没拉的
+
+| 项目 | 原因 |
+|---|---|
+| `XxK1rito/Luokepvp-public` | 公开版 runtime 依赖未开源的 db，且功能与我们重叠 |
+| `AguaC1/rkhelper` | 阵容编辑 + 对战计算，重叠度高 |
+| `SUENAGA-cn/Roco-AI-Battle` | 基于 MAA，偏自动化框架，效果数据仅 270 技能 |
+| `floranix/rocom-data-source` | 只是官方图鉴爬虫，数据我们已有 |
 
 ---
 

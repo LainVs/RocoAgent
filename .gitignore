@@ -54,6 +54,24 @@ board.json
 # 对面头像模板：之前被 *.png 规则误排除，导致 71 张模板从未入库
 !assets/portraits_foe/*.png
 
+# ------------------------------------------------------------------ 外部资产（nrc-ai）
+# MIT 许可的效果引擎（技能/特性效果、印记、MCTS）。
+# 见 data/external/nrc-ai/VERSION.md
+!data/external/nrc-ai/**
+!data/external/nrc-ai/data/*.db
+
+# ------------------------------------------------------------------ 外部资产（rocom-helper）
+# 只留 data/game 的解包数据（buff/innate/special_move 是我们缺的维度）。
+# 上游无 LICENSE，仅作数据参考，不复制代码。
+!data/external/rocom-helper/data/game/*.json
+
+# ------------------------------------------------------------------ 外部资产（rocom-data）
+# 玩家阵容（169 套）+ 人工战术 YAML。上游无 LICENSE，仅作参考。
+# 图片模板（assets/*.png）不入库，体积大且我们用不上。
+!data/external/rocom-data/data/**
+!data/external/rocom-data/*.py
+!data/external/rocom-data/docs/**
+
 # live state (runtime artifact, written every frame by robot)
 logs/live_state.json
 logs/live_state.json.tmp
