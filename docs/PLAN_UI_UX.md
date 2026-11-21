@@ -259,9 +259,45 @@ python src\test_ui.py                 # 127 项，约 90 秒，含真实渲染
 **基线（本轮结束）**：`test_ui.py` 127 项、`--no-dom` 91 项、
 其余三个脚本 ALL PASS。
 
+> **DOM 组有偶发失败**（2026-11-21 实测 1/4 概率）：`roco_res_worker.py`
+> 子进程偶尔在 WebView2 初始化阶段崩掉，报 `Failed to unregister class
+> Chrome_WidgetWin_0`，那一组（6 项）整体判失败。连跑三次都全过，
+> 属于环境抖动不是代码问题。**看到 1 项失败先重跑一次再判断**，
+> 不要直接当成回归。
+
 ---
 
-## 四、明确不做
+## 五、本轮踩到的一次事故（记录，防再犯）
+
+改文档里的测试基线数字时，我用 PowerShell 做了「读进来 → 正则替换 →
+写回去」：
+
+```powershell
+# 危险，已造成损坏，靠 git checkout 恢复
+(Get-Content docs\PLAN_UI_UX.md -Raw) -replace '117 项', '127 项' |
+  Set-Content docs\PLAN_UI_UX.md -Encoding UTF8
+```
+
+结果文件里的中文被拆坏（`优化计划（2026` → `优化计划�?026`），
+diff 显示 138 增 / 180 删 —— 整份文件基本报废。
+
+**这正是 `AGENTS.md` 第 5.1 条明确禁止的操作**：PS 5.1 的
+`Get-Content` 按 cp936 解码无 BOM 的 UTF-8，遇到无法映射的字节
+直接丢字节填 `?`。
+
+正确做法（本次恢复后用的）：**`edit` 工具做精确替换**，或写 `.py`
+脚本显式 `encoding='utf-8'`。恢复方式：
+
+```powershell
+git checkout -- docs/PLAN_UI_UX.md    # 文件已入库，直接丢弃工作区改动
+```
+
+教训：**只要文件里有中文，就不要用 PowerShell 往返改写**，
+哪怕只是改一个数字。
+
+---
+
+## 六、明确不做
 
 - 不改悬浮窗的整窗 alpha 方案（CSS 固定 1.0，只改 Win32 层）—— 对比度恒定，是被实测证明过的。
 - 不改 `/api/stats` 的主口径（season 优先），只**增加** progress。
