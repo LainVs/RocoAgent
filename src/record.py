@@ -26,9 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STATE = os.path.join(ROOT, "logs", "record_state.json")
-# 逐场快照（append-only）。每判完一场一行，UI 用它算"今日/近 20 局"。
-# 和 STATE 是两件事：STATE 是基线，SNAP 是历史。
-SNAP = os.path.join(ROOT, "logs", "record_snapshots.jsonl")
+# 逐场快照（append-only）就放在 STATE 旁边，文件名固定为
+# record_snapshots.jsonl。不在这里定常量：测试会把 STATE 指到临时目录，
+# 快照必须跟着走（见 save_state）。
 
 OPEN_CLICK = (191, 943)          # 客户区：历史战绩按钮
 CLOSE_CLICK = (2012, 422)        # 客户区：面板右上角 X
@@ -155,7 +155,10 @@ def save_state(wins, losses):
     try:
         dw = int(wins) - int(prev[0]) if prev else 0
         dl = int(losses) - int(prev[1]) if prev else 0
-        with open(SNAP, "a", encoding="utf-8") as f:
+        # 快照跟着 STATE 走：测试会把 STATE 指到临时目录，
+        # 如果这里写死仓库路径，跑一次测试就会往真实历史里塞假数据。
+        snap = os.path.join(os.path.dirname(STATE), "record_snapshots.jsonl")
+        with open(snap, "a", encoding="utf-8") as f:
             f.write(json.dumps({"ts": ts, "wins": int(wins),
                                 "losses": int(losses),
                                 "dw": dw, "dl": dl},
