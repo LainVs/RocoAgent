@@ -46,10 +46,33 @@ def base_name(name):
     return _VARIANT.sub("", (name or "").strip()).strip()
 
 
-def label_of(fname):
-    n = os.path.splitext(fname)[0]
-    n = re.sub(r"#\d+$", "", n)
-    return n
+def label_of(fname, side="foe"):
+    """文件名 -> 真值种族名。
+
+    ★ 不能用文件名直接当标签
+    ------------------------
+    头像库里有历史遗留的英文名（wolf.png / wolf_leader.png），
+    它们通过 portrait 表映射到种族：
+        wolf.png        -> species_id 3011      -> 恶魔狼
+        wolf_leader.png -> species_id 13000152  -> 首领-恶魔狼
+
+    以前定标脚本直接 `re.sub(r"#\\d+$", "", 文件名)` 当标签，
+    于是把"wolf.png 识别成 恶魔狼"算成错误 —— 实际是**完全正确**的，
+    只是标签用错了命名空间。这会把准确率低估一大截。
+
+    现在优先查 portrait 表，查不到才退回文件名。
+    """
+    import portrait_db as P
+    base = os.path.splitext(fname)[0]
+    try:
+        sid = P.species_of(fname, side)
+        if sid:
+            nm = P.species_name(sid)
+            if nm:
+                return base_name(nm)
+    except Exception:
+        pass
+    return base_name(re.sub(r"#\d+$", "", base))
 
 
 def calibrate(directory, side="foe", show=15, compare=False):
@@ -65,7 +88,7 @@ def calibrate(directory, side="foe", show=15, compare=False):
     rows = []
     skipped = 0
     for f in files:
-        want = label_of(f)
+        want = label_of(f, side)
         if want in ("None", "none", ""):
             skipped += 1
             continue
@@ -195,7 +218,7 @@ def compare_template_channel(directory, rows, show=10):
                 continue
             if s > best:
                 best = s
-                best_name = base_name(label_of(files[j]))
+                best_name = rows[j]["want"]
         ok = (best_name == r["want"])
         hit += 1 if ok else 0
         if best >= 0.85:

@@ -56,6 +56,78 @@ _last = {"t": 0.0, "st": None}
 _cache = {"at": 0.0, "state": None}
 MIN_INTERVAL = 0.10       # 最快 10Hz，和机器人推送同量级
 
+# ---- 身份识别（可选，有代价）
+#
+# 立绘识别一次约 80~120ms，**不能每帧跑**（10Hz 会占满 CPU）。
+# 用两级缓存：
+#   1. 时间节流：最多每 1.5 秒识别一次
+#   2. 结果保持：识别到的名字一直用，直到"对面明显换了"才重认
+#
+# "明显换了"的判据：血量百分比突然变高（换人上场通常是满血）。
+# 这比像素指纹稳 —— 实测同一只精灵帧间指纹距离能到 27.6，
+# 拿指纹判换人会每帧都触发。
+ID_INTERVAL = 1.5
+_ident = {
+    "at": 0.0,
+    "foe": None,        # 种族名
+    "foe_conf": 0.0,
+    "self": None,
+    "self_conf": 0.0,
+    "foe_hp_at_id": None,
+}
+
+
+def identify(now=None, foe_hp_pct=None):
+    """识别双方身份。带节流和换人检测。返回 dict（永不抛异常）。
+
+    为什么不能每帧跑：立绘 ONNX 一次 80~120ms，10Hz 会占满 CPU。
+    而且身份在**一回合内不会变**，没必要重复认。
+    """
+    now = now or time.time()
+    if now - _ident["at"] < ID_INTERVAL:
+        return _ident
+    _ident["at"] = now
+
+    try:
+        import portrait_onnx as PO
+        if not PO.available():
+            return _ident
+    except Exception:
+        return _ident
+
+    # 换人检测：血量突然变高说明对面换了只满血的上场
+    prev_hp = _ident.get("foe_hp_at_id")
+    changed = (foe_hp_pct is not None and prev_hp is not None
+               and foe_hp_pct > prev_hp + 25)
+
+    try:
+        _scr, _p = _get()
+        if changed:
+            _ident["foe"] = None
+            _ident["foe_conf"] = 0.0
+        if _ident["foe"] is None:
+            res = PO.predict_region(_scr, "foe", topk=1)
+            if res:
+                name, conf = res[0]
+                # 置信度门槛：定标实测 conf>=0.90 时准确率 93.2%，
+                # 0.70~0.90 只有 55.6%（等于抛硬币），所以取 0.90。
+                if conf >= 0.90:
+                    _ident["foe"] = name
+                    _ident["foe_conf"] = float(conf)
+                else:
+                    _ident["foe_conf"] = float(conf)
+        if _ident["self"] is None:
+            res = PO.predict_region(_scr, "self", topk=1)
+            if res:
+                name, conf = res[0]
+                if conf >= 0.90:
+                    _ident["self"] = name
+                    _ident["self_conf"] = float(conf)
+        _ident["foe_hp_at_id"] = foe_hp_pct
+    except Exception:
+        pass
+    return _ident
+
 
 def _get():
     """惰性初始化 Screen + Perc（导入很重，不要放在模块级）。"""
@@ -96,19 +168,50 @@ def observe(force=False):
             return {"error": "%s: %s" % (type(e).__name__, e),
                     "standalone": True}
 
-    # 组装成前端契约（字段名和 live_state.build 一致）
+    # ---- 身份识别（节流 1.5s，失败不影响主流程）
+    ident = {}
+    try:
+        ident = identify(now=now, foe_hp_pct=raw.get("foe_pct"))
+    except Exception:
+        ident = {}
+
+    my_name = ident.get("self")
+    foe_name = ident.get("foe")
+
+    # ---- 用身份查库，补齐血量绝对值 / 属性 / 伤害百分比
+    my_types, my_max, my_abs = [], None, None
+    foe_types, foe_hp_range, foe_max = [], None, None
+    try:
+        import foe_hp as FH
+        if my_name:
+            my_types = FH.types_of(my_name) or []
+            my_max = FH.max_hp(my_name)
+            if my_max and raw.get("my_pct") is not None:
+                my_abs = int(round(my_max * raw["my_pct"] / 100.0))
+        if foe_name:
+            foe_types = FH.types_of(foe_name) or []
+            foe_hp_range = FH.hp_band(foe_name)
+            foe_max = FH.max_hp(foe_name)
+    except Exception:
+        pass
+
+    # ---- 技能卡：有对面最大血量才能算百分比
     skills = []
     for i, s in enumerate(raw.get("skills") or [], 1):
         if not s:
             skills.append(None)
             continue
+        dmg = s.get("value")
+        pct = None
+        if dmg is not None and foe_max:
+            pct = round(100.0 * dmg / foe_max, 1)
         skills.append({
             "i": i,
             "name": None,          # 读不出名字（见模块文档）
             "element": None,
             "cost": None,
-            "dmg": s.get("value"),
-            "pct": None,           # 没有对面血量算不出百分比
+            "dmg": dmg,
+            "pct": pct,
             "usable": bool(s.get("lit", True)),
             "note": None,
             # 独立模式特有的原始读数，前端可以显示"卡 N: 175"
@@ -123,21 +226,21 @@ def observe(force=False):
         "turn": None,
         "clock": None,
         "me": {
-            "name": None,
-            "types": [],
+            "name": my_name,
+            "types": my_types,
             "hp_pct": raw.get("my_pct"),
-            "hp_abs": None,
-            "hp_max": None,
+            "hp_abs": my_abs,
+            "hp_max": my_max,
             "energy": raw.get("energy"),
             "energy_max": 10,
             "buffs": [],
             "trait": None,
         },
         "foe": {
-            "name": None,
-            "types": [],
+            "name": foe_name,
+            "types": foe_types,
             "hp_pct": raw.get("foe_pct"),
-            "hp_range": None,
+            "hp_range": foe_hp_range,
             "def_range": None,
             "nature": None,
             "nature_conf": None,
@@ -162,6 +265,11 @@ def observe(force=False):
         },
         # ★ 前端靠这个字段区分"机器人推的"和"我自己看的"
         "standalone": True,
+        # 身份识别的置信度（前端可用来显示"这个对手是猜的"）
+        "ident_conf": {
+            "self": round(ident.get("self_conf") or 0.0, 2),
+            "foe": round(ident.get("foe_conf") or 0.0, 2),
+        },
     }
     _cache["at"] = now
     _cache["state"] = st

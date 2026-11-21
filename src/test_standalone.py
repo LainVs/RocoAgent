@@ -171,6 +171,66 @@ def main():
         standalone._cache = {"at": 0.0, "state": None}
 
     print()
+    print("[7] 身份识别：节流 + 置信度门槛 + 换人检测")
+    old3 = dict(standalone._ident)
+    try:
+        standalone._ident.update({
+            "at": 0.0, "foe": None, "foe_conf": 0.0,
+            "self": None, "self_conf": 0.0, "foe_hp_at_id": None,
+        })
+        # 注入假的 portrait_onnx
+        import portrait_onnx as PO
+        real_avail, real_pred = PO.available, PO.predict_region
+        calls = {"n": 0}
+
+        def fake_pred(screen, side="foe", topk=3):
+            calls["n"] += 1
+            if side == "foe":
+                return [("水灵", 0.97)]
+            return [("音速犬", 0.95)]
+
+        try:
+            PO.available = lambda: True
+            PO.predict_region = fake_pred
+            standalone._screen = FakeScreen()
+            standalone._perc = standalone._perc  # 保持不变
+
+            # 第一次：应该识别
+            r1 = standalone.identify(now=1000.0, foe_hp_pct=100.0)
+            check(r1.get("foe") == "水灵", "识别到对面", str(r1.get("foe")))
+            check(r1.get("self") == "音速犬", "识别到我方", str(r1.get("self")))
+            check(r1.get("foe_conf") == 0.97, "记录置信度",
+                  str(r1.get("foe_conf")))
+
+            # 节流：0.5 秒后再调，不应该重新识别
+            n_before = calls["n"]
+            standalone.identify(now=1000.5, foe_hp_pct=100.0)
+            check(calls["n"] == n_before, "1.5s 内不重复识别",
+                  "%d -> %d" % (n_before, calls["n"]))
+
+            # 血量突然变高 -> 认为换人，清空重认
+            standalone.identify(now=1002.0, foe_hp_pct=100.0)
+            # 先降到 30 再跳回 100，模拟换人
+            standalone._ident["foe_hp_at_id"] = 30.0
+            r2 = standalone.identify(now=1004.0, foe_hp_pct=100.0)
+            check(r2.get("foe") == "水灵", "换人后重新识别",
+                  str(r2.get("foe")))
+
+            # 低置信度不采用
+            standalone._ident.update({"at": 0.0, "foe": None,
+                                      "foe_conf": 0.0})
+            PO.predict_region = lambda s, side="foe", topk=3: [
+                ("乱猜的", 0.60)]
+            r3 = standalone.identify(now=2000.0, foe_hp_pct=50.0)
+            check(r3.get("foe") is None, "置信 0.60 不采用（低于 0.90）",
+                  str(r3.get("foe")))
+        finally:
+            PO.available, PO.predict_region = real_avail, real_pred
+    finally:
+        standalone._ident.clear()
+        standalone._ident.update(old3)
+
+    print()
     if fails:
         print("%d FAILURE(S)" % fails)
         return 1
