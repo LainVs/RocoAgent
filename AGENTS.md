@@ -95,11 +95,15 @@ MCP 的 `Click`/`Move`/`App` 会动系统鼠标，**只允许用 `Screenshot`/`S
 | 目录 | License | 能做什么 |
 |---|---|---|
 | `roco-cal/` | MIT | 伤害公式 + S5 精灵数据的权威源 |
-| `nrc-ai/` | **MIT** | 效果引擎（197 原语、12 印记、472/495 技能配置） |
+| `nrc-ai/` | **MIT** | 效果引擎（197 原语、12 印记、491/491 技能配置） |
 | `rocom-helper/` | 无 | 只读数据（buff_map / innate_skills / special_move_map） |
 | `rocom-data/` | 无 | 只读数据 + 战术 YAML（169 套玩家阵容） |
+| `rocoarena/` | 无 | 天梯样本库快照（真实配法多样性，PIMC 信念来源） |
 
-无 LICENSE 的两个**只作数据参考，不要复制代码进 `src/`**。
+无 LICENSE 的几个**只作数据参考，不要复制代码进 `src/`**。
+
+**克制矩阵已三方交叉验证**（roco-cal、9178、ROCO ARENA 的 18×18 表），
+324/324 完全一致。注意 ROCO ARENA 的 `typeMultipliers[守][攻]` 方向是反的。
 
 `data/roco.sqlite3` 是主库（1228 只精灵）。与外部数据冲突时按 roco-cal。
 

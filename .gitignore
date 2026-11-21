@@ -72,6 +72,11 @@ board.json
 !data/external/rocom-data/*.py
 !data/external/rocom-data/docs/**
 
+# ------------------------------------------------------------------ 外部资产（rocoarena）
+# ROCO ARENA 天梯样本库快照（13 组/15 阵容）。无 LICENSE，仅作数据参考。
+!data/external/rocoarena/*.json
+!data/external/rocoarena/*.md
+
 # live state (runtime artifact, written every frame by robot)
 logs/live_state.json
 logs/live_state.json.tmp
