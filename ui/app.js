@@ -472,13 +472,42 @@ function renderBody(st) {
   loadAvatar($('foeAvatar'), foe.name, 'foe');
   typeChips($('foeTypes'), foe.types);
   $('foePct').textContent = foe.hp_pct == null ? '—' : Math.round(foe.hp_pct);
-  $('foeHpRange').textContent = foe.hp_range
-    ? `${foe.hp_range[0]}~${foe.hp_range[1]}` : '—';
-  $('foeDefRange').textContent = foe.def_range
-    ? `${foe.def_range[0]}~${foe.def_range[1]}` : '—';
+
+  // HP / 物防：优先显示 pvp_meta 的**概率分布**（同物种不同性格值不同）。
+  // 只有一个值就直接显示；多个值显示范围，明细放 title。
+  const hd = foe.hp_dist || [];
+  const dd = foe.def_dist || [];
+  const distTitle = (arr) => arr.length
+    ? arr.map(([v, p]) => `${v} ${Math.round(p * 100)}%`).join(' / ')
+    : '';
+  $('foeHpRange').textContent = hd.length
+    ? (hd.length === 1 ? String(hd[0][0])
+      : `${hd[0][0]}~${hd[hd.length - 1][0]}`)
+    : (foe.hp_range ? `${foe.hp_range[0]}~${foe.hp_range[1]}` : '—');
+  $('foeHpRange').title = hd.length ? distTitle(hd) : '';
+  $('foeDefRange').textContent = dd.length
+    ? (dd.length === 1 ? String(dd[0][0])
+      : `${dd[0][0]}~${dd[dd.length - 1][0]}`)
+    : (foe.def_range ? `${foe.def_range[0]}~${foe.def_range[1]}` : '—');
+  $('foeDefRange').title = dd.length ? distTitle(dd) : '';
   $('foeNature').textContent = foe.nature || '—';
+  $('foeNature').title = (foe.nature_dist || [])
+    .map(([k, p]) => `${k} ${Math.round(p * 100)}%`).join(' / ');
   $('foeConf').textContent = foe.nature_conf != null
     ? Math.round(foe.nature_conf * 100) + '%' : '';
+
+  // 可能携带的技能（pvp_meta 真实天梯携带率）。打架时"对面可能有什么技能"
+  // 比"对面叫什么"更有决策价值。
+  const ks = (foe.known_skills || []).slice(0, 6);
+  const ksEl = $('foeSkills');
+  if (ksEl) {
+    ksEl.hidden = !ks.length;
+    ksEl.innerHTML = ks.length
+      ? '<em>可能技能</em>' + ks.map((k) =>
+        `<b>${k.name}</b><span class="kprob">${Math.round(k.prob * 100)}%</span>`
+      ).join('')
+      : '';
+  }
 
   $('foeBar').dataset.lvl = hpLevel(foe.hp_pct);
   const foeP = foe.hp_pct == null ? 0 : foe.hp_pct / 100;
@@ -508,6 +537,14 @@ function renderBody(st) {
     lastSkillSig = skillSig;
     wrap.innerHTML = '';
     const slotList = (st.skills || []).map((s, i) => s || { i: i + 1 });
+    // 占比优先显示**概率区间**（对面 HP 由性格决定，不是单点）。
+    const pctText = (s) => {
+      if (s.pct_lo != null && s.pct_hi != null
+          && Math.round(s.pct_lo) !== Math.round(s.pct_hi)) {
+        return `${Math.round(s.pct_lo)}~${Math.round(s.pct_hi)}%`;
+      }
+      return s.pct != null ? Math.round(s.pct) + '%' : '—';
+    };
     slotList.forEach((s, i) => {
       const na = s.dmg == null;
       const idx = s.i != null ? s.i : i + 1;
@@ -529,8 +566,9 @@ function renderBody(st) {
           s.stale ? '<span class="sk-stale">上回合</span>' : ''}${
           meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>
         <span class="sk-dmg">${na ? '—' : s.dmg}</span>
-        <span class="sk-pct">${na ? (s.note || '—')
-          : (s.pct != null ? Math.round(s.pct) + '%' : '—')}</span>
+        <span class="sk-pct" title="${s.pct_kill != null
+          ? `斩杀当前血量概率 ${Math.round(s.pct_kill * 100)}%` : ''}">${
+          na ? (s.note || '—') : pctText(s)}</span>
         <span class="sk-bar"><i></i></span>
       `;
       wrap.appendChild(row);

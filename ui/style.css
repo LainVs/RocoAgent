@@ -819,6 +819,36 @@ input[type="range"]::-webkit-slider-thumb {
 }
 .infer2 { margin-top: 6px; }
 
+/* 可能技能：来自 pvp_meta 的真实天梯携带率。
+   一行放不下会自动换行，面板高度由 fit_window 自动贴合。 */
+.infer3 {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 3px 6px;
+  margin-top: 6px;
+  font-size: 10px;
+  color: var(--ink-2);
+  text-shadow: var(--halo);
+}
+.infer3[hidden] { display: none; }
+.infer3 em {
+  font-style: normal;
+  font-size: 9.5px;
+  color: var(--ink-3);
+  margin-right: 2px;
+}
+.infer3 b {
+  font-weight: 500;
+  color: var(--ink-1);
+}
+.infer3 .kprob {
+  font-family: var(--font-num);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-3);
+  margin-right: 3px;
+}
+
 .kv { display: inline-flex; align-items: baseline; gap: 5px; }
 .kv em {
   font-style: normal;

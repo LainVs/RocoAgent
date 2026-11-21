@@ -225,6 +225,8 @@ class Bot:
         # 上一手读到的技能卡（对面上回合时技能栏不画，UI 不能清空 -> 会闪）
         self._skill_hold = None
         self._skill_hold_at = 0.0
+        # 最近一次看到技能栏的时间（判断"是否还在对局里"的主判据）
+        self._last_bar_at = 0.0
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -671,6 +673,9 @@ class Bot:
             # borders were being counted as matches, producing 8-second 'games'
             # with one action.
             live = bool(st["battle"] and (st["bar"] or st["countdown"]))
+            # 技能栏一出现就记时间：它是"还在对局里"的最强证据
+            if st.get("bar"):
+                self._last_bar_at = now
             if st["battle"]:
                 self.last_battle_at = now
                 self.battle_false_since = None
@@ -737,6 +742,7 @@ class Bot:
                         self._still_fp = None
                         self._still_at = 0.0
                         self._my_none_since = None
+                        self._last_bar_at = now
                         log("=== MATCH %d START %s ===" % (
                             self.match_count, time.strftime("%H:%M:%S")))
                 self._battle_tick(st, now)
@@ -777,10 +783,12 @@ class Bot:
                 #   · 大厅的"开始挑战"按钮
                 #   · 结算页的"退出"按钮（排除 VS 准备页，它也有白胶囊）
                 # 两者都没有 = 只是对面的回合，**什么都不做**（也绝不点按钮）。
-                # 我方血条是**我们自己的 HUD**，战斗中一直都在（包括对面的
-                # 回合/出招动画）。它连续消失 = 已经不在对局里（结算页/大厅/
-                # 奖励页）。这比"画面静止"可靠得多 —— 角色有呼吸动画，
-                # 4x3 指纹也会变，实测结算页静止判据 5 分钟都没触发。
+                # 技能栏是"我方回合"的最强证据：一局里每个回合都会画一次。
+                # 25 秒没画 = 已经不在对局里（结算页/大厅/奖励页）。
+                # 这比"我方血条消失"可靠：4:3 下血条经常读不到，
+                # 实测一场正常对局里 me=None 能连续出现 20 秒以上。
+                if st["bar"]:
+                    self._last_bar_at = now
                 if st["my_pct"] is None:
                     if getattr(self, "_my_none_since", None) is None:
                         self._my_none_since = now
@@ -800,10 +808,18 @@ class Bot:
                             ended = "result"
                     except Exception:
                         ended = None
-                    # ---- HUD 消失兜底（2026-11-22）
+                    # ---- 技能栏 25 秒没画：主判据（2026-11-22）
+                    #
+                    # 一局里每个我方回合都会画技能栏。25 秒没画，只可能是
+                    # 已经不在对局里（结算页/大厅/奖励页）。
+                    if not ended and now - getattr(self, "_last_bar_at", now) > 25.0:
+                        ended = "no bar 25s"
+                    # ---- HUD 消失兜底（40 秒）
+                    # 4:3 下血条会连续读不到，所以只当长兜底，不能当主判据
+                    # （12 秒版实测把一场还在进行的对局误判结束了）。
                     if not ended and getattr(self, "_my_none_since", None) is not None \
-                            and now - self._my_none_since > 12.0:
-                        ended = "hud gone"
+                            and now - self._my_none_since > 40.0:
+                        ended = "hud gone 40s"
                     # ---- 画面静止兜底（2026-11-22）
                     #
                     # 有些结算/奖励页既没有"开始挑战"也没有"退出"按钮
@@ -1095,6 +1111,30 @@ class Bot:
                 except Exception:
                     pass
 
+            # ---- PvP 大数据分布（pvp_meta）
+            #
+            # 区间只能给"最低~最高"，但真实配法是有权重的。这里给出
+            # 性格 / 血量 / 物防 / 技能携带的完整分布，前端可以显示
+            # "中位 42%（38%~49%）"而不是一个干巴巴的区间。
+            hp_dist = def_dist = nature_dist = None
+            nature_top = None
+            known_skills = None
+            meta_n = 0
+            if foe_name:
+                try:
+                    import pvp_meta as PM
+                    meta_n = PM.sample_size(foe_name)
+                    if meta_n:
+                        hp_dist = PM.hp_dist(foe_name)
+                        def_dist = PM.def_dist(foe_name)
+                        nature_dist = PM.nature_dist(foe_name)
+                        nature_top = nature_dist[0] if nature_dist else None
+                        known_skills = [
+                            {"name": k, "prob": round(p, 4)}
+                            for k, p in PM.carry_rates(foe_name, top=8)]
+                except Exception:
+                    pass
+
             # 四张卡：机器人只读卡面伤害数字，**不读技能名**
             # （digitread.read_skill 返回的 text 是 "245" 这种数字，不是名字）
             # 所以这里绝不编造技能名，名字留 None，前端显示序号
@@ -1110,6 +1150,29 @@ class Bot:
                     base = sum(hp_range) / 2.0
                     if base > 0:
                         pct = 100.0 * dmg / base
+
+                # ---- 占比的概率分布（pvp_meta）
+                #
+                # 对面的 HP 不是单点：性格决定 +HP/中性/-HP（1.2/1.0/0.9），
+                # 所以"这一下打掉多少血"本身是一个分布。pct 用中位数，
+                # 另外给 p10/p90 和"够不够斩杀当前血量"的概率。
+                pct_lo = pct_mid = pct_hi = pct_kill = None
+                if dmg and foe_name:
+                    try:
+                        import pvp_meta as PM
+                        _d = PM.pct_dist(foe_name, dmg)
+                        if _d:
+                            pct_lo, pct_mid, pct_hi = (_d["lo"], _d["mid"],
+                                                       _d["hi"])
+                            pct = pct_mid
+                            if foe_pct is not None:
+                                hit = 0.0
+                                for hp, prob in _d["hp_dist"]:
+                                    if dmg >= hp * foe_pct / 100.0:
+                                        hit += prob
+                                pct_kill = round(hit, 4)
+                    except Exception:
+                        pass
 
                 # 卡片状态
                 if kind == "absent":
@@ -1130,6 +1193,8 @@ class Bot:
                     pct=pct,
                     usable=bool(s.get("lit", True)) and dmg is not None,
                     note=note,
+                    pct_lo=pct_lo, pct_mid=pct_mid, pct_hi=pct_hi,
+                    pct_kill=pct_kill,
                 ))
 
             # 技能卡只在**我方回合**画出来（对面出招/动画期间技能栏是空的）。
@@ -1266,6 +1331,12 @@ class Bot:
                     name=foe_name, types=foe_types,
                     hp_pct=foe_pct,
                     hp_range=hp_range, def_range=def_range,
+                    hp_dist=hp_dist, def_dist=def_dist,
+                    nature_dist=nature_dist,
+                    nature=nature_top[0] if nature_top else None,
+                    nature_conf=nature_top[1] if nature_top else None,
+                    known_skills=known_skills,
+                    sample_n=meta_n,
                 ),
                 skills=skills,
                 matchup=matchup,
@@ -3339,12 +3410,30 @@ class Bot:
                 # 但"永久放弃"也会死锁：实测 23:28 / 23:30 两次 cap 之后
                 # 画面其实换了（state 从 foe=None 变成 foe=92.2），
                 # 只是我们不再点，于是白等 60s 触发 STUCK。
-                # 折中：**画面指纹变了才重置**（同一画面绝不重复点）。
+                #
+                # 折中：**只有"稳定的新画面"才重置**（同一画面绝不重复点）。
+                #
+                # ⚠ 2026-11-22 实测：直接"指纹变了就重置"会无限点。
+                # 结算页上角色有待机/呼吸动画，指纹一直在变，于是
+                # advance_count 每帧清零，00:57:28~00:58:11 连点了
+                # 几十次（click 12 -> 1 -> 5 -> 8 -> 12 ...）。
+                # 现在要求新指纹**连续 2 秒不变**才算真的翻页：
+                # 动画帧永远稳定不下来，所以不会重置。
                 fp = self._screen_fingerprint()
-                if fp != getattr(self, "_advance_fp", None):
+                base = getattr(self, "_advance_fp", None)
+                if base is None:
                     self._advance_fp = fp
-                    self.advance_count = 0
-                    self.advance_gave_up = False
+                elif fp != base:
+                    if fp != getattr(self, "_advance_cand", None):
+                        self._advance_cand = fp
+                        self._advance_cand_at = now
+                    elif now - getattr(self, "_advance_cand_at", now) > 2.0:
+                        self._advance_fp = fp
+                        self._advance_cand = None
+                        self.advance_count = 0
+                        self.advance_gave_up = False
+                else:
+                    self._advance_cand = None
                 if self.advance_count >= 12:
                     if not self.advance_gave_up:
                         self.advance_gave_up = True

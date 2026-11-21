@@ -787,6 +787,25 @@ def observe(force=False):
     except Exception:
         pass
 
+    # ---- PvP 大数据分布（pvp_meta）：性格 / 血量 / 物防 / 技能携带
+    hp_dist = def_dist = nature_dist = None
+    nature_top = None
+    known_skills = None
+    meta_n = 0
+    if foe_name:
+        try:
+            import pvp_meta as PM
+            meta_n = PM.sample_size(foe_name)
+            if meta_n:
+                hp_dist = PM.hp_dist(foe_name)
+                def_dist = PM.def_dist(foe_name)
+                nature_dist = PM.nature_dist(foe_name)
+                nature_top = nature_dist[0] if nature_dist else None
+                known_skills = [{"name": k, "prob": round(p, 4)}
+                                for k, p in PM.carry_rates(foe_name, top=8)]
+        except Exception:
+            pass
+
     # ---- 技能卡：有对面最大血量才能算百分比
     #
     # 分母用 `hp_band` 的**上限**（对手可能点满 + 生命性格），
@@ -820,8 +839,27 @@ def observe(force=False):
             continue
 
         pct = None
-        if dmg is not None and foe_hp_hi:
-            pct = round(100.0 * dmg / foe_hp_hi, 1)
+        pct_lo = pct_mid = pct_hi = pct_kill = None
+        if dmg is not None:
+            # 优先用 pvp_meta 的分布（对面 HP 由性格决定，是一个分布）
+            _d = None
+            if foe_name:
+                try:
+                    import pvp_meta as PM
+                    _d = PM.pct_dist(foe_name, dmg)
+                except Exception:
+                    _d = None
+            if _d:
+                pct_lo, pct_mid, pct_hi = _d["lo"], _d["mid"], _d["hi"]
+                pct = pct_mid
+                if raw.get("foe_pct") is not None:
+                    hit = 0.0
+                    for hp, prob in _d["hp_dist"]:
+                        if dmg >= hp * raw["foe_pct"] / 100.0:
+                            hit += prob
+                    pct_kill = round(hit, 4)
+            elif foe_hp_hi:
+                pct = round(100.0 * dmg / foe_hp_hi, 1)
         skills.append({
             "i": i,
             "name": None,          # 读不出名字（见模块文档）
@@ -831,6 +869,8 @@ def observe(force=False):
             "pct": pct,
             "usable": bool(s.get("lit", True)) and dmg is not None,
             "note": None,
+            "pct_lo": pct_lo, "pct_mid": pct_mid, "pct_hi": pct_hi,
+            "pct_kill": pct_kill,
             # 独立模式特有的原始读数，前端可以显示"卡 N: 175"
             "_text": s.get("text"),
             "_kind": s.get("kind"),
@@ -904,9 +944,15 @@ def observe(force=False):
             "hp_pct": raw.get("foe_pct"),
             "hp_range": foe_hp_range,
             "def_range": _foe_def_range(foe_name),
-            "nature": None,
-            "nature_conf": None,
-            "known_skills": [],
+            "nature": nature_top[0] if nature_top else None,
+            "nature_conf": nature_top[1] if nature_top else None,
+            "known_skills": known_skills or [],
+            # ---- PvP 大数据分布（pvp_meta）
+            "hp_dist": [[int(v), round(float(p), 4)] for v, p in (hp_dist or [])],
+            "def_dist": [[int(v), round(float(p), 4)] for v, p in (def_dist or [])],
+            "nature_dist": [[str(k), round(float(p), 4)]
+                            for k, p in (nature_dist or [])],
+            "sample_n": int(meta_n or 0),
             # 属性过滤后的候选（识别没定下来时 UI 显示"候选：A / B"）
             "candidates": foe_cands,
             "ident_source": foe_src,

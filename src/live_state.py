@@ -114,7 +114,9 @@ def me_block(name=None, types=None, hp_pct=None, hp_abs=None, hp_max=None,
 
 def foe_block(name=None, types=None, hp_pct=None,
               hp_range=None, def_range=None,
-              nature=None, nature_conf=None, known_skills=None):
+              nature=None, nature_conf=None, known_skills=None,
+              hp_dist=None, def_dist=None, nature_dist=None,
+              sample_n=None):
     return {
         "name": name,
         "types": list(types or []),
@@ -125,11 +127,20 @@ def foe_block(name=None, types=None, hp_pct=None,
         "nature": nature,
         "nature_conf": _num(nature_conf),
         "known_skills": list(known_skills or []),
+        # ---- PvP 大数据（pvp_meta）：概率分布而不是单点 ----
+        # hp_dist/def_dist: [[值, 概率], ...] 按值升序
+        # nature_dist:      [[性格, 概率], ...] 按概率降序
+        # sample_n:         这个物种的天梯样本数（0 = 没数据，前端不要编造）
+        "hp_dist": [[int(v), round(float(p), 4)] for v, p in (hp_dist or [])],
+        "def_dist": [[int(v), round(float(p), 4)] for v, p in (def_dist or [])],
+        "nature_dist": [[str(k), round(float(p), 4)] for k, p in (nature_dist or [])],
+        "sample_n": None if sample_n is None else int(sample_n),
     }
 
 
 def skill_block(i, name=None, element=None, cost=None,
-                dmg=None, pct=None, usable=True, note=None):
+                dmg=None, pct=None, usable=True, note=None,
+                pct_lo=None, pct_mid=None, pct_hi=None, pct_kill=None):
     return {
         "i": i,
         "name": name,
@@ -139,6 +150,12 @@ def skill_block(i, name=None, element=None, cost=None,
         "pct": _pct(pct),
         "usable": bool(usable),
         "note": note,
+        # 伤害占比的概率分布（对面 HP 不确定 -> 占比不确定）
+        "pct_lo": _pct(pct_lo),
+        "pct_mid": _pct(pct_mid),
+        "pct_hi": _pct(pct_hi),
+        # 这一下 >= 对面当前血量的概率（斩杀率）
+        "pct_kill": _num(pct_kill),
     }
 
 
