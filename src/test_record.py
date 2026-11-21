@@ -177,6 +177,31 @@ def test_real_state_file():
             check(False, "diff 抛异常: %s: %s" % (type(e).__name__, e))
 
 
+def test_parse_text_order():
+    """OCR 顺序不固定 + 多余数字（2026-11-22 实测错乱）"""
+    import record as R
+    cases = [
+        ("胜利 140 失败 161", (140, 161)),
+        ("胜利 失败 140 161", (140, 161)),
+        ("失败 161 胜利 140", (140, 161)),
+        ("胜利140失败161", (140, 161)),
+        # 下面三种是真实踩过的：OCR 多读出了段位/时间里的数字，
+        # 旧逻辑"靠前的关键词配第一个数字"会把胜败串位
+        # （实测 before=143 after=168 / before_losses=168 after_losses=14）
+        ("段位 5 胜利 142 失败 166", (142, 166)),
+        ("时间 12:30 胜利 142 失败 166", (142, 166)),
+        ("142 胜利 166 失败", (142, 166)),
+        ("胜利 142 失败 166 积分 12", (142, 166)),
+    ]
+    for txt, want in cases:
+        got = R._parse_record_text(txt)
+        if got == want:
+            print("  ok   parse %-30s -> %s" % (txt, got))
+        else:
+            print("  FAIL parse %-30s -> %s want %s" % (txt, got, want))
+            FAILS.append("parse %r -> %r" % (txt, got))
+
+
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -188,6 +213,7 @@ if __name__ == "__main__":
     test_save_load_roundtrip()
     test_legacy_list_format()
     test_real_state_file()
+    test_parse_text_order()
     print()
     if FAILS:
         print("FAILED %d:" % len(FAILS))

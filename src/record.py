@@ -72,11 +72,45 @@ def _parse_record_text(text, lines=None):
     pos_w = text.find("胜利")
     pos_l = text.find("失败")
 
-    if pos_w >= 0 and pos_l >= 0 and len(nums) >= 2:
-        # 两个关键词都在：靠前的那个配第一个数字
-        if pos_w < pos_l:
-            return (int(nums[0]), int(nums[1]))
-        return (int(nums[1]), int(nums[0]))
+    def _nearest_after(kw_pos):
+        """关键词**之后最近**的数字（跳过"胜利 失败 140 161"这种排列）。"""
+        m = re.search(r"(\d{1,4})", text[kw_pos:])
+        return int(m.group(1)) if m else None
+
+    def _nearest_before(kw_pos):
+        m = None
+        for m2 in re.finditer(r"(\d{1,4})", text[:kw_pos]):
+            m = m2
+        return int(m.group(1)) if m else None
+
+    # ---- 按关键词就近取数（2026-11-22 实测修正）
+    #
+    # 旧逻辑："靠前的关键词配第一个数字、靠后的配第二个"。
+    # 但 OCR 会多读出数字（段位、时间、分隔符里的数字），实测抓到：
+    #
+    #     before=143 after=168 / before_losses=168 after_losses=14
+    #     before=14  after=144 / before_losses=169 after_losses=171
+    #
+    # 胜场和败场的数字明显串了 —— 战绩基线和归因全被污染。
+    #
+    # 现在改成：每个关键词取**它自己最近**的数字。这样多出来的数字
+    # （在关键词之外的）不会被误当成绩。
+    if pos_w >= 0 and pos_l >= 0:
+        w = _nearest_after(pos_w)
+        l_ = _nearest_after(pos_l)
+        if w is not None and l_ is not None and w != l_:
+            return (w, l_)
+        # 两个关键词后面都取不到（或取到同一个数）：
+        # 试"关键词前最近"，再退回旧的位置配对。
+        w2 = _nearest_before(pos_w)
+        l2 = _nearest_before(pos_l)
+        if w2 is not None and l2 is not None and w2 != l2:
+            return (w2, l2)
+        if len(nums) >= 2:
+            if pos_w < pos_l:
+                return (int(nums[0]), int(nums[1]))
+            return (int(nums[1]), int(nums[0]))
+        return None
 
     if pos_w >= 0:
         # 只有"胜利"：它后面 8 字符内的数字算胜场
