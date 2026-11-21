@@ -24,6 +24,23 @@ PORTRAIT_BOX = (55, 47, 76, 80)
 
 # 对面 HUD 的头像框（右上角，名字左边）。比我们自己的那个宽一点，
 # 所以两个库必须分开存模板，混用会互相拉低相关度。
+#
+# ⚠ 不要随手改这个框（2026-11-21 实测教训）
+# -----------------------------------------
+# 旧框 (2148, 47, 84, 76) 确实有个毛病：左边框压住了属性图标
+# （两个 26px 圆盘在 x≈2108~2155），所以存下来的模板左下角带着彩色圆点。
+#
+# 我试过改成 (2166, 50, 68, 96) 避开图标，效果上确实更干净，但实测代价：
+#
+#     旧框裁 + 旧 target -> 0.988      <- 和已有 145 个模板完全对齐
+#     新框裁 + 新 target -> 0.612      <- 分数掉 0.38
+#
+# 因为 145 个模板都是**用旧框裁的**，换框等于让整个库失效，
+# 而原始截图（1280x800 的小图）不足以重裁。
+#
+# 结论：**框不动**。左下角那点图标残留在匹配时影响很小
+# （0.988 就是证据），不值得为此废掉整个模板库。
+# 将来如果要换框，必须同时重裁所有模板。
 FOE_PORTRAIT_BOX = (2148, 47, 84, 76)
 
 # Same box, normalised size used for comparison.
@@ -120,9 +137,26 @@ def load_library(lib_dir=LIB_DIR):
             # They must never become match candidates: a stray sample would
             # win the correlation and report a pet name that isn't one.
             continue
+        if f.lower().endswith("_name.png"):
+            # 名字条截图（210x55），不是头像。见下面的形状检查。
+            continue
         p = os.path.join(lib_dir, f)
         img = _imread(p)
         if img is None or img.shape[0] < 8 or img.shape[1] < 8:
+            continue
+        # 按**形状**过滤，而不是只靠文件名（2026-11-21 实测）
+        # --------------------------------------------------
+        # 目录里混了 13 个 210x55 的名字条，文件名是「冥古龙_name.png」
+        # 这种（不以 _ 开头），逃过了上面的前缀检查，被当成头像模板加载。
+        #
+        # 后果：它们参与相关性计算，横条形状会干扰真正的头像匹配。
+        # 实测 load_library 加载 158 个模板，其中 13 个是这种脏数据。
+        #
+        # 头像基本是方的（76x84 或 68x96），宽高比 0.5~1.5；
+        # 名字条是 210x55（3.8）。这个判据不依赖命名习惯，更稳。
+        h, w = img.shape[:2]
+        ar = w / float(max(1, h))
+        if ar > 1.5 or ar < 0.5:
             continue
         items.append((os.path.splitext(f)[0], _prepare(img[:, :, ::-1])))
     _lib_cache["key"] = key
