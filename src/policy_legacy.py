@@ -182,6 +182,11 @@ def decide(st, ctx):
     skills = [s for s in st["skills"] if s]
     if not skills:
         return None, "no skill read"
+    # 把对面最大血量挂到每张卡上，供下面的合理性过滤用（见 damaged 循环）。
+    foe_max = ctx.get("foe_max")
+    if foe_max:
+        for s in skills:
+            s.setdefault("_foe_max", foe_max)
     usable = [s for s in skills if s.get("lit", True)]
 
     slot = _heal_slot(st)
@@ -218,8 +223,17 @@ def decide(st, ctx):
         if s["kind"] != "num":
             continue
         v = _est_value(s)
-        if v is not None:
-            damaged.append((s, v))
+        if v is None:
+            continue
+        # 合理性上限：卡面伤害不可能超过对面最大血量的 1.2 倍。
+        #
+        # 实测 2026-11-22 02:24 / 04:32 两次：对面最大血 ~400，卡面读出
+        # **700**，被当成"必杀"选中，整局白打。
+        # `_decide_v2` 那条链路已经有这道过滤，legacy 这条一直漏着 ——
+        # 而 v2 只覆盖约一半的出招，另一半走的就是这里。
+        if s.get("_foe_max") and v > s["_foe_max"] * 1.2:
+            continue
+        damaged.append((s, v))
     # 读不全的卡要分两种，不能一刀切：
     #
     #   1?5 / 23?   位数和部分数字都读到了，_est_value 能把值定到很窄的
@@ -290,6 +304,11 @@ def decide(st, ctx):
 
     def _rank(p):
         return _net(p) - _pen(p)
+
+    if not damaged:
+        # 所有卡面读数都不可信（例如都超过对面血量 1.2 倍）：
+        # 不要在这里崩，也不要瞎打 —— 交给调用方走"聚能"兜底。
+        return None, "all card damages implausible"
 
     pool = sorted(damaged,
                   key=lambda p: (_rank(p),

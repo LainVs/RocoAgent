@@ -2667,6 +2667,14 @@ class Bot:
         except Exception as e:
             log("SHADOW dmg failed: %s" % e)
 
+    def _foe_max_hp(self):
+        """对面最大血量（用于卡面伤害合理性过滤）。未知返回 None。"""
+        try:
+            import pvp_engine as E
+            return E.max_hp(self.foe_name) if self.foe_name else None
+        except Exception:
+            return None
+
     def _shadow_choice(self, st):
         """不动手，只算"如果交给机器人，它会选什么"。"""
         try:
@@ -3032,6 +3040,9 @@ class Bot:
             "switch_slot": self.next_switch_slot(),
             "switch_streak": self.turn - self.last_switch_turn,
             "charge_streak": self.charge_streak,
+            # 对面最大血量：policy_legacy 用它做"卡面伤害不可能超过血量
+            # 1.2 倍"的合理性过滤（实测读出过 700，对面 max≈400）。
+            "foe_max": self._foe_max_hp(),
             # 注意：这里**故意不传** card_costs。
             #
             # policy_legacy.decide() 里有 "净收益 = 伤害 - λ×耗能" 的算法，
