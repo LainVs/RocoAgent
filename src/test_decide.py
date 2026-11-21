@@ -111,6 +111,29 @@ print("%-52s %-6s %s   (%s)" % (
     "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
 
 print()
+print("--- 但推算值虚高的全未知卡不能压过确定的大数字 ---")
+# 反向回归：只扣 15 分不等于"读不全优先"。
+# "???" 只有位数信息，_est_value 推算 100；旁边是确定的 300，
+# 必须选 300。否则会退回"赌一张完全读不出的卡"的老毛病。
+_vague = [
+    {"index": 1, "value": None, "text": "???", "kind": "num", "color": "green",
+     "score": 0.3, "glyphs": 3, "lit": True},
+    {"index": 2, "value": 300, "text": "300", "kind": "num", "color": "white",
+     "score": 1.0, "glyphs": 3, "lit": True},
+    {"index": 3, "value": None, "text": "--", "kind": "dash", "color": None,
+     "score": 1.0, "glyphs": 0, "lit": True},
+    {"index": 4, "value": None, "text": "--", "kind": "dash", "color": None,
+     "score": 1.0, "glyphs": 0, "lit": True},
+]
+a, why = robot.decide(state(100.0, 100.0, _vague), base)
+ok = a == ("skill", 2)
+if not ok:
+    fails += 1
+print("%-52s %-6s %s   (%s)" % (
+    "\"???\" vs 300 -> attack slot 2",
+    "attack %s" % (a[1] if a else None), "OK" if ok else "**FAIL**", why))
+
+print()
 print("--- out of energy: two charges, then rotate to a full-energy pet ---")
 dark = [milk(1, None, False), milk(2, None, False),
         milk(3, None, False), milk(4, None, False)]

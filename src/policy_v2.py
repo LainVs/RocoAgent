@@ -277,13 +277,29 @@ def decide(state):
 
         if kind not in BUFF_KINDS:
             # 无伤害但**不是**自身增益：复制技能 / 减伤 / 治疗 / 挂减益。
-            # 得分为 0，只作为"实在没别的可打"时的兜底，绝不优先。
             #
+            # 它们不是"免费的 0 分"。用掉这一回合照样要挨对面一下，
+            # 所以必须和攻击/蓄能一样扣 w_damage_taken 和 w_opp_ko。
+            #
+            # 实测（2026-11-21，test_policy 第 3 例）：只剩一张 dash、
+            # 承受 273 >= 当前 200 血、没有替补。旧代码给它硬编码 0.0，
+            # 结果"必死"的局面里它是全场最高分 —— 引擎认为这一手不亏。
+            # 而蓄能因为老实扣了"被打死"的 0.20，反而只有 -0.18。
+            # 于是机器人在必死的回合选了变化技能，白白丢一手。
+            #
+            # 现在这个基线和别的候选同源：0 输出 + 吃满这一击。
+            cost_e = max(0, energy - cost)
+            base = _outcome(0.0, False,
+                            inc / max(1, my_max), inc >= my_hp,
+                            my_hp - inc, my_max, cost_e, 0, matchup)
             # 复制技能（借用/取念）额外惩罚：它是随机的，期望收益低于
-            # 任何确定的攻击，而且打出去这一回合必定没有输出。
-            pen = -0.15 if kind == "copy" else 0.0
+            # 任何确定的动作，而且这一回合必定没有输出。
+            pen = base + (-0.15 if kind == "copy" else 0.0)
             cands.append((pen, ("skill", s["i"]),
-                          "status %d: %s (no priority)" % (s["i"], kind)))
+                          "status %d: %s (no priority, %s)"
+                          % (s["i"], kind,
+                             "lethal incoming" if inc >= my_hp else "takes %d"
+                             % inc)))
             continue
 
         survives = inc < my_hp * (1.0 - w.get("buff_survive_floor", 0.25))

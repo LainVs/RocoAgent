@@ -170,11 +170,24 @@ def decide(st, ctx):
         v = _est_value(s)
         if v is not None:
             damaged.append((s, v))
-    # 只要有一张卡读得清，就只在读得清的里面选；读不清的???"/None。?
-    # 无论推算值多高都不参与。实测它按过"dmg ??"去打一只残血对手。?
-    exact = [p for p in damaged if p[0].get("value") is not None]
-    if exact:
-        damaged = exact
+    # 读不全的卡要分两种，不能一刀切：
+    #
+    #   1?5 / 23?   位数和部分数字都读到了，_est_value 能把值定到很窄的
+    #               区间（1?5 推算 150，实际 175）。这种**必须参与比较**，
+    #               否则真实的 3 位数会输给旁边的两位数。
+    #               实测回归（10:27）：slot1 读 "1?5"，机器人连用 3 回合
+    #               slot3 "55" 去打一只残血对手。
+    #
+    #   ?? / ????   一个数字都没读到，只有位数。推算值纯属猜的，不参与
+    #               —— 以前它按过 "dmg ??"，同样是在赌。
+    #
+    # 旧代码是"只要有一张读得清，就只从读得清的里选"，把所有读不全的
+    # 一起排除了，等于把 _est_value 专门处理的那种情况又绕回去。
+    _has_digit = [p for p in damaged
+                  if p[0].get("value") is not None
+                  or any(ch.isdigit() for ch in (p[0].get("text") or ""))]
+    if _has_digit:
+        damaged = _has_digit
 
     # 对面已经倒下?%）：这回合别再聚，?等数字，随便打一张就行。?
     # 实测出现?foe=0.0% 还在?F 的情况，纯属浪费回合。
@@ -212,13 +225,30 @@ def decide(st, ctx):
         c = costs.get(p[0]["index"], 0) or 0
         return p[1] - lam * c
 
+    def _pen(p):
+        """读不全的卡扣一点分，但**不是绝对优先**。
+
+        踩过的坑（两次，方向相反）：
+          · 最早完全不扣 -> 一张 "???（推算 100）" 可能压过确定的 300。
+          · 后来改成"读得清的一律优先" -> 真实的 3 位数 `1?5`（推算 150）
+            永远输给旁边两位数 `55`。实测 10:27 连用 3 回合弱技能。
+        折中：扣 15。推算误差实测在 ±40 量级，扣偏小的一端，
+        保证 `1?5`(150-15=135) 仍然赢 `55`，而虚高的 `???`(100-15=85)
+        压不过确定的 300。
+        """
+        return 0.0 if p[0].get("value") is not None else 15.0
+
+    def _rank(p):
+        return _net(p) - _pen(p)
+
     pool = sorted(damaged,
-                  key=lambda p: (p[0].get("value") is not None, _net(p),
+                  key=lambda p: (_rank(p),
+                                 p[0].get("value") is not None,
                                  p[0]["color"] != "red"), reverse=True)
     # ?3% 以内视为等价，随机选一个：同一套阵容每次都走同一线路的话。?
     # 对面摸透一次就能场场赢我们（实测确实如此）。?
-    top_v = pool[0][1]
-    near = [p for p in pool if p[1] >= top_v * 0.97][:3]
+    top_v = _rank(pool[0])
+    near = [p for p in pool if _rank(p) >= top_v * 0.97][:3]
     best, best_v = random.choice(near) if len(near) > 1 else pool[0]
 
     # Everything on hand is weak: hand the turn to a fresh pet instead of

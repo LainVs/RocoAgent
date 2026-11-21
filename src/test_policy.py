@@ -73,6 +73,25 @@ print("%-46s %-14s %s   (%s, best=%.3f)" % (
     "only a buff, incoming is lethal -> all negative", str(a),
     "OK" if ok else "**FAIL**", why, best))
 
+# 变化技能不是"免费的 0 分"：用掉这一回合照样要挨对面一下，
+# 所以它的得分必须和攻击/蓄能同源，扣掉受到的伤害。
+# 这里 490 血扛得住（不死），得分应当是个**负数**（吃伤害），
+# 而不是旧代码硬编码的 0.0。
+st5 = {
+    "me": {"name": "寂灭骨龙", "hp": 490, "hp_max": 490, "energy": 10,
+           "skills": [skill(1, None, 1, kind="dash")]},
+    "foe": {"name": "水灵", "hp": 434, "hp_max": 434},
+    "bench": [],
+}
+a, why, d = policy_v2.decide(st5)
+sc = [s for s, act in d["all"] if act == ("skill", 1)]
+ok = bool(sc) and sc[0] < 0.0
+if not ok:
+    fails += 1
+print("%-46s %-14s %s   (status score=%s, %s)"
+      % ("status skill still pays the incoming hit", str(a),
+         "OK" if ok else "**FAIL**", sc[0] if sc else "?", why))
+
 print()
 print("--- unknown opponent must not be treated as harmless ---")
 st4 = {
