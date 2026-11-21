@@ -317,7 +317,11 @@ async function refreshHealth() {
   const ms = st && st.system ? st.system.fps_ms : null;
   const budget = st && st.system && st.system.budget_ms
     ? st.system.budget_ms : 120;
-  if (ms == null) {
+  if (st && st._stale) {
+    // 过期帧里的 fps_ms 是机器人**最后一次**的读数，不代表现在。
+    // 判绿等于说"现在的感知很快"，而机器人可能早就停了。
+    items.push(healthItem('感知耗时', '数据过期', 'warn'));
+  } else if (ms == null) {
     items.push(healthItem('感知耗时', '—', ''));
   } else {
     const lv = ms > budget * 2 ? 'bad' : ms > budget ? 'warn' : 'ok';
@@ -860,10 +864,35 @@ async function openMatch(mid) {
 /* ================================================================
    日志（增量）
    ================================================================ */
+/* ---------------------------------------------------------------- 日志着色
+   分层依据是**实测的日志行频**（bot_stdout.log 尾部 800 行）：
+
+      174  WINDOW     ← 窗口每次变化都刷，纯噪音
+      166  FOE        ← 对面身份（有用，但太密）
+       81  state      ← 心跳，每 15 秒一条
+       52  GATE       ← 决策门，卡住时全靠它
+       22  ===        ← 场次边界，最该显眼
+       13  T1         ← 出招
+
+   所以分四档，而不是原来的三档（err/warn/ok）：
+     match  场次边界 —— 最强（加粗 + 分隔线感）
+     warn   被拦住 / 卡住 / 焦点丢失
+     dim    噪音（WINDOW / state 心跳 / standalone）
+     err    真错误
+*/
+const LOG_NOISE = /^(WINDOW|state|standalone warmup|\[standalone\])/;
+
 function classifyLine(ln) {
-  if (/\b(ERROR|FAIL|Traceback|异常)\b/i.test(ln)) return 'err';
-  if (/\b(WARN|STUCK|FOCUS LOST|GATE)\b/i.test(ln)) return 'warn';
-  if (/\b(OK|WIN|RECOVER|recovered)\b/i.test(ln)) return 'ok';
+  const body = ln.replace(/^\d{2}:\d{2}:\d{2}\s+/, '');
+  if (/^===/.test(body)) return 'match';
+  if (/\b(ERROR|Traceback|异常)\b/i.test(body)) return 'err';
+  if (/\b(STUCK|FOCUS LOST|BLE FAILED|PANEL STUCK|recovery failed)\b/i.test(body)) {
+    return 'err';
+  }
+  if (/\b(GATE|WARN|held|dropped)\b/i.test(body)) return 'warn';
+  if (LOG_NOISE.test(body)) return 'dim';
+  if (/\b(SKILL|ENERGY|SWITCH|FAINT|FORCED)\b/.test(body)) return 'act';
+  if (/\b(OK|WIN|RECOVER|recovered)\b/i.test(body)) return 'ok';
   return '';
 }
 
@@ -891,31 +920,29 @@ async function pollLog() {
 }
 
 /* ---------------------------------------------------------------- 日志筛选
-   classifyLine() 早就把 GATE/BLE/FOCUS LOST/ERROR 分了类，但界面上没有
-   筛选器，排障时 90% 的时间在肉眼找这几类行。这里加三个 chip，
-   计数直接从缓冲区算（1200 行，代价可忽略）。 */
+   classifyLine() 把日志分了六档，筛选器只暴露用户真正会用的四个：
+     全部 / 出招 / 异常 / 噪音
+   "决策"改叫"出招"更直白；"异常"现在包含 STUCK / recovery failed
+   （原来只认 ERROR/WARN，漏掉了机器人真卡住的那些行）。 */
 let logBuf = [];
 let logFilter = 'all';
 
 function logMatch(ln, f) {
-  if (f === 'decision') {
-    return /\bT\d+\s+(SKILL|ENERGY|SWITCH)\b/.test(ln)
-      || /GATE|FAINT|FORCED SWITCH|=== MATCH/.test(ln);
-  }
-  if (f === 'trouble') {
-    return classifyLine(ln) !== ''
-      || /\bBLE\b|FOCUS LOST|STUCK|offline|PANEL/.test(ln);
-  }
+  const cls = classifyLine(ln);
+  if (f === 'act') return cls === 'act' || cls === 'match';
+  if (f === 'trouble') return cls === 'err' || cls === 'warn';
+  if (f === 'noise') return cls === 'dim';
   return true;
 }
 
 function renderLog() {
   const box = $('logbox');
   if (!box) return;
-  const counts = { all: logBuf.length, decision: 0, trouble: 0 };
+  const counts = { all: logBuf.length, act: 0, trouble: 0, noise: 0 };
   logBuf.forEach((ln) => {
-    if (logMatch(ln, 'decision')) counts.decision += 1;
+    if (logMatch(ln, 'act')) counts.act += 1;
     if (logMatch(ln, 'trouble')) counts.trouble += 1;
+    if (logMatch(ln, 'noise')) counts.noise += 1;
   });
 
   const frag = document.createDocumentFragment();
@@ -935,7 +962,8 @@ function renderLog() {
 
   const bar = $('logFilter');
   if (bar) {
-    const BASE = { all: '全部', decision: '决策', trouble: '异常' };
+    const BASE = { all: '全部', act: '出招', trouble: '异常',
+                   noise: '噪音' };
     bar.querySelectorAll('button').forEach((b) => {
       const f = b.dataset.f;
       b.textContent = BASE[f] + (counts[f] ? ' ' + counts[f] : '');

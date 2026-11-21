@@ -366,6 +366,18 @@ button, input, select {
 .logbox .err { color: var(--lose); }
 .logbox .warn { color: var(--warn); }
 .logbox .ok { color: var(--win); }
+/* 场次边界：最强。用户扫日志第一眼要能找到"这局从哪开始" */
+.logbox .match {
+  color: var(--accent);
+  font-weight: 600;
+  margin-top: 6px;
+  padding-top: 5px;
+  border-top: 1px solid var(--line-soft);
+}
+/* 出招：比默认亮一档，方便顺着看一手一手 */
+.logbox .act { color: var(--ink-0); }
+/* 噪音：WINDOW / state 心跳 / standalone，压暗但不隐藏 */
+.logbox .dim { color: var(--ink-3); opacity: .72; }
 
 /* ── 表格 ───────────────────────────────────────────── */
 .tbl {
