@@ -215,6 +215,8 @@ class Bot:
         self.foe_score = 0.0
         self.foe_ident_source = None
         self.foe_conf = 0.0
+        # 结算页脱困计时：None = 在战斗中；float = 从何时起不在战斗
+        self._stuck_at = None
         # 对面属性（来自"特性→数据，?反查；None 表示读不出，绝不猜）
         self.foe_types = None
         self.foe_species_id = None
@@ -730,6 +732,76 @@ class Bot:
                     self.result_seen_at = None
             else:
                 self.result_seen_at = None
+
+            # ---- 脱困：卡在结算页但没有 turn >= 3（2026-11-21 实盘死锁）
+            #
+            # 上面的检测要求 `turn >= 3`。但实测每局常常只到 T1 就卡住
+            # （4:3 下 `battle=False`，决策闸门打不开），于是：
+            #
+            #     卡在 T1 -> 到不了 T3 -> 结算页检测永不触发 -> 继续卡
+            #
+            # 画面证据：底部"退出"按钮清晰可见，5 秒都不变。
+            #
+            # ⚠ 但不能只看 `battle=False` 就脱困（2026-11-21 23:25 实测）
+            # ----------------------------------------------------
+            # 第一版写成"不在战斗 + 6 秒"，结果每局只打 1~3 手就被判卡住
+            # 直接退出：
+            #
+            #     MATCH 2: 53s, 1 actions
+            #     MATCH 3: 28s, 1 actions
+            #
+            # 因为 4:3 下血条检测间歇失败，`battle=False` 在正常战斗里也会
+            # 出现。所以必须**两个条件同时成立**：
+            #   · 不在战斗
+            #   · 结算页的"退出"按钮真的在（has_exit_button 用白色连通域）
+            # 再加 10 秒去抖，避免开局动画期间误判。
+            if (not st["battle"]
+                    and now - (getattr(self, "_stuck_at", 0.0) or 0.0) > 10.0):
+                try:
+                    import ui_probe as _UP
+                    if _UP.has_exit_button(self.screen):
+                        log("STUCK on result screen (battle=False, "
+                            "turn=%s) -> click 退出" % self.turn)
+                        # 存一帧证据：事后能确认到底是真结算页还是误判
+                        try:
+                            import cv2 as _cv
+                            _im = self.screen.grab_client((0, 0, 2560, 1600))
+                            if _im is not None:
+                                _cv.imwrite(
+                                    os.path.join(LOG_DIR, "stuck_%s.png"
+                                                 % time.strftime("%H%M%S")),
+                                    _cv.cvtColor(_im, _cv.COLOR_RGB2BGR))
+                        except Exception:
+                            pass
+                        self.ensure_focus()
+                        pos = _UP.find_result_button(self.screen)
+                        if pos:
+                            self.click_abs(*pos)
+                        else:
+                            self.click_rel(*RESULT_BTN_REL)
+                        self._stuck_at = now
+                        self._end_match()
+                        self.result_seen_at = None
+                        continue
+                except Exception as e:
+                    log("STUCK recovery failed: %s: %s"
+                        % (type(e).__name__, e))
+
+            # 记录"从什么时候开始不在战斗"，供上面的脱困判断用。
+            #
+            # ⚠ 必须在 `battle=True` 时**重置**（2026-11-21 23:28 实测）
+            # ------------------------------------------------------
+            # 第一版写成"battle=True 时把 _stuck_at 设成 now"，然后判断
+            # `now - _stuck_at > 10`。这看起来对，但 4:3 下 battle 会间歇
+            # 为 False（血条检测失败），而**只要有一次 True 就会刷新 _stuck_at**，
+            # 于是永远累积不到 10 秒 —— 脱困反而失效。
+            #
+            # 现在改成：battle=True 就把 _stuck_at 清成 None（表示"没卡住"），
+            # 只有连续 10 秒一直是 False 才重新计时。
+            if st["battle"]:
+                self._stuck_at = None
+            elif self._stuck_at is None:
+                self._stuck_at = now
 
             if now - last_log > 15.0:
                 last_log = now
