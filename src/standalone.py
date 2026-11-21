@@ -426,7 +426,8 @@ def _get():
     if _perc is None or _thread_state.get("tid") != tid:
         import perceive as P
         import winio
-        _screen = winio.Screen()
+        # restore_iconic=False：读屏不改变游戏窗口状态，见 winio.Screen.__init__
+        _screen = winio.Screen(restore_iconic=False)
         _perc = P.Perc(_screen)
         _thread_state["tid"] = tid
     return _screen, _perc
@@ -512,6 +513,13 @@ def observe(force=False):
     with _lock:
         try:
             _scr, perc = _get()
+            # 被别的窗口盖住时屏幕抓取只能抓到上层窗口，识别全是垃圾。
+            # 明确报"遮挡"比返回一堆假数据好 —— 用户能立刻知道是自己
+            # 把编辑器盖在游戏上面了。
+            if _scr is not None and hasattr(_scr, "is_covered") \
+                    and _scr.is_covered():
+                return {"error": "游戏窗口被其他窗口遮挡（屏幕抓取只能抓到上层窗口）",
+                        "standalone": True, "covered": True}
             raw = perc.observe()
         except Exception as e:
             return {"error": "%s: %s" % (type(e).__name__, e),

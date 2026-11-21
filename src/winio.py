@@ -150,7 +150,24 @@ class Screen:
     We only ever need three small regions, so the poll loop stays at ~10 Hz.
     """
 
-    def __init__(self):
+    def __init__(self, restore_iconic=True):
+        """restore_iconic: 窗口最小化时是否自动还原。
+
+        **读屏路径必须传 False**（2026-11-21 实盘教训）
+        --------------------------------------------
+        `standalone`（伤害计算器）只是读屏，不该改变游戏窗口状态。
+        但 refresh() 原来一发现窗口 IsIconic 就调 `ShowWindow(RESTORE)`：
+
+            实测 client_size 在 1280x800 <-> 2560x1600 之间反复横跳，
+            而每次跳都会让所有固定像素框（HUD 头像/属性图标/名字条）错位。
+
+        对一个独占全屏的 UE 游戏反复做"还原窗口 -> 切全屏"是危险的，
+        gamelet 日志里确实看到 3 分钟内重启了 3 次。
+
+        机器人仍然需要还原（它要点击，窗口必须在场），所以默认 True
+        保持原行为；只有读屏的调用方显式传 False。
+        """
+        self.restore_iconic = bool(restore_iconic)
         self.rect = None
         self.hwnd = None
         # client_size / client_off 必须**先给默认值**。
@@ -181,6 +198,24 @@ class Screen:
     @property
     def sct(self):
         return _thread_sct()
+
+    def is_covered(self):
+        """游戏窗口是否被别的窗口盖住。
+
+        为什么重要（2026-11-21 实盘踩到）
+        ------------------------------
+        `grab_client` 走 mss **屏幕抓取** —— 抓到的是"屏幕上看得见的东西"，
+        不是"窗口里的内容"。实测游戏在后面、OpenCode 窗口盖在前面时，
+        抓回来的是 OpenCode 的界面；所有识别都读垃圾，但界面仍显示
+        "战斗中 · 未知"，用户完全看不出是被遮挡了。
+
+        判据：取窗口中心点，看那里最上层的顶层窗口是不是游戏自己。
+        """
+        if not self.rect or not self.hwnd:
+            return True
+        x, y, w, h = self.rect
+        top = _window_at_point(x + w // 2, y + h // 2)
+        return top != self.hwnd
 
     def refresh(self, force=False):
         """探测窗口几何。
@@ -221,6 +256,15 @@ class Screen:
         # relative coordinate silently becomes garbage (this caused a 10-minute
         # stuck loop where the bot clicked random spots on the desktop).
         if _UD.IsIconic(self.hwnd):
+            if not self.restore_iconic:
+                # 只读屏的调用方：不碰窗口，直接当成"读不到"。
+                # 注意**不写缓存** —— 否则机器人紧接着读缓存会拿到"不可用"，
+                # 而它其实是可以还原窗口继续干活的。
+                self.rect = None
+                self.hwnd = None
+                self.client_size = (0, 0)
+                self.client_off = (0, 0)
+                return
             _UD.ShowWindow(self.hwnd, 9)        # SW_RESTORE
             time.sleep(0.4)
             g = find_game()
