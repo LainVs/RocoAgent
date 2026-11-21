@@ -450,6 +450,21 @@ def _tail_lines(path, max_bytes=16384):
     return data.decode("utf-8", "replace").splitlines()
 
 
+def _robot_lines(max_bytes=262144):
+    """机器人自己写的日志行（过滤掉 `[standalone]` 等旁路写入）。
+
+    为什么必须过滤（2026-11-21 20:48 实测）
+    --------------------------------------
+    `standalone.py` 也用 `config.log()`，往同一个 `bot_stdout.log` 里写
+    `[standalone] FOE -> ...`。UI 服务常驻时它每秒写 2~4 行，48KB 尾部里
+    **一条机器人事件都没有** —— 于是 `bot_activity()` 永远返回 None，
+    phase 退回 live/stale，刚做的"等待板子/焦点丢失"全部失效。
+    按前缀过滤比改 standalone 更安全：那是另一个会话的文件。
+    """
+    lines = _tail_lines(BOT_LOG, max_bytes)
+    return [ln for ln in lines if "[standalone]" not in ln]
+
+
 # 板子链路。**顺序有意义**：从日志尾往前找第一条能定性的行。
 _ESP_CONNECTED = re.compile(r"\bconnected\s+[0-9A-Fa-f:]{11,}")
 _ESP_OFFLINE = re.compile(r"link down|cached->.*failed|scan->.*failed|"
@@ -503,7 +518,7 @@ def bot_activity():
     counts 只统计尾部窗口（约 16KB ≈ 200~400 行），够用来回答
     "这次运行里焦点丢了几次"，又不会读整份日志。
     """
-    lines = _tail_lines(BOT_LOG)
+    lines = _robot_lines()
     counts = {}
     for _name, rx in _ACTIVITY:
         n = sum(1 for ln in lines if rx.search(ln))

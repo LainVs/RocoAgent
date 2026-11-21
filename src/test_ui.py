@@ -683,6 +683,13 @@ def worker():
             skillNa: isEmptyFrame(mk({
               skills: [{ i: 1, dmg: null, pct: null }] })),
             foeHp: isEmptyFrame(mk({ foe: { hp_pct: 45, name: null } })),
+            // 血条检测器没开时，hp_pct 是残留噪声（实测 8.6），
+            // 不能当成"有数据"，否则面板会显示一个假血条
+            hpNoise: isEmptyFrame(mk({
+              foe: { hp_pct: 8.6, name: null },
+              system: { detectors: { bar: false, skillbar: false,
+                                     countdown: false } },
+            })),
           };
 
           // 空帧渲染
@@ -719,6 +726,33 @@ def worker():
             ? getComputedStyle(selfSec).display !== 'none' : null;
           judge.nameAfter = document.getElementById('meName').textContent;
           judge.pctAfter = document.getElementById('mePct').textContent;
+
+          // ★ skills 里是 null 时不能炸（2026-11-21 实机）
+          //   服务端"还没识别到技能栏"会返回 [null,null,null,null]，
+          //   原代码 s.dmg 直接 TypeError，整个 render() 中断，
+          //   表现为技能区/结论区/替补区全不渲染。
+          try {
+            render({
+              mode: 'idle', seq: 9003,
+              system: { detectors: { bar: true, skillbar: false,
+                                     countdown: false } },
+              me: { name: '银月狼王', hp_pct: 87, types: [],
+                    hp_abs: 102, hp_max: 317, energy: null, buffs: [] },
+              foe: { name: '火羽', hp_pct: 80, types: [] },
+              skills: [null, null, null, null],
+              matchup: null, verdict: null,
+            });
+            judge.nullSkillsOk = true;
+            judge.nullSkillsState =
+              document.getElementById('sysState').textContent;
+            judge.nullSkillsVerdict =
+              document.getElementById('vOrder').textContent;
+            judge.nullSkillsCards =
+              document.querySelectorAll('.skill').length;
+          } catch (err) {
+            judge.nullSkillsOk = false;
+            judge.nullSkillsErr = String(err);
+          }
           return judge;
         })()
         """)
@@ -896,6 +930,8 @@ def test_resilience(port):
     ok(e.get("skillOnly") is False, "有技能伤害 -> 不算空帧")
     ok(e.get("skillNa") is True, "技能全是占位 -> 算空帧")
     ok(e.get("foeHp") is False, "对面有血条 -> 不算空帧")
+    ok(e.get("hpNoise") is True,
+       "detectors.bar=false 时 hp_pct 是噪声 -> 算空帧")
 
     ok(e.get("emptyFlag") == "1", "空帧时 panel 打上 data-empty",
        str(e.get("emptyFlag")))
@@ -913,6 +949,16 @@ def test_resilience(port):
        str(e.get("selfShownAfter")))
     ok(e.get("nameAfter") == "音速犬", "名字恢复", str(e.get("nameAfter")))
     ok(e.get("pctAfter") == "78", "血量恢复", str(e.get("pctAfter")))
+
+    # skills = [null,null,null,null] 不能让 render 中断
+    ok(e.get("nullSkillsOk") is True, "null 技能槽不抛异常",
+       str(e.get("nullSkillsErr"))[:60])
+    ok(e.get("nullSkillsState") not in ("渲染出错",),
+       "null 技能槽后状态栏正常", str(e.get("nullSkillsState")))
+    ok(int(e.get("nullSkillsCards") or 0) == 4,
+       "null 技能槽渲染成 4 张占位卡", "cards=%s" % e.get("nullSkillsCards"))
+    ok(e.get("nullSkillsVerdict") == "数据不足",
+       "结论区正常渲染", str(e.get("nullSkillsVerdict")))
 
 
 # ============================================================ 3c. 对比度
@@ -1030,6 +1076,30 @@ def test_phase_infer():
         U.BOT_LOG = old_bot
         try:
             os.remove(bot_path)
+        except OSError:
+            pass
+
+    # 机器人日志里混着 `[standalone]`（UI 服务自己写的感知日志）。
+    # 必须验证它不会把机器人事件挤出去 —— 2026-11-21 实测 48KB 尾部
+    # 一条机器人事件都没有，phase 推断整个失效。
+    old_bot2 = U.BOT_LOG
+    fd, mix_path = tempfile.mkstemp(suffix=".log")
+    os.close(fd)
+    try:
+        U.BOT_LOG = mix_path
+        with open(mix_path, "w", encoding="utf-8") as f:
+            f.write("20:00:01 BLE waiting for board …\n")
+            # 大量旁路日志把它压到 16KB 之外
+            for i in range(400):
+                f.write("20:00:%02d [standalone] FOE -> 水灵 (onnx, 0.97)\n"
+                        % (i % 60))
+        act = U.bot_activity()
+        ok(act.get("event") == "waiting_board",
+           "standalone 日志不掩盖机器人事件", str(act.get("event")))
+    finally:
+        U.BOT_LOG = old_bot2
+        try:
+            os.remove(mix_path)
         except OSError:
             pass
 
