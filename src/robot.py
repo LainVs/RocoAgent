@@ -3505,6 +3505,16 @@ class Bot:
             # 不会误点正在进行的对局。
             may_advance = (self.match_count == 0) or (
                 self.match_ended_at and now - self.match_ended_at < 120.0)
+            # ---- 硬闸：最近 15 秒见过技能栏 -> 一定还在对局里（2026-11-22）
+            #
+            # 实测 04:40:15~04:40:49：`battle=False bar=False me=100 foe=100`
+            # 连续 34 秒，期间 `advance splash` 连点屏幕，把一场还在进行的
+            # 对局点成了 0 actions。
+            #
+            # 技能栏只在对局中、且只在我方回合画出来。15 秒内见过一次，
+            # 就说明这一场还没结束 —— 这时候点屏幕只会干扰对局。
+            if now - getattr(self, "_last_bar_at", 0.0) < 15.0:
+                return
             if not may_advance and self.match_started is not None:
                 fp = self._screen_fingerprint()
                 if fp != getattr(self, "_still_fp", None):
