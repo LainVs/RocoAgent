@@ -509,6 +509,30 @@ body.embedded .overlay .panel {
   flex: none;
 }
 
+/* 状态行（2026-11-21）
+ *
+ * 显示折叠 / 穿透 / 透明度的**真实状态**（从原生侧 Api.status() 读）。
+ *
+ * 为什么要单独一行：折叠态有两份存储（localStorage + overlay.json），
+ * 不一致时用户只能靠"窗口高度"猜自己是不是折叠着。
+ * 上轮排查"窗口长不高"为此绕了半小时，最后发现 folded:true。
+ *
+ * 折叠中 / 穿透开启用 accent 色强调 —— 这两个状态会改变交互行为，
+ * 用户需要一眼看到（折叠时看不到技能，穿透时点不到按钮）。
+ */
+.dstate {
+  font-size: 10.5px;
+  color: var(--ink-3);
+  margin-left: auto;
+  text-align: right;
+  text-shadow: var(--halo);
+  font-variant-numeric: tabular-nums;
+}
+.dstate[data-folded="1"],
+.dstate[data-pass="1"] {
+  color: var(--accent);
+}
+
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;

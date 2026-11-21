@@ -968,6 +968,8 @@ function bindDrawer() {
     e.stopPropagation();
     const open = drawer.classList.toggle('open');
     btn.setAttribute('aria-expanded', String(open));
+    // 打开抽屉时刷新状态行 —— 那才是用户想确认"我现在是什么状态"的时刻
+    if (open) refreshStatus();
   });
 }
 
@@ -982,8 +984,17 @@ function bindPass() {
   btn.addEventListener('click', async () => {
     const on = btn.getAttribute('aria-pressed') !== 'true';
     paint(on);
+    // 先刷新状态行 —— paint() 已经改了 aria-pressed，
+    // refreshStatus() 同步读 DOM 就能拿到新值。
+    //
+    // 为什么放在 await 之前（2026-11-21）：原来在 await 之后调，
+    // 原生侧 `set_click_through` 有几十毫秒延迟，期间状态行还是旧值，
+    // 用户看到"点了但状态没变"。先 paint 再刷新，视觉上立刻一致。
+    refreshStatus();
     if (hasNative()) {
       await callNative('set_click_through', on);
+      // 原生侧真正生效后再对一次（防 set_click_through 失败）
+      refreshStatus();
     } else {
       document.body.classList.toggle('pass-through', on);
     }
@@ -998,6 +1009,8 @@ function bindPass() {
         if (s && typeof s.pass_through === 'boolean') {
           if (btn.getAttribute('aria-pressed') !== String(s.pass_through)) {
             paint(s.pass_through);
+            // 热键改的状态也要反映到状态行
+            refreshStatus();
           }
         }
       } catch (_) {}
@@ -1005,16 +1018,45 @@ function bindPass() {
   }
 }
 
-function bindFold() {
+/* 折叠态的唯一入口（2026-11-21）
+ *
+ * 为什么要有这个函数，而不是各处直接改 class
+ * -----------------------------------------
+ * 折叠状态有三个消费者：
+ *   1. `folded` 模块变量（决定下次 toggle 往哪边翻）
+ *   2. `.overlay.folded` class（决定 UI）
+ *   3. 按钮文案（折叠 / 展开）
+ *   4. localStorage（下次启动）
+ *
+ * 以前 `enter_embedded()` 从原生侧恢复折叠态时是**直接 evaluate_js 改 DOM**，
+ * 只动了 2 和 3，没动 1 —— 于是 `folded` 变量还是 false，
+ * 用户点一次按钮 `folded = !folded` 变成 true，但 UI 已经是折叠态，
+ * 表现为"点了没反应"。
+ *
+ * 现在所有路径都走这里，保证四个消费者永远一致。
+ */
+function setFolded(v) {
+  folded = !!v;
   const overlay = $('overlay');
+  const btnFold = $('btnFold');
+  if (overlay) overlay.classList.toggle('folded', folded);
+  if (btnFold) btnFold.textContent = folded ? '展开' : '折叠';
+  try {
+    localStorage.setItem('overlay.folded', folded ? '1' : '0');
+  } catch (_) {}
+  // 折叠切换后状态行要跟着变
+  refreshStatus();
+}
+
+// 暴露给原生侧（enter_embedded 恢复折叠态时调）
+window.__setFolded = setFolded;
+
+function bindFold() {
   const hdr = $('hdr');
   const btnFold = $('btnFold');
 
   const toggle = () => {
-    folded = !folded;
-    overlay.classList.toggle('folded', folded);
-    btnFold.textContent = folded ? '展开' : '折叠';
-    try { localStorage.setItem('overlay.folded', folded ? '1' : '0'); } catch (_) {}
+    setFolded(!folded);
     // 后端也存一份：真悬浮窗里窗口高度要跟着变，
     // 下次启动直接按折叠态开，避免展开态闪一下再折叠。
     callNative('set_folded', folded);
@@ -1027,9 +1069,80 @@ function bindFold() {
   });
   btnFold.addEventListener('click', toggle);
 
+  // 从 localStorage 恢复（原生侧 enter_embedded 之后会再同步一次，
+  // 那边是权威 —— 它读的是 config/overlay.json）
   try {
-    if (localStorage.getItem('overlay.folded') === '1') toggle();
+    if (localStorage.getItem('overlay.folded') === '1') setFolded(true);
   } catch (_) {}
+}
+
+/* 状态行：从原生侧读真实状态（2026-11-21）
+ *
+ * 为什么读原生而不是前端自己记
+ * ---------------------------
+ * 前端只知道"我点了什么"，不知道"原生侧认不认"。
+ * 实测出现过前端 folded=true 但窗口没变的情况（set_folded 失败、
+ * 或 fit_window 把它覆盖了）。
+ *
+ * `Api.status()` 返回 visible / pass_through / opacity / folded，
+ * 那是窗口的真实状态。
+ */
+function refreshStatus() {
+  const el = $('dstate');
+  if (!el) return;
+
+  // 先显示前端知道的部分（原生没响应时不至于空着）
+  const render = (s) => {
+    const parts = [];
+    parts.push(s.folded ? '折叠中' : '展开');
+    parts.push(s.pass ? '穿透开启' : '穿透关闭');
+    if (s.opacity != null) {
+      parts.push('透明度 ' + Math.round(s.opacity / 255 * 100) + '%');
+    }
+    el.textContent = parts.join(' · ');
+    el.dataset.folded = s.folded ? '1' : '0';
+    el.dataset.pass = s.pass ? '1' : '0';
+  };
+
+  // 前端已知状态（同步，立刻生效）
+  const local = () => ({
+    folded: folded,
+    pass: $('btnPass')
+      ? $('btnPass').getAttribute('aria-pressed') === 'true' : false,
+    opacity: $('alpha') ? +$('alpha').value : null,
+  });
+  render(local());
+
+  // 再问原生（异步覆盖）
+  //
+  // ★ 不能无条件覆盖（2026-11-21 实测）
+  // -----------------------------------
+  // `set_click_through` 是异步的：用户点按钮 -> paint() 改 aria ->
+  // refreshStatus() 立刻问原生 -> 原生还没生效，返回 pass_through=false
+  // -> 状态行**又变回「穿透关闭」**。
+  //
+  // 表现：点了穿透，状态行闪一下"穿透开启"又变回"关闭"。
+  //
+  // 所以原生值只在**和前端一致**或**前端没意见**时采用。
+  // 简化处理：只在原生值"更可信"时覆盖 —— 即原生说 folded/pass
+  // 和前端不同时，相信原生（它是真实窗口状态），但加 250ms 延迟，
+  // 给异步操作留出完成时间。
+  if (!hasNative()) return;
+  setTimeout(() => {
+    try {
+      const p = window.pywebview.api.status();
+      if (p && typeof p.then === 'function') {
+        p.then((st) => {
+          if (!st) return;
+          render({
+            folded: !!st.folded,
+            pass: !!st.pass_through,
+            opacity: st.opacity,
+          });
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }, 250);
 }
 
 // ── 拖动 ────────────────────────────────────────────────────────

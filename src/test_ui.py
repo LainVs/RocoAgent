@@ -110,8 +110,7 @@ def test_api(port):
         except Exception as e:
             ok(False, path, str(e)[:60])
 
-    # /api/dex 按名字去重：库里 857 条 implemented，但 103 个名字重复
-    # （「圣光迪莫」9 条，是同族皮肤变体）。图鉴显示 9 张同名卡会让人
+    # /api/dex 按名字去重：库里 857 条 implemented，但 103 个名字重复    # （「圣光迪莫」9 条，是同族皮肤变体）。图鉴显示 9 张同名卡会让人
     # 以为数据脏了。去重后应 683 条且名字全唯一。
     try:
         d = get(port, "/api/dex?limit=1000")
@@ -815,6 +814,65 @@ def worker():
           judge.coveredState =
             document.getElementById('sysState').textContent;
 
+          // ---- 折叠状态一致性（2026-11-21）
+          //
+          // 背景：折叠态有两份存储（localStorage + overlay.json），
+          // 原生侧 enter_embedded 恢复折叠态时**直接改 DOM**，
+          // 没更新前端模块级 `folded` 变量 -> 用户点按钮"没反应"。
+          //
+          // 现在统一走 setFolded()，这里验证四个消费者一致：
+          //   变量 folded / .overlay.folded / 按钮文案 / localStorage
+          setFolded(true);
+          const ov = document.getElementById('overlay');
+          const btnF = document.getElementById('btnFold');
+          judge.foldOn = {
+            cls: ov.classList.contains('folded'),
+            btn: btnF.textContent,
+            ls: (() => { try {
+              return localStorage.getItem('overlay.folded');
+            } catch (e) { return null; } })(),
+          };
+          setFolded(false);
+          judge.foldOff = {
+            cls: ov.classList.contains('folded'),
+            btn: btnF.textContent,
+            ls: (() => { try {
+              return localStorage.getItem('overlay.folded');
+            } catch (e) { return null; } })(),
+          };
+
+          // ---- 抽屉状态行
+          setFolded(true);
+          const ds = document.getElementById('dstate');
+          judge.dstateFold = {
+            text: ds ? ds.textContent : '',
+            folded: ds ? ds.dataset.folded : '',
+          };
+          setFolded(false);
+          judge.dstateUnfold = {
+            text: ds ? ds.textContent : '',
+            folded: ds ? ds.dataset.folded : '',
+          };
+
+          // ---- 穿透后状态行要立刻同步（2026-11-21）
+          //
+          // 实测踩过：refreshStatus() 原来在 `await callNative` 之后调，
+          // 原生侧有几十毫秒延迟，期间状态行还是旧值 ——
+          // 用户看到"点了但状态没变"。
+          //
+          // 现在 paint() 之后立刻 refreshStatus()，同步读 aria-pressed。
+          const bp = document.getElementById('btnPass');
+          if (bp.getAttribute('aria-pressed') === 'true') bp.click();
+          const passBefore = (ds || {}).dataset
+            ? ds.dataset.pass : '';
+          bp.click();
+          judge.passSync = {
+            aria: bp.getAttribute('aria-pressed'),
+            text: ds ? ds.textContent : '',
+            pass: ds ? ds.dataset.pass : '',
+            before: passBefore,
+          };
+
           // ★ skills 里是 null 时不能炸（2026-11-21 实机）
           //   服务端"还没识别到技能栏"会返回 [null,null,null,null]，
           //   原代码 s.dmg 直接 TypeError，整个 render() 中断，
@@ -1039,6 +1097,43 @@ def test_resilience(port):
     ok("遮挡" in cbox, "遮挡文案说清原因", cbox[:40])
     ok(e.get("coveredState") == "读取失败", "状态栏显示「读取失败」",
        str(e.get("coveredState")))
+
+    # ---- 折叠状态一致性（2026-11-21）
+    fo = e.get("foldOn") or {}
+    ff = e.get("foldOff") or {}
+    ok(fo.get("cls") is True, "setFolded(true) -> overlay.folded",
+       str(fo.get("cls")))
+    ok(fo.get("btn") == "展开", "setFolded(true) -> 按钮写「展开」",
+       str(fo.get("btn")))
+    ok(fo.get("ls") == "1", "setFolded(true) -> localStorage=1",
+       str(fo.get("ls")))
+    ok(ff.get("cls") is False, "setFolded(false) -> 去掉 folded",
+       str(ff.get("cls")))
+    ok(ff.get("btn") == "折叠", "setFolded(false) -> 按钮写「折叠」",
+       str(ff.get("btn")))
+    ok(ff.get("ls") == "0", "setFolded(false) -> localStorage=0",
+       str(ff.get("ls")))
+
+    # ---- 抽屉状态行
+    df = e.get("dstateFold") or {}
+    du = e.get("dstateUnfold") or {}
+    ok("折叠中" in (df.get("text") or ""), "折叠时状态行说「折叠中」",
+       (df.get("text") or "")[:30])
+    ok(df.get("folded") == "1", "状态行 data-folded=1",
+       str(df.get("folded")))
+    ok("展开" in (du.get("text") or ""), "展开时状态行说「展开」",
+       (du.get("text") or "")[:30])
+    ok(du.get("folded") == "0", "状态行 data-folded=0",
+       str(du.get("folded")))
+
+    # ---- 穿透后状态行立刻同步（不等原生异步返回）
+    ps = e.get("passSync") or {}
+    ok(ps.get("aria") == "true", "点击后 aria-pressed=true",
+       str(ps.get("aria")))
+    ok(ps.get("pass") == "1", "状态行 data-pass=1（立刻，不等原生）",
+       str(ps.get("pass")))
+    ok("穿透开启" in (ps.get("text") or ""),
+       "状态行文案立刻说「穿透开启」", (ps.get("text") or "")[:30])
     ok(e.get("stateText") not in ("状态未知",),
        "状态栏不是「状态未知」", str(e.get("stateText")))
 

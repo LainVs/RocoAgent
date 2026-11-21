@@ -1399,20 +1399,46 @@ def _run(args):
         _log("enter_embedded: folded=%s" % bool(state.get("folded")))
 
         # 把原生侧记住的折叠态同步给页面
+        #
+        # ★ 必须走前端的 setFolded()，不能直接改 DOM（2026-11-21）
+        # ------------------------------------------------------
+        # 原来这里是直接 evaluate_js 改 class + 按钮文案，只动了 UI，
+        # **没更新前端模块级的 `folded` 变量**。
+        #
+        # 后果：`config/overlay.json` 里 folded=true，窗口按折叠态开（153 高），
+        # 但前端 `folded` 还是 false。用户点一次按钮，`folded = !folded`
+        # 变成 true，UI 却已经是折叠态 —— **表现为"点了没反应"**。
+        #
+        # 现在调 `window.__setFolded(true)`，它统一更新
+        # 变量 / class / 按钮文案 / localStorage 四处，保证一致。
         if state.get("folded"):
             try:
-                win.evaluate_js("""
-                  (() => {
-                    const ov = document.getElementById('overlay');
-                    const btn = document.getElementById('btnFold');
-                    if (ov) ov.classList.add('folded');
-                    if (btn) btn.textContent = '展开';
-                    try { localStorage.setItem('overlay.folded', '1'); } catch (e) {}
-                  })()
-                """)
-                _log("enter_embedded: 恢复折叠态")
+                ok = win.evaluate_js(
+                    "typeof window.__setFolded === 'function'"
+                    " ? (window.__setFolded(true), true) : false")
+                if ok:
+                    _log("enter_embedded: 恢复折叠态（经 setFolded）")
+                else:
+                    # 页面还没加载完 -> 退回直接改 DOM（至少 UI 对）
+                    win.evaluate_js("""
+                      (() => {
+                        const ov = document.getElementById('overlay');
+                        const btn = document.getElementById('btnFold');
+                        if (ov) ov.classList.add('folded');
+                        if (btn) btn.textContent = '展开';
+                        try { localStorage.setItem('overlay.folded', '1'); } catch (e) {}
+                      })()
+                    """)
+                    _log("enter_embedded: 恢复折叠态（DOM 兜底）")
             except Exception as e:
                 _log("enter_embedded: 恢复折叠态失败 %s" % e)
+
+        # 让抽屉里的状态行显示真实状态（读 Api.status()）
+        try:
+            win.evaluate_js(
+                "typeof refreshStatus === 'function' && refreshStatus()")
+        except Exception:
+            pass
 
         time.sleep(0.6)
         if api.fit_window():

@@ -54,6 +54,13 @@
               <button data-theme="dark">深色</button>
             </div>
           </div>
+          <!-- 状态行：从原生侧读真实状态（2026-11-21）
+               为什么要显示：折叠态有两份存储（localStorage + overlay.json），
+               不一致时只能靠"窗口高度"猜。上轮排查为此绕了半小时。 -->
+          <div class="drawer-row">
+            <span class="dlabel">状态</span>
+            <span class="dstate" id="dstate">展开 · 穿透关闭</span>
+          </div>
           <div class="drawer-row drawer-btns">
             <button class="tbtn" id="btnPass" aria-pressed="false">
               <svg width="10" height="10" viewBox="0 0 10 10" fill="none">

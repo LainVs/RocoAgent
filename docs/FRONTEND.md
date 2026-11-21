@@ -720,7 +720,78 @@ overlay 是脱离父进程跑的（`creationflags=DETACHED`），**stdout 拿不
 ④ 悬浮窗不能抢焦点（focus=False），不能挡游戏点击（穿透锁）
 ⑤ 任何页面在 1280x800 到 3840x2160 之间都要正常
 ⑥ 中文路径必须 URL 编码
+⑦ 重启服务只按**文件名精确匹配**杀进程，禁止通配
 ```
+
+---
+
+### 7.1 禁止用通配杀进程（2026-11-21 事故）
+
+**永远不要这样写**：
+
+```powershell
+# ❌ 这一行会杀掉机器人、supervisor、botsup、keepalive、ui_server、overlay 全部
+Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+  Where-Object { $_.CommandLine -like '*RocoAgent*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+```
+
+`run_bot.py --supervisor` 的完整命令行是
+`C:\Python314\python.exe D:\Projects\RocoAgent\src\run_bot.py --supervisor`，
+**路径里就含 `RocoAgent`**，所以通配必然命中它。
+
+实测后果（`supervisor_restarts.log`）：
+
+```
+21:27:12 supervisor up pid=104580
+21:27:12   child pid=92424
+21:29:33 bot exited rc=4294967295 after 141s   <- -1 = 被外部结束
+22:19:21 supervisor up pid=137404               <- 重启
+22:25:28 supervisor up pid=140900               <- 又重启
+```
+
+本机并行跑着 `OcPromptJobs` 调度的多个 AI 会话，都在同一个仓库上工作。
+**一次通配杀进程 = 别人的工作白做 20 分钟。**
+
+**正确做法** —— 只匹配你要重启的那一个：
+
+```powershell
+# ✅ 只杀 overlay（悬浮窗壳）
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like '*src\overlay.py*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# ✅ 只杀 ui_server（Web 服务）
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like '*src\ui_server.py*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# ✅ 项目自带的精确停止（按 keepalive -> botsup -> robot 顺序）
+& $py src\run_bot.py --stop
+```
+
+**绝对不要**杀 `run_bot.py` / `botsup` / `keepalive` / `robot` ——
+那是机器人主链路，归主会话管。
+
+### 7.2 重启悬浮窗的完整流程
+
+```powershell
+# 1. 只停 overlay 和 ui_server（不要动机器人）
+Get-CimInstance Win32_Process |
+  Where-Object { $_.CommandLine -like '*src\overlay.py*' -or
+                 $_.CommandLine -like '*src\ui_server.py*' } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+# 2. 等 2 秒让端口释放
+Start-Sleep -Seconds 2
+
+# 3. 重启（用系统 Python，不是 venv）
+Start-Process -FilePath "C:\Python314\python.exe" `
+  -ArgumentList "src\ui.py","--overlay","--console" `
+  -WorkingDirectory "D:\Projects\RocoAgent"
+```
+
+重启后等 20~30 秒（ONNX 冷启动），再查 `/api/state`。
 
 ---
 
@@ -810,6 +881,106 @@ CSS --alpha  -> 固定 1.0，面板底色够实，文字对比度稳定
 | 面板压在亮背景上白字看不清 | 对比度只有 1.59:1 | 所有文字加 `text-shadow: 0 1px 2px rgba(0,0,0,.92)`，回到 10.65:1 |
 | 20% 透明度时血条消失 | 图形元素没有描边 | 给 `--well-a` / `--line-a` / `--edge-a` 加不透明度下限补偿 |
 | 拉到低透明度后整块面板看不见边界 | 边框也跟着透明了 | 边框单独算 `--edge-a = 0.10*boost + (1-a)*0.10` |
+| **「性格 —」「推测」「技能栏未识别」几乎看不见** | **`--ink-3` 在整窗 alpha 0.78 下只有 2.48:1** | **见 8.2.1** |
+| **同一个语义色，血条够深但文字看不清** | **一个 token 承担图形（门槛 3.0）和文字（门槛 4.5）两种用途** | **拆成 `--kill` / `--kill-text`，见 8.2.2** |
+
+#### 8.2.1 对比度必须按「整窗 alpha」算，不能按纯色算
+
+**先澄清一个容易算错的模型**（我自己踩过）：
+
+```
+❌ 错的假设：面板背景半透明、文字不透明
+   -> 算出 --ink-3 只有 1.83
+
+✅ 实际实现（ui/app.js:937-952）：
+   原生模式 CSS --alpha 固定 1.0，透明度走**整窗 alpha**
+   （SetLayeredWindowAttributes）
+   -> 文字和背景**一起**按同一比例变淡
+```
+
+所以正确算法是：把前景和背景**都**按 alpha 叠到游戏画面上，再算对比度。
+
+```python
+def over(fg, desktop, a):
+    return tuple(round(a*f + (1-a)*d) for f, d in zip(fg, desktop))
+
+ratio(over(fg, desktop, 0.78), over(bg, desktop, 0.78))
+```
+
+**并且要取多种游戏底色的最坏值** —— 罗科的场地有亮石砖、暗阴影、中性灰：
+
+```python
+DESKTOPS = [(216, 212, 204),   # 亮石砖
+            (42, 42, 46),      # 暗阴影
+            (128, 128, 128)]   # 中性灰
+worst = min(ratio_after_alpha(fg, bg, d) for d in DESKTOPS)
+```
+
+实测结果（`ui-m80` 修复前）：
+
+```
+深色  --ink-3  #7A776F  最坏 2.80  (需 4.5)
+浅色  --ink-3  #8E8A82  最坏 2.48  (需 4.5)
+```
+
+**为什么一直没发现**：`test_contrast()` 只测 `console.css`（控制台），
+**从没测过悬浮窗的 `style.css`**。已补 `test_overlay_contrast()`。
+
+#### 8.2.2 一个语义色不能同时当图形和文字
+
+`--kill` 原本同时用于：
+
+```
+图形（门槛 3.0）：.bar[data-lvl="low"] .fill   血条填充
+文字（门槛 4.5）：.mu-side.bad b               被克制倍数 ×2.0
+                  .skill.kill .sk-pct          伤害百分比
+                  .verdict .bad                被击杀回合
+```
+
+实测同一个值**无法同时满足**：
+
+```
+深色 #C4553F   图形 2.70 / 文字 2.70   两边都不够
+提到 #DC998B   文字 4.51 达标，但红色提亮就偏粉，失去警示感
+```
+
+解法：拆成两个 token。
+
+```css
+--kill:      #C9624E;   /* 图形：血条填充，门槛 3.0 */
+--kill-text: #DC998B;   /* 文字：门槛 4.5 */
+```
+
+CSS 里 6 处 `var(--kill)` 逐个判断：只有 `.bar .fill` 的 `background`
+保留 `--kill`，其余 5 处 `color` 改 `--kill-text`。
+
+**测试锁住了这条**：
+
+```python
+for m in re.finditer(r"([^\n{}]+)\{([^}]*)\}", css):
+    if "var(--kill)" in m.group(2):
+        ok("background" in body and "color:" not in body,
+           "--kill 只用于 background")
+```
+
+以后有人把 `color` 改回 `var(--kill)`，测试会失败 —— 否则对比度会
+静默跌回 2.70，而这种回归肉眼很难发现。
+
+#### 8.2.3 调色要保色相，不能往黑白拉
+
+为了达标直接把明度拉到极值会解出 `#FFFFFF` / `#000000`，
+色相偏移 43°，界面变成灰扑扑的，失去 Claude 那种暖调。
+
+正确做法是**只在 HSL 的 L 上二分**，H/S 完全不动：
+
+```python
+h, l, s = colorsys.rgb_to_hls(*[x/255 for x in rgb])
+# 二分找最小 |ΔL| 使 worst_ratio >= target
+# 加 |ΔL| <= 0.30 约束，超过说明这个色相在该背景上做不到
+```
+
+实测解出的 ΔL 都在 0.04~0.22，颜色还在同一色系。
+
 
 ### 8.3 布局 / CSS
 
