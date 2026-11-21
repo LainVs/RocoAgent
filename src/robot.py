@@ -3005,7 +3005,23 @@ class Bot:
         # Only a genuinely healthy pet means the switch succeeded. Resetting on
         # "my_pct > 0.5" was too eager: a flicker of the panel counted as
         # recovery and restarted the whole blacklist.
+        #
+        # ⚠ 2026-11-22 实测：`me=0.0` 是**读不到**而非真倒下时，下一帧
+        # 会读到 100%，于是立刻打印 "recovered (hp 100%) after 0 attempts"
+        # 并清空 faint 状态。整晚统计到 31 次这种"0% -> 立刻满血"。
+        # 它本身不会造成错误出招（`_zero_hp_streak` 已经挡住），
+        # 但会把 `faint_at` 清掉，干扰后续真倒下时的判断。
+        #
+        # 现在要求：进入 faint 时确实读到了低血（`_faint_hp <= 5`），
+        # 才允许"恢复"；否则视为误读，只清计时、不打印 recovered。
+        _was_low = (getattr(self, "_faint_hp", None) is not None
+                    and self._faint_hp <= 5.0)
         if self.faint_at is not None and st["my_pct"] is not None and st["my_pct"] > 5.0:
+            if not _was_low and self.switch_attempt == 0:
+                # 误读：进来时血量并不低，只是这一帧读到了高值
+                self.faint_at = None
+                self._faint_hp = None
+                return
             log("FAINT -> recovered (hp %.0f%%) after %d attempts"
                 % (st["my_pct"], self.switch_attempt))
             # Only a GENUINE faint counts for dead_count: the party panel can
