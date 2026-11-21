@@ -179,6 +179,18 @@ def decide(state):
     # 硬吃 128 伤害。速度相同时谁先手由游戏决定，保守起来更安全。
     dying_this_turn = inc >= my_hp
     if dying_this_turn:
+        # ---- 先发制人：priority>0 的技能在对面出手**之前**结算 -------------
+        #
+        # 用户明确要求"先发制人的什么时候使用"。判据很干净：
+        #   这回合会死 + 先发技能能反杀 -> 直接打，不用换人。
+        # 换人会白送一次出场，而且新精灵下回合还要面对同一个对手。
+        for s in me.get("skills") or []:
+            if (s.get("kind") == "num" and s.get("lit", True)
+                    and int(s.get("priority") or 0) > 0
+                    and (s.get("dmg") or 0) >= foe_hp):
+                return (("skill", s["i"]),
+                        "priority %+d kills before foe acts (%d dmg >= %d hp)"
+                        % (int(s.get("priority")), s["dmg"], foe_hp), {})
         # 换人：新精灵能扛住这一击才算有效
         for slot, pet in enumerate(bench or [], start=1):
             if not pet.get("name") or pet.get("hp", 0) <= 0:
@@ -207,9 +219,11 @@ def decide(state):
             continue
         cost = s.get("cost") or 0
         energy_after = max(0, energy - cost)
-        # Whoever is faster acts first; that decides whether a kill lands
-        # before the retaliation.
-        if we_outspeed:
+        # 出手顺序：先发制人（priority>0）在速度之前结算，所以它一定先动；
+        # 否则比速度，谁快谁先手。
+        pri = int(s.get("priority") or 0)
+        acts_first = we_outspeed or pri > 0
+        if acts_first:
             kills = dmg >= foe_hp
             taken = 0 if kills else inc
         else:
@@ -217,12 +231,16 @@ def decide(state):
             kills = (not dies_first) and dmg >= foe_hp
             taken = inc
         score = _outcome(dmg / max(1, foe_max), kills,
-                         taken / max(1, my_max), (not we_outspeed) and inc >= my_hp,
+                         taken / max(1, my_max),
+                         (not acts_first) and inc >= my_hp,
                          my_hp - taken, my_max, energy_after, 0, matchup)
         cands.append((score, ("skill", s["i"]),
                       "skill %d: %d dmg, %d taken, %s" % (
                           s["i"], dmg, taken,
-                          "kill" if kills else ("outspeed" if we_outspeed else "slower"))))
+                          ("priority %+d" % pri) if pri > 0
+                          else ("kill" if kills
+                                else ("outspeed" if we_outspeed
+                                      else "slower")))))
 
     # ---- non-damaging skills (buffs / heals / shields / copy) ------------
     # 实测结论（模拟器自对弈，2026-11-21）：

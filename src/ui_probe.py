@@ -243,33 +243,21 @@ def is_result_screen(screen):
     return float((mx < 100).mean()) > 0.35
 
 
-def find_switch_rows(screen, bar_visible=None):
-    """Detect the forced-switch party list (5 staggered cards down the left).
+SWITCH_BOXES = (
+    # 基准布局：实测 2560x1600 下换人面板就在这里
+    (300, 400, 620, 950),
+    # 宽版兜底：其它分辨率 / 宽高比下，游戏 UI 会整体缩放+偏移，
+    # 固定框可能把最上面/最下面那张卡切掉，导致 plates<3 直接返回 []。
+    # 实测"换个分辨率死了不换人"最可能就是这条。
+    (180, 260, 980, 1280),
+)
 
-    Each row is a light rounded plate (~155x70) with the pet icon on top. The
-    death animation has none of these, so this cleanly separates "pet just died"
-    from "the game is actually waiting for me to pick a replacement".
 
-    `bar_visible` lets the caller pass in an already-computed skill-bar result;
-    recomputing it costs ~50 ms and _battle_tick already knows the answer.
-
-    Returns a list of window-relative (x, y) click targets, top row first.
-    """
-    X0, Y0, W, H = 300, 400, 620, 950
+def _rows_in_box(screen, box):
+    """在指定窗口区域里找换人面板的卡片行。"""
+    X0, Y0, W, H = box
     crop = screen.grab_s((X0, Y0, W, H))
     if crop is None:
-        return []
-    # The skill cards' white name plates live in the same area and match the
-    # same "light rounded rect" test. If the skill bar is on screen this is a
-    # normal battle, not the switch panel.
-    if bar_visible is None:
-        x0, y0, x1, y1 = SKILL_BOX
-        bar = screen.grab_s((x0, y0, x1 - x0, y1 - y0))
-        if bar is not None:
-            bar_visible, _ = _is_skillbar(bar, (0, 0, x1 - x0, y1 - y0))
-        else:
-            bar_visible = False
-    if bar_visible:
         return []
     mx = crop.max(axis=2).astype(np.int16)
     mn = crop.min(axis=2).astype(np.int16)
@@ -308,6 +296,37 @@ def find_switch_rows(screen, bar_visible=None):
         rows.insert(0, (ny, nx))
     rows = rows[:5]
     return [(int(X0 + x0), int(Y0 + y0)) for y0, x0 in rows]
+
+
+def find_switch_rows(screen, bar_visible=None):
+    """Detect the forced-switch party list (5 staggered cards down the left).
+
+    Each row is a light rounded plate (~155x70) with the pet icon on top. The
+    death animation has none of these, so this cleanly separates "pet just died"
+    from "the game is actually waiting for me to pick a replacement".
+
+    `bar_visible` lets the caller pass in an already-computed skill-bar result;
+    recomputing it costs ~50 ms and _battle_tick already knows the answer.
+
+    Returns a list of window-relative (x, y) click targets, top row first.
+    """
+    # The skill cards' white name plates live in the same area and match the
+    # same "light rounded rect" test. If the skill bar is on screen this is a
+    # normal battle, not the switch panel.
+    if bar_visible is None:
+        x0, y0, x1, y1 = SKILL_BOX
+        bar = screen.grab_s((x0, y0, x1 - x0, y1 - y0))
+        if bar is not None:
+            bar_visible, _ = _is_skillbar(bar, (0, 0, x1 - x0, y1 - y0))
+        else:
+            bar_visible = False
+    if bar_visible:
+        return []
+    for box in SWITCH_BOXES:
+        rows = _rows_in_box(screen, box)
+        if len(rows) >= 3:
+            return rows
+    return []
 
 
 # ------------------------------------------------------------------ decision

@@ -1401,6 +1401,8 @@ class Bot:
                     "kind": cls,
                     "name": s.get("skill_name"),
                     "lit": bool(s.get("lit", True)),
+                    # 先发制人这类技能 priority>0：出手顺序在速度之前
+                    "priority": int(s.get("priority") or 0),
                 })
                 continue
             # The number on the card is already post-effectiveness damage, so it
@@ -1427,6 +1429,9 @@ class Bot:
             skills.append({
                 "i": s["index"], "dmg": dmg, "cost": cost,
                 "kind": kind, "lit": bool(s.get("lit", True)),
+                "name": s.get("skill_name"),
+                # 先发制人这类技能 priority>0：出手顺序在速度之前
+                "priority": int(s.get("priority") or 0),
             })
 
         # 退化检测：如果所有伤害技能的 cost 都是 0，而技能表里有耗能，
@@ -3778,6 +3783,22 @@ class Bot:
         # The panel is up, so the skill bar is not; skip re-detecting it.
         rows = find_switch_rows(self.screen, bar_visible=False)
         if len(rows) < 3:
+            # 诊断：fainted/forced_panel 已经判定"面板该开了"，却认不出卡片行。
+            # 存一帧现场，事后能量出真实布局（换分辨率后最常踩）。
+            if now - getattr(self, "_switch_miss_at", 0.0) > 15.0:
+                self._switch_miss_at = now
+                try:
+                    import cv2
+                    _im = self.screen.grab_client((0, 0, 2560, 1600))
+                    if _im is not None:
+                        cv2.imwrite(os.path.join(
+                            LOG_DIR, "switch_miss_%s.png"
+                            % time.strftime("%H%M%S")),
+                            cv2.cvtColor(_im, cv2.COLOR_RGB2BGR))
+                    log("FAINT -> switch panel NOT detected (rows<3), "
+                        "frame dumped")
+                except Exception:
+                    pass
             return
         # Give up after a while instead of hammering a panel that is not
         # listening: the game picks for us after 15-45 s anyway.

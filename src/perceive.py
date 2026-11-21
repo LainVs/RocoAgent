@@ -804,7 +804,7 @@ def _skill_meta(my_name):
     if hit is not None and now - hit["at"] < _META_TTL:
         return hit
     meta = {"at": now, "moves": [], "powers": {}, "names": {},
-            "dash_costs": None}
+            "priorities": {}, "dash_costs": None}
     team = _team_snapshot()
     meta["moves"] = list((team.get(my_name) or {}).get("moves") or [])
     try:
@@ -813,11 +813,14 @@ def _skill_meta(my_name):
         db = sqlite3.connect(DB_PATH)
         try:
             for i, sid in enumerate(meta["moves"][:4]):
-                row = db.execute("SELECT power, name FROM skills WHERE id=?",
-                                 (int(sid),)).fetchone()
+                row = db.execute(
+                    "SELECT power, name, priority FROM skills WHERE id=?",
+                    (int(sid),)).fetchone()
                 if row:
                     meta["powers"][i] = row[0] or 0
                     meta["names"][i] = row[1]
+                    # 先发制人/守住这类技能 priority > 0，出手顺序在速度之前。
+                    meta["priorities"][i] = row[2] or 0
             if not meta["moves"]:
                 # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
                 row = db.execute(
@@ -968,6 +971,9 @@ def attach_skill_names(slots, my_name):
                 continue
             slots[i]["skill_name"] = name
             slots[i]["skill_kind"] = SK.classify(name)
+            # 出手顺序：priority>0 的技能在速度之前结算（先发制人/守住）。
+            slots[i]["priority"] = int(meta.get("priorities", {}).get(i, 0) or 0)
+            slots[i]["power"] = int(meta.get("powers", {}).get(i, 0) or 0)
     except Exception:
         pass
     return slots
