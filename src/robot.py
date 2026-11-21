@@ -1279,13 +1279,16 @@ class Bot:
         items = portraits.load_library(portraits.FOE_LIB_DIR)
         name, sc = portraits.identify(img, items,
                                       target=(box[2] - 2 * m, box[3] - 2 * m))
-        # ---- 第二通道：角色立绘 ONNX 识别（roco-cal 模型，620 类）
-        # HUD 头像只有 71 张模板，覆盖面极低；立绘模型实测置信度 0.76~1.00。
+        # ---- 第二通道：ONNX 分类（roco-cal 模型，620 类）
+        # HUD 头像模板只有 71 张，覆盖面低；ONNX 覆盖 620 类。
         # 两个通道都跑，由 identify_fused 融合。
         #
-        # 防抖：立绘框里会混入背景和 NPC，相邻帧可能给出不同答案
-        # （实测 01:12 连续给出 绿草精灵/白瑟/燃薪虫）。所以要求
-        # "连续 2 帧同一答案 + 高置信" 才覆盖 HUD。
+        # ★ 2026-11-21：ONNX 输入已从"固定百分比立绘框"改为"HUD 头像框"。
+        #   旧框框的是会在场地里走动的 3D 精灵，实测 0/8 准确但置信 0.52~0.99，
+        #   会把正确的模板结果覆盖成错的（实测 绒光优优 -> 画间沉铁兽 0.99）。
+        #   改完这条链路的最终正确率 1/4 -> 3/4。
+        #
+        # 防抖：换人瞬间 HUD 头像会有一两帧过渡，仍要求"连续 2 帧同一答案"。
         p_res = []
         if portrait_onnx.available():
             try:
@@ -1306,12 +1309,12 @@ class Bot:
                 % (fused["hud"], fused["hud_conf"],
                    fused["portrait"], fused["portrait_conf"], fused["source"]))
         if fused["source"] == "portrait" and fused["name"]:
-            # 立绘通道给的是种族名（不带编号），可直接当 foe_name 用
+            # ONNX 通道给的是种族名（不带编号），可直接当 foe_name 用
             if fused["name"] != self.foe_name:
-                log("FOE -> %s (%.2f, 立绘通道)" % (fused["name"], fused["conf"]))
+                log("FOE -> %s (%.2f, ONNX)" % (fused["name"], fused["conf"]))
                 self.foe_name = fused["name"]
                 self.foe_bust = fused["name"]
-                # 立绘通道能定名字，但 species_id 需要查库
+                # ONNX 能定名字，但 species_id 需要查库
                 try:
                     import portrait_db as P
                     row = P.connect().execute(
