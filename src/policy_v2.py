@@ -44,6 +44,19 @@ import pvp_engine as E
 WEIGHTS_PATH = os.path.join(os.path.dirname(_HERE), "config", "policy_weights.json")
 _W = None
 
+# 能量项的分母（把"剩余能量"归一到 0..1）。
+#
+# 踩过的坑（2026-11-21 08:50）：这里原本写死 10.0，假设 energy 是
+# 0~10 的能量值。但实测 perceive 传进来的 energy 是**能量点亮数**，
+# 取值几乎总是 0~2（328 条样本里：0 出现 33 次、1 出现 293 次、
+# 2 出现 2 次）。用 10 作分母等于把这个信号压到接近 0，
+# w_energy 这一项基本失效。
+#
+# 现在按实测的最大值 2 归一化，让"还剩多少能量"这个信号真正起作用。
+# 注意：能不能出招的判断**不依赖 energy**，而是用卡面 lit
+# （实测 lit 与 plate>220 完全一致，3061 on / 775 off，0 处矛盾）。
+ENERGY_SCALE = 2.0
+
 
 def weights():
     global _W
@@ -118,7 +131,7 @@ def _outcome(our_dmg, our_kills, opp_dmg, they_kill_us, after_hp, max_hp,
         - w.get("w_damage_taken", 0.15) * _c01(opp_dmg)
         - w.get("w_opp_ko", 0.20) * (1.0 if they_kill_us else 0.0)
         + w.get("w_type_matchup", 0.05) * _c01(matchup / 4.0)
-        + w.get("w_energy", 0.03) * _c01(energy_after / 10.0)
+        + w.get("w_energy", 0.03) * _c01(energy_after / ENERGY_SCALE)
         + w.get("w_pet_count", 0.02) * count_delta * 0.15
     )
     return s
