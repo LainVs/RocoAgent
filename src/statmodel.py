@@ -61,16 +61,42 @@ def nature_mult(name):
     return t.get(name) or t.get("neutral") or {k: 1.0 for k in STATS}
 
 
+def round_half_up(x):
+    """四舍五入（游戏用的），不是 Python round() 的银行家舍入。
+
+    为什么必须换（2026-11-21 实测）
+    ------------------------------
+    Python 的 `round()` 遇到 .5 会取偶数：
+        round(416.5) = 416      round(417.5) = 418
+    而游戏是标准四舍五入：
+        416.5 -> 417            417.5 -> 418
+
+    对照 my_team 里 5 只精灵的 30 个实测面板值：
+
+        冥古龙 HP   旧模型 416   实测 417   <- 差 1
+        卡瓦重 魔攻  旧模型  72   实测  73   <- 差 1
+        恶魔狼 HP   旧模型 416   实测 417   <- 差 1
+
+    换成 half-up 后 **30/30 全中**。
+
+    全库影响面（1228 只 × 6 维，iv=60 无性格）：
+        646 / 7368 = 8.8% 的数值会变，速度最严重（209 个）
+    所以这不是"1 点误差无所谓"——它系统性地压低了伤害预测。
+    """
+    return (int(math.floor(x + 0.5)) if x >= 0
+            else -int(math.floor(-x + 0.5)))
+
+
 def calc_real_stat(sv, iv=0, nature=1.0, is_hp=False):
-    """单项面板值（原样移植 calcRealStat）。"""
+    """单项面板值（移植 calcRealStat，舍入改成游戏的 half-up）。"""
     iv = max(IV_MIN, min(IV_MAX, int(iv)))
     if is_hp:
-        return int(round((sv * 1.7 + iv * 0.85 + 70) * nature + 100))
+        return round_half_up((sv * 1.7 + iv * 0.85 + 70) * nature + 100)
     raw = sv * 1.1 + iv * 0.55 + 10
     # 他的特例：种族值 105、无个体、无性格时用 floor
     inner = math.floor(raw) if (sv == 105 and iv == 0 and nature == 1.0) \
-        else int(round(raw))
-    return int(round(inner * nature + 50))
+        else round_half_up(raw)
+    return round_half_up(inner * nature + 50)
 
 
 def level_mult(lv):

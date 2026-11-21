@@ -36,6 +36,38 @@ def main():
               % (name, sv, want, got, nat, "OK" if ok else "**偏差**"))
     assert bad == 0, "%d 只对不上" % bad
 
+    # ---- 四舍五入（2026-11-21 修）
+    #
+    # 旧代码用 Python 的 round()，那是银行家舍入：round(416.5)=416。
+    # 游戏是四舍五入：416.5 -> 417。用 my_team 里的实测面板做断言，
+    # 这 5 个值是从游戏界面上读下来的，不是算出来的。
+    print("\n四舍五入（对照 my_team 实测面板）")
+    half_up_cases = [
+        # (说明, 种族值, iv, 性格倍率, 是否HP, 实测值)
+        ("冥古龙 HP",   115, 60, 1.0, True,  417),
+        ("恶魔狼 HP",   115, 60, 1.0, True,  417),
+        ("卡瓦重 魔攻",  14,  0, 0.9, False,  73),
+        ("音速犬 HP",    85, 60, 1.0, True,  366),
+        ("冰钻布鲁斯 HP", 73, 60, 1.0, True,  345),
+        ("卡瓦重 HP",    77, 60, 1.0, True,  352),
+        ("银月狼王 HP", 115, 60, 1.0, True,  417),
+    ]
+    for label, sv, iv, nat, is_hp, want in half_up_cases:
+        got = S.calc_real_stat(sv, iv, nat, is_hp)
+        ok = got == want
+        bad += 0 if ok else 1
+        print("  %-14s 模型 %4d  实测 %4d  %s"
+              % (label, got, want, "OK" if ok else "**差 %+d**" % (want - got)))
+    assert bad == 0, "舍入或面板仍有 %d 项对不上" % bad
+
+    # round_half_up 本身的行为（负数和 .5 边界）
+    assert S.round_half_up(416.5) == 417
+    assert S.round_half_up(417.5) == 418
+    assert S.round_half_up(0.5) == 1
+    assert S.round_half_up(1.5) == 2
+    assert S.round_half_up(2.5) == 3        # 银行家舍入会给 2
+    assert S.round_half_up(-0.5) == -1
+
     # 伤害公式：单一 floor
     assert S.damage(300, 175, 105, stab=1.25) == int(
         (300 / 175) * (37 / 41) * 105 * 1.25)
