@@ -127,6 +127,19 @@ class Screen:
         self.sct = mss.mss()
         self.rect = None
         self.hwnd = None
+        # client_size / client_off 必须**先给默认值**。
+        #
+        # 为什么（2026-11-21 踩到）：`refresh()` 在找不到游戏窗口时提前 return，
+        # 于是新构造的 Screen 没有 client_size 属性。而调用方
+        # （standalone / foe_ident / portraits.box_for）是直接读
+        # `screen.client_size` 的，游戏不在就抛 AttributeError：
+        #
+        #     AttributeError: 'Screen' object has no attribute 'client_size'
+        #
+        # 这类错误发生在"游戏没开"这种最常见的情况，必须让它优雅退化成
+        # 空尺寸，而不是崩掉。
+        self.client_size = (0, 0)
+        self.client_off = (0, 0)
         self.last_refresh = 0.0
         self.refresh()
 
@@ -135,6 +148,8 @@ class Screen:
         if not g:
             self.rect = None
             self.hwnd = None
+            self.client_size = (0, 0)
+            self.client_off = (0, 0)
             return
         self.hwnd, x, y, w, h = g
         # A minimised game reports a tiny placeholder rect, so every window-
