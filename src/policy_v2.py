@@ -212,17 +212,28 @@ def decide(state):
                 return (("skill", s["i"]),
                         "priority %+d kills before foe acts (%d dmg >= %d hp)"
                         % (int(s.get("priority")), s["dmg"], foe_hp), {})
-        # 换人：新精灵能扛住这一击才算有效
+        # 换人：新精灵能扛住这一击才算有效。
+        #
+        # ⚠ 2026-11-22 修正：原来是"第一个能扛住的就选"，但 bench 的顺序
+        # 是槽位顺序，与"谁最健康"无关。实测选中的替补自己也只有
+        # 115 血（对面 238 伤害），换上去白送。
+        # 现在按"扛完还剩多少血"排序，选最优的那只。
+        best = None
         for slot, pet in enumerate(bench or [], start=1):
             if not pet.get("name") or pet.get("hp", 0) <= 0:
                 continue
             inc_new, _src = _incoming(foe_name, pet["name"],
                                       pet.get("hp_max") or 1)
             if inc_new < pet.get("hp", 0):
-                return (("switch", slot),
-                        "dying this turn (%d hp vs %d incoming) -> "
-                        "switch to %s which survives"
-                        % (my_hp, inc, pet["name"]), {})
+                after = pet["hp"] - inc_new
+                if best is None or after > best[0]:
+                    best = (after, slot, pet, inc_new)
+        if best is not None:
+            _after, slot, pet, inc_new = best
+            return (("switch", slot),
+                    "dying this turn (%d hp vs %d incoming) -> "
+                    "switch to %s (survives with %d hp)"
+                    % (my_hp, inc, pet["name"], _after), {})
         # 没有能活的替补：优先选"能反杀"的攻击（死前换掉对面）
         for s in me.get("skills") or []:
             if s.get("kind") != "num" or not s.get("lit", True):

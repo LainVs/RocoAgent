@@ -1611,6 +1611,18 @@ class Bot:
 
         Without OCR we only have names for the pets we have already seen on
         screen; unknown slots are omitted rather than guessed.
+
+        ⚠ 2026-11-22 实测修正：原来所有替补都按**满血**上报
+        （`hp = mx`），于是 policy_v2 的"必死换人"判断 `inc_new < pet["hp"]`
+        恒成立 —— 它会选一只已经残血的精灵去扛一击必死的伤害：
+
+            06:47:47 v2 lethal switch -> allowed
+                     (dying this turn (115 hp vs 238 incoming)
+                      -> switch to 音速犬 which survives)
+
+        换上去的音速犬其实只有 115 血，扛不住 238，白送一只。
+        现在用 `slot_hp`（每次在场时记录的真实血量百分比）折算；
+        没见过血量的槽位按满血（它没上过场，应该是满的）。
         """
         out = []
         for slot in range(1, 7):
@@ -1621,7 +1633,11 @@ class Bot:
                 continue
             import pvp_engine as E
             mx = E.max_hp(name) or 1
-            out.append({"name": name, "hp": mx, "hp_max": mx, "energy": 10})
+            pct = self.slot_hp.get(slot)
+            hp = mx if pct is None else max(0, int(mx * pct / 100.0))
+            out.append({"name": name, "hp": hp, "hp_max": mx,
+                        "energy": 10, "slot": slot,
+                        "hp_pct": pct})
         return out
 
     # ---------------------------------------------------------------- pets
