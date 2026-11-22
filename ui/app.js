@@ -117,6 +117,24 @@ function loadAvatar(el, name, side) {
   pumpImages();
 }
 
+// 精灵名 -> 图鉴 id 映射（一次性拉取，缓存）。
+// 官方头像 `assets/pet_avatars/<id>.png` 是 128px 带 alpha 的方图，
+// 比 HUD 截图干净得多，优先用它；拿不到 id 再退回 HUD 模板。
+let IDMAP = null;
+let IDMAP_PENDING = null;
+
+function ensureIdmap() {
+  if (IDMAP) return Promise.resolve(IDMAP);
+  if (IDMAP_PENDING) return IDMAP_PENDING;
+  IDMAP_PENDING = fetch(API + '/api/species/idmap', { cache: 'no-store' })
+    .then((r) => r.json())
+    // 接口返回 `{ids: {名字: 图鉴id}}`（见 ui_server.species_idmap 的调用点），
+    // 兼容直接返回映射的写法。
+    .then((d) => { IDMAP = (d && d.ids) || d || {}; return IDMAP; })
+    .catch(() => { IDMAP = {}; return IDMAP; });
+  return IDMAP_PENDING;
+}
+
 function pumpImages() {
   while (IMG_ACTIVE.size < IMG_MAX && IMG_Q.length) {
     runImage(IMG_Q.shift());
@@ -124,24 +142,45 @@ function pumpImages() {
 }
 
 function runImage({ el, name, side }) {
-  const file = encodeURIComponent(name) + '.png';
-  const dirs = side === 'foe'
-    ? ['portraits_foe', 'portraits']
-    : ['portraits', 'portraits_foe'];
-  let idx = 0;
-  const img = new Image();
-  IMG_ACTIVE.add(img);
+  const done = () => pumpImages();
 
-  const done = () => { IMG_ACTIVE.delete(img); pumpImages(); };
+  // 官方头像优先（按图鉴 id）
+  const tryOfficial = () => new Promise((resolve) => {
+    ensureIdmap().then((m) => {
+      const sid = m && m[name];
+      if (!sid) { resolve(false); return; }
+      const img = new Image();
+      img.onload = () => {
+        el.textContent = '';
+        el.replaceChildren(img);
+        resolve(true);
+      };
+      img.onerror = () => resolve(false);
+      img.src = '/pet_avatars/' + sid + '.png';
+    }).catch(() => resolve(false));
+  });
 
-  img.onload = () => { el.textContent = ''; el.replaceChildren(img); done(); };
-  img.onerror = () => {
-    idx += 1;
-    if (idx < dirs.length) { img.src = dirs[idx] + '/' + file; return; }
-    el.textContent = name.slice(0, 1);
-    done();
+  // 退路：HUD 头像模板（中文文件名，注意前端要 encodeURIComponent）
+  const tryTemplates = () => {
+    const file = encodeURIComponent(name) + '.png';
+    const dirs = side === 'foe'
+      ? ['portraits_foe', 'portraits']
+      : ['portraits', 'portraits_foe'];
+    let idx = 0;
+    const img = new Image();
+    IMG_ACTIVE.add(img);
+    const fin = () => { IMG_ACTIVE.delete(img); done(); };
+    img.onload = () => { el.textContent = ''; el.replaceChildren(img); fin(); };
+    img.onerror = () => {
+      idx += 1;
+      if (idx < dirs.length) { img.src = dirs[idx] + '/' + file; return; }
+      el.textContent = name.slice(0, 1);
+      fin();
+    };
+    img.src = dirs[0] + '/' + file;
   };
-  img.src = dirs[0] + '/' + file;
+
+  tryOfficial().then((ok) => { if (!ok) tryTemplates(); });
 }
 
 /* ================================================================
@@ -1053,6 +1092,9 @@ function bindDrawer() {
   const drawer = $('drawer');
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
+    // ★ 2026-11-23：折叠态下抽屉太窄（320px）放不下滑块，先展开再开抽屉。
+    // 否则用户点设置会看到"没反应"（旧 CSS 甚至直接把抽屉藏了）。
+    if (folded) setFolded(false);
     const open = drawer.classList.toggle('open');
     btn.setAttribute('aria-expanded', String(open));
     // 打开抽屉时刷新状态行 —— 那才是用户想确认"我现在是什么状态"的时刻
@@ -1155,6 +1197,12 @@ function bindFold() {
     toggle();
   });
   btnFold.addEventListener('click', toggle);
+
+  // ★ 2026-11-23：折叠态头部直接给一个展开按钮。
+  // 原来唯一的展开入口是设置抽屉里的 btnFold，而折叠态连抽屉都打不开
+  // —— 用户被锁在 320px 的小窗里出不来。
+  const btnExpand = $('btnExpand');
+  if (btnExpand) btnExpand.addEventListener('click', toggle);
 
   // 从 localStorage 恢复（原生侧 enter_embedded 之后会再同步一次，
   // 那边是权威 —— 它读的是 config/overlay.json）

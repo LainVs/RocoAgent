@@ -21,6 +21,7 @@ ui_server 只管数据，不管窗口。这个文件负责：
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import socket
 import subprocess
@@ -64,11 +65,71 @@ def alive(port, timeout=1.5):
         return False
 
 
-def start_server(port):
-    """起服务；已经在跑就直接复用。"""
-    if alive(port):
-        print("  服务已在运行  http://127.0.0.1:%d" % port)
+def health(port, timeout=1.5):
+    """在跑的服务信息（pid / 自身代码 mtime）；没在跑返回 None。"""
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/api/health" % port,
+                timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            return json.loads(r.read().decode("utf-8", "replace"))
+    except Exception:
+        return None
+
+
+def _local_src_mtime():
+    try:
+        return os.path.getmtime(os.path.join(SRC, "ui_server.py"))
+    except OSError:
+        return 0.0
+
+
+def _stale(h):
+    """在跑的服务是不是旧代码（mtime 不一致）。"""
+    if not h:
+        return False
+    remote = float(h.get("src_mtime") or 0)
+    return bool(remote) and abs(remote - _local_src_mtime()) > 0.5
+
+
+def _kill_pid(pid):
+    try:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, timeout=10)
         return True
+    except Exception:
+        return False
+
+
+def start_server(port, allow_restart=True):
+    """起服务；已经在跑就复用 —— 但**跑的是旧代码时要重启**。
+
+    为什么必须重启（2026-11-23 实测）
+    ------------------------------
+    上一版只 print 一句"服务已在运行"就复用。用户改了代码（比如修好
+    UI 的启动按钮）后双击桌面快捷方式，新进程绑 8770 失败静默退出，
+    页面继续连旧服务 —— 表现为"改了没用"。现在对比 `/api/health` 里
+    的 `src_mtime`，不一致就杀掉旧进程重起。
+    """
+    h = health(port)
+    if h:
+        if not _stale(h):
+            print("  服务已在运行  http://127.0.0.1:%d（pid %s）"
+                  % (port, h.get("pid")))
+            return True
+        if not allow_restart:
+            print("  ⚠ 端口 %d 上是**旧代码**的服务（pid %s）"
+                  % (port, h.get("pid")))
+            print("    请先关掉它，或加 --restart 自动重启")
+            return False
+        print("  端口 %d 上是旧代码的服务（pid %s）→ 重启"
+              % (port, h.get("pid")))
+        _kill_pid(h.get("pid"))
+        for _ in range(20):
+            time.sleep(0.2)
+            if not alive(port):
+                break
     subprocess.Popen(
         [sys.executable, os.path.join(SRC, "ui_server.py"), "--port", str(port)],
         cwd=ROOT, stdin=subprocess.DEVNULL,
@@ -141,6 +202,8 @@ def main():
     ap.add_argument("--console", action="store_true", help="打开控制台（默认）")
     ap.add_argument("--overlay", action="store_true", help="打开悬浮窗")
     ap.add_argument("--serve-only", action="store_true", help="只起服务，不开窗口")
+    ap.add_argument("--no-restart", action="store_true",
+                    help="端口上已有旧代码的服务时不自动重启")
     args = ap.parse_args()
 
     # 先看**指定端口**上是不是已经有我们的服务在跑。

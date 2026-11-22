@@ -1411,27 +1411,38 @@ def _run(args):
         #
         # 现在调 `window.__setFolded(true)`，它统一更新
         # 变量 / class / 按钮文案 / localStorage 四处，保证一致。
-        if state.get("folded"):
-            try:
-                ok = win.evaluate_js(
-                    "typeof window.__setFolded === 'function'"
-                    " ? (window.__setFolded(true), true) : false")
-                if ok:
-                    _log("enter_embedded: 恢复折叠态（经 setFolded）")
-                else:
-                    # 页面还没加载完 -> 退回直接改 DOM（至少 UI 对）
-                    win.evaluate_js("""
-                      (() => {
-                        const ov = document.getElementById('overlay');
-                        const btn = document.getElementById('btnFold');
-                        if (ov) ov.classList.add('folded');
-                        if (btn) btn.textContent = '展开';
-                        try { localStorage.setItem('overlay.folded', '1'); } catch (e) {}
-                      })()
-                    """)
-                    _log("enter_embedded: 恢复折叠态（DOM 兜底）")
-            except Exception as e:
-                _log("enter_embedded: 恢复折叠态失败 %s" % e)
+        #
+        # ★ 2026-11-23：**两个方向都要同步**。
+        # 原来只在 folded=True 时同步，False 时什么都不做 —— 于是
+        # localStorage 里残留的 '1' 会一直生效，用户把 overlay.json 改成
+        # false 重启后窗口仍然是 360×134（折叠态），看着像"配置不生效"。
+        # 现在无论如何都调一次 __setFolded(state.folded)。
+        _want_folded = bool(state.get("folded"))
+        try:
+            ok = win.evaluate_js(
+                "typeof window.__setFolded === 'function'"
+                " ? (window.__setFolded(%s), true) : false"
+                % ("true" if _want_folded else "false"))
+            if ok:
+                _log("enter_embedded: 同步折叠态 folded=%s（经 setFolded）"
+                     % _want_folded)
+            else:
+                # 页面还没加载完 -> 退回直接改 DOM（至少 UI 对）
+                win.evaluate_js("""
+                  (() => {
+                    const ov = document.getElementById('overlay');
+                    const btn = document.getElementById('btnFold');
+                    if (ov) ov.classList.toggle('folded', %s);
+                    if (btn) btn.textContent = %s;
+                    try { localStorage.setItem('overlay.folded', '%s'); } catch (e) {}
+                  })()
+                """ % ("true" if _want_folded else "false",
+                       "'展开'" if _want_folded else "'折叠'",
+                       "1" if _want_folded else "0"))
+                _log("enter_embedded: 同步折叠态 folded=%s（DOM 兜底）"
+                     % _want_folded)
+        except Exception as e:
+            _log("enter_embedded: 同步折叠态失败 %s" % e)
 
         # 让抽屉里的状态行显示真实状态（读 Api.status()）
         try:

@@ -760,34 +760,61 @@ def live_state():
     优先级：
       1. 机器人推送的 logs/live_state.json（最完整：含对面身份、技能名、
          伤害预测 —— 那些需要决策层和数据库）
-      2. 机器人没跑 -> **自己抓屏读**（standalone.py）
-         纯视觉能拿到血条、技能卡伤害数字、倒计时；拿不到身份和预测。
+      2. **机器人数据过期（> STALE_S）时，自己抓屏**（standalone.py）
+         —— 伤害计数器不能吊死在机器人身上
+      3. 机器人完全没跑 -> 同样走 standalone
 
-    这就是"伤害计算器能脱离机器人使用"的实现：没有机器人时，
-    服务端自己看屏幕，至少把四张卡的伤害数字显示出来。
+    ★ 2026-11-23：改成"过期就自己读"，原来是"文件存在就用"。
+    实测机器人主循环会被 OCR 卡到 16 秒才写一次（见 docs/LATENCY.md），
+    而前端 0.4 秒轮询一次 —— 用户看到的是"数字好几秒不动"。
+    现在只要机器人数据超过 STALE_S（3 秒）没更新，立刻改用自己的
+    视觉读数，画面就能持续刷新；机器人恢复推送后自动切回（它的字段更全）。
     """
+    now = time.time()
+
     st = None
+    age = None
     if os.path.exists(LIVE_STATE):
         try:
             age = time.time() - os.path.getmtime(LIVE_STATE)
         except OSError:
             age = 1e9
         st = _read_json(LIVE_STATE)
-        if st is not None and age > STALE_S:
-            # 过期数据不能当实时用 —— 宁可说"没数据"
-            st = dict(st)
-            st["_stale"] = True
-            st["_age"] = round(age, 2)
-        if st is not None:
-            return st
 
-    # ---- 机器人没在推：自己看屏幕
+    if st is not None and age is not None and age <= STALE_S:
+        return st
+
+    # ---- 机器人数据过期/没有：自己看屏幕
     try:
         import standalone
         if standalone.available():
-            return standalone.observe()
+            fresh = standalone.observe()
+            if fresh:
+                # 机器人的字段更全（身份/技能名/预测），过期时也带上，
+                # 但标 _stale 让前端知道哪些是旧的。
+                if st is not None:
+                    fresh = dict(fresh)
+                    fresh["_robot_stale"] = round(age or 0, 1)
+                    # 身份类字段机器人给的通常比纯视觉准，过期也先用着
+                    for k in ("name", "types", "hp_range", "def_range",
+                              "nature", "known_skills", "hp_dist",
+                              "def_dist", "nature_dist", "sample_n"):
+                        if not fresh.get("foe", {}).get(k) \
+                                and (st.get("foe") or {}).get(k):
+                            fresh.setdefault("foe", {})[k] = st["foe"][k]
+                    if not (fresh.get("me") or {}).get("name") \
+                            and (st.get("me") or {}).get("name"):
+                        fresh.setdefault("me", {})["name"] = st["me"]["name"]
+                return fresh
     except Exception:
         pass
+
+    # ---- standalone 也不可用：退回（可能过期的）机器人数据
+    if st is not None:
+        st = dict(st)
+        st["_stale"] = True
+        st["_age"] = round(age or 0, 2)
+        return st
     return None
 
 
@@ -2371,6 +2398,14 @@ class Handler(SimpleHTTPRequestHandler):
             if not clean.startswith(prefix):
                 continue
             rest = clean[len(prefix):]
+            # ★ 2026-11-23：必须先 URL 解码。
+            # 前端拼的是 `portraits/<encodeURIComponent(中文名)>.png`，
+            # 而 SimpleHTTPRequestHandler 默认在 translate_path 里做
+            # unquote；我们覆写了这个方法却漏了这一步 —— 于是所有**中文
+            # 文件名**的资源（头像模板）全部 404，只有 ASCII 的
+            # `pet_avatars/3259.png` 能通。实测：
+            #   /portraits/冰钻布鲁斯.png  -> 404（解码前）
+            rest = urllib.parse.unquote(rest)
             # 过一遍 normpath 挡掉 ../ 穿越，只允许落在目标目录里
             rest = posixpath.normpath("/" + rest).lstrip("/")
             if not rest or rest.startswith(".."):
@@ -2433,7 +2468,18 @@ class Handler(SimpleHTTPRequestHandler):
             return super().do_GET()
 
         if path == "/api/health":
-            return self._json({"ok": True, "t": time.time()})
+            # ★ 2026-11-23：带上 pid 和自身代码的 mtime。
+            # 为什么：用户双击桌面快捷方式时，如果上一个 ui_server 还在
+            # 跑，新进程绑不上 8770 就静默退出，页面继续连**旧代码**的
+            # 服务 —— 表现为"改了代码却没生效"（实测：修好启动按钮后
+            # 仍然报找不到 botsup，因为跑的是 17:09 起的旧进程）。
+            # ui.py 用这个字段判断"在跑的是不是当前代码"，是旧的就重启。
+            try:
+                mtime = os.path.getmtime(os.path.abspath(__file__))
+            except OSError:
+                mtime = 0.0
+            return self._json({"ok": True, "t": time.time(),
+                               "pid": os.getpid(), "src_mtime": mtime})
 
         if path == "/api/bot":
             return self._json(bot_status())

@@ -68,7 +68,12 @@ _skill_hold = {"skills": None, "at": 0.0}
 # 一局战斗的血量/回合是**秒级**变化，1 秒缓存完全够用，
 # 而前端 10Hz 轮询每个请求都会拿到数据（只是同一份）。
 # 缓存 1.0 秒后实际抓屏降到 ~1 次/秒。
-MIN_INTERVAL = 1.0
+#
+# ★ 2026-11-23：降到 0.35 秒。伤害计数器是"实时看伤害"的工具，
+# 1 秒的刷新率在连击/多段技能下明显跟不上（用户反馈"好几秒不动"）。
+# 0.35 秒 ≈ 3Hz，和前端 400ms 轮询对齐，同时把抓屏控制在 ~3 次/秒
+# （observe 约 150~250ms，不会把 CPU 打满）。
+MIN_INTERVAL = 0.35
 
 # ---- 身份识别（可选，有代价）
 #
@@ -319,6 +324,126 @@ def _ident_loop():
         time.sleep(0.5)
 
 
+# ---- 后台采样线程（2026-11-23）
+#
+# 为什么必须有
+# ------------
+# 上一版 `observe()` 是"谁调谁抓屏"：`ui_server.live_state()` 在机器人
+# 数据过期时每个 HTTP 请求都调它。前端 400ms 轮询 → 每秒 2.5 次全屏
+# 抓屏 + perceive（每次 150~250ms）。
+#
+# 实测代价（本机 2026-11-23）：
+#     ui_server CPU  +12.1s / 15s  = **78% 单核**
+#     /api/state     200~570 ms
+#     风扇持续高速，联想热管理把电源模式从"性能"切到"能效"
+#
+# 所以改成和 `_ident_worker` 一样的模式：**一个后台线程定频采样**，
+# HTTP 请求只读快照。抓屏频率与轮询频率解耦。
+_SNAP = {"state": None, "at": 0.0, "thread": None}
+SNAP_TICK = 0.45          # 后台采样周期（≈2.2Hz，足够"实时"）
+SNAP_MAX_AGE = 1.5        # 超过这个年龄的快照视为无效
+# 画面指纹阈值（0~255 平均绝对差）。低于它认为"画面没动"，
+# 直接复用上一帧结果，不重跑 perceive。
+#
+# 为什么必须有（2026-11-23 实测）
+# ------------------------------
+# 一次 `_observe_once()` 实测 ~1.0 秒（perceive 754ms + foe_hp 118ms +
+# pvp_meta 95ms + def_range 34ms），而 SNAP_TICK 是 0.45 秒 —— 采样比
+# 周期还慢，线程等于**连续不断地跑**。
+#
+# 结果：ui_server 空闲时烧 **132% 单核**（实测，不发任何 HTTP 请求也一样），
+# 风扇狂转，联想热管理把电源模式切到"能效"，用户看到的就是"一直静音/
+# 一直切模式"。而大厅/等待界面**画面几乎不动**，这些重算全是白烧。
+_SNAP_DIFF = 1.2
+_SNAP_FP = {"fp": None}
+# 最近一次有人请求 /api/state 的时间。
+#
+# 为什么需要（2026-11-23 实测）
+# ---------------------------
+# 战斗画面一直在动 → 帧差检测跳不过去 → 每次 observe ~1 秒，而周期
+# 0.45 秒 = **连续不断地跑**。实测 ui_server 空闲（无人打开界面）时
+# 仍烧 111% 单核，风扇狂转。
+#
+# 现在：超过 SNAP_IDLE_PAUSE 秒没人请求，采样线程就停下来睡；
+# 一旦有请求进来（observe() 会打点），立刻恢复。没人看就不烧。
+_SNAP_DEMAND = {"at": 0.0}
+SNAP_IDLE_PAUSE = 8.0
+
+
+def note_demand():
+    """标记"有人在看"（observe() 每次调用都打一次）。"""
+    _SNAP_DEMAND["at"] = time.time()
+
+
+def _idle():
+    last = _SNAP_DEMAND["at"]
+    return last <= 0.0 or (time.time() - last) > SNAP_IDLE_PAUSE
+
+
+def _frame_fingerprint(scr):
+    """极廉价的全屏指纹（32x18 灰度）。抓一次 mss 约 10~50ms。"""
+    try:
+        import cv2
+        import numpy as np
+        img = scr.grab_client((0, 0, 2560, 1600))
+        if img is None or getattr(img, "size", 0) == 0:
+            return None
+        g = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY) if img.ndim == 3 else img
+        return cv2.resize(g, (32, 18), interpolation=cv2.INTER_AREA).astype(np.int16)
+    except Exception:
+        return None
+
+
+def _snap_loop():
+    while True:
+        # 没人看就停 —— 见 SNAP_IDLE_PAUSE 的注释
+        if _idle():
+            time.sleep(0.5)
+            continue
+        t0 = time.time()
+        try:
+            # 先看画面有没有变 —— 不变就跳过整个 perceive
+            try:
+                scr, _perc = _get()
+                fp = _frame_fingerprint(scr)
+            except Exception:
+                fp = None
+            skip = False
+            if fp is not None and _SNAP_FP["fp"] is not None:
+                import numpy as np
+                d = float(np.abs(fp - _SNAP_FP["fp"]).mean())
+                if d < _SNAP_DIFF and _SNAP["state"] is not None:
+                    skip = True
+                    # 画面没动：只刷新时间戳，让快照保持"新鲜"
+                    _SNAP["at"] = time.time()
+            if fp is not None:
+                _SNAP_FP["fp"] = fp
+            if not skip:
+                _observe_once()
+        except Exception:
+            pass
+        dt = time.time() - t0
+        # 采样本身要 150~250ms，剩下的时间补足周期
+        time.sleep(max(0.05, SNAP_TICK - dt))
+
+
+def ensure_snap_worker():
+    t = _SNAP.get("thread")
+    if t is not None and t.is_alive():
+        return t
+    t = threading.Thread(target=_snap_loop, daemon=True,
+                         name="standalone-snap")
+    _SNAP["thread"] = t
+    t.start()
+    return t
+
+
+def snap_age():
+    if _SNAP["state"] is None:
+        return None
+    return time.time() - _SNAP["at"]
+
+
 def reset_identity():
     """战斗结束时清空身份缓存。
 
@@ -535,10 +660,20 @@ def inject_screen(screen, perc):
     """测试用：把 Screen/Perc 绑到**当前线程**。
 
     可重复调用（每次都会覆盖），不像直接赋值 `_perc` 只有第一次生效。
+
+    ★ 2026-11-23：同时**清空快照缓存**。
+    加了后台采样线程后，`observe()` 优先返回 `_SNAP["state"]`。如果不清，
+    下一个用例会拿到上一个用例的快照 —— 实测 test_standalone 的
+    "没有窗口 -> None" 直接失败（返回了上一用例的 78% 血量）。
     """
     global _perc, _screen
     _screen, _perc = screen, perc
     _thread_state["tid"] = threading.get_ident()
+    _SNAP["state"] = None
+    _SNAP["at"] = 0.0
+    _SNAP_FP["fp"] = None
+    _cache["state"] = None
+    _cache["at"] = 0.0
 
 
 def available():
@@ -700,14 +835,30 @@ def _foe_def_range(foe_name):
 
 
 def observe(force=False):
-    """从屏幕读一帧状态，打包成和 live_state 同构的 dict。
+    """返回最近一帧状态（**不自己抓屏**，除非 force=True）。
 
-    失败返回 None。**绝不抛异常** —— 调用方是 HTTP 请求，
-    抛了会让前端整页白掉。
+    读屏由后台 `_snap_loop` 定频做（SNAP_TICK=0.45s），这里只读快照。
+    这样前端无论 400ms 还是 100ms 轮询，抓屏频率都恒定 —— 实测这是
+    CPU 从 78% 降下来的关键（见 `_SNAP` 的注释）。
+
+    快照太旧（>SNAP_MAX_AGE）或 force=True 时才同步抓一次。
+    失败返回 None，**绝不抛异常** —— 调用方是 HTTP 请求。
     """
+    note_demand()          # 有人在看 -> 唤醒后台采样线程
+    if not force:
+        st = _SNAP["state"]
+        if st is not None and (time.time() - _SNAP["at"]) <= SNAP_MAX_AGE:
+            return st
+        ensure_snap_worker()      # 冷启动：把线程拉起来
+        if st is not None:
+            return st            # 有旧数据先给旧数据，别让前端白屏
+    return _observe_once()
+
+
+def _observe_once():
+    """真正抓一帧（内部使用；`observe()` 和后台线程都调它）。"""
     now = time.time()
-    if not force and _cache["state"] is not None \
-            and now - _cache["at"] < MIN_INTERVAL:
+    if _cache["state"] is not None and now - _cache["at"] < MIN_INTERVAL:
         return _cache["state"]
 
     with _lock:
@@ -1010,6 +1161,9 @@ def observe(force=False):
     }
     _cache["at"] = now
     _cache["state"] = st
+    # 同时更新后台线程读的快照（observe() 只读这个）
+    _SNAP["state"] = st
+    _SNAP["at"] = now
     return st
 
 

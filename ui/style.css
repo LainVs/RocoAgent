@@ -649,14 +649,19 @@ input[type="range"]::-webkit-slider-thumb {
 /* 头像：有图用图，没图用属性色方块 + 首字。32px 圆角小图比名字好认 */
 .avatar {
   flex: none;
-  width: 26px; height: 26px;
-  border-radius: 7px;
+  /* ★ 2026-11-23：26px 太小，官方头像（128px 带 alpha）糊成一团。
+     放大到 40px 并改用椭圆底衬，既看得清是谁又不挤占名字行。 */
+  width: 40px; height: 40px;
+  border-radius: 10px;
   overflow: hidden;
-  background: var(--soft-1);
+  /* 官方头像有透明背景，用渐变底衬让浅色精灵不糊在面板上 */
+  background:
+    radial-gradient(circle at 50% 38%, rgba(255,255,255,.16), transparent 68%),
+    var(--soft-1);
   border: 1px solid var(--soft-3);
   display: grid;
   place-items: center;
-  font-size: 11px;
+  font-size: 15px;
   font-weight: 600;
   color: var(--ink-2);
   text-shadow: var(--halo);
@@ -1088,11 +1093,19 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ── 折叠态：横向紧凑条 ─────────────────────────────── */
 .overlay.folded { width: 320px; }
+/* ★ 2026-11-23：折叠态**不再隐藏设置抽屉**。
+   原来把 .drawer 一起 display:none 了，而展开入口（btnFold）就在抽屉里
+   —— 折叠后抽屉打不开，等于死锁：用户没有任何办法把窗口展开回来。
+   实测症状：窗口只有 373×223，只剩两条血条，点设置无反应。
+   现在折叠只收起内容区（技能/结算/详情），头部和抽屉保持可用。 */
 .overlay.folded .side.foe .infer,
 .overlay.folded .side .side-foot,
 .overlay.folded .skills,
-.overlay.folded .verdict,
-.overlay.folded .drawer { display: none; }
+.overlay.folded .verdict { display: none; }
+
+/* 折叠态在头部直接给一个展开按钮，不必先开抽屉 */
+.overlay.folded .hdr-expand { display: inline-grid; }
+.hdr-expand { display: none; }
 
 .overlay.folded .side {
   padding: 7px 12px 8px;
