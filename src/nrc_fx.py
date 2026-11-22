@@ -331,7 +331,13 @@ def _h_power_mod(pet, foe, params, ctx):
 
 
 def _h_enemy_lose_energy(pet, foe, params, ctx):
-    """ENEMY_LOSE_ENERGY：对手（新入场或当前）失去能量。"""
+    """ENEMY_LOSE_ENERGY：对手（新入场或当前）失去能量。
+
+    S12 飓风的 ON_BE_KILLED 行带 target=self_mp → 扣**自己**魔力
+    （4 格生命），委托 _h_enemy_lose_energy_self_mp。
+    """
+    if params.get("target") == "self_mp":
+        return _h_enemy_lose_energy_self_mp(pet, foe, params, ctx)
     amt = int(params.get("amount") or 0)
     if amt <= 0 or not foe.alive:
         return None
@@ -481,6 +487,18 @@ def _h_convert_poison(pet, foe, params, ctx):
         pet.name, k * ratio, k)
 
 
+def _h_enemy_lose_energy_self_mp(pet, foe, params, ctx):
+    """ENEMY_LOSE_ENERGY target=self_mp（飓风被击败时机）：自己魔力 -1。"""
+    battle = getattr(pet, "_battle", None)
+    side = getattr(pet, "_side", None)
+    amt = int(params.get("amount") or 0)
+    if battle is None or not side or amt <= 0:
+        return None
+    battle.magic[side] = max(0, battle.magic.get(side, 0) - amt)
+    return "%s 被击败：魔力 -%d（剩 %d 格）" % (
+        pet.name, amt, battle.magic[side])
+
+
 def _h_kill_mp_penalty(pet, foe, params, ctx):
     """KILL_MP_PENALTY（付给恶魔的赎价）：
     ON_KILL 时机（pet=击杀者，foe 已倒下）→ 敌方魔力 -1；
@@ -503,6 +521,113 @@ def _h_kill_mp_penalty(pet, foe, params, ctx):
         battle.magic[side] = max(0, battle.magic.get(side, 0) - 1)
         return "%s 被击败：魔力 -1（剩 %d 格）" % (
             pet.name, battle.magic[side])
+    return None
+
+
+def _h_ability_compute(pet, foe, params, ctx):
+    """ABILITY_COMPUTE（S12）：开场技能改写引擎。
+
+    六种 action（原文已核对，见 docs/PLAN_S12_COMPUTE.md）：
+      count_poison_skills      溶解扩散：毒系技能数 → 水系技中毒层数
+      modify_matching_skills   不移/快锤/暴食/冻土：威力% / 迅捷谓词
+      shared_wing_skills       飓风：全场翼系精灵同名技能 → 迅捷
+    本 handler 只在 pet 上挂标记，消费点在 Battle（calc_damage /
+    入场迅捷 / 状态施加）。标记幂等，重复触发不叠加。
+    """
+    action = params.get("action") or ""
+    # 幂等：同一动作指纹只生效一次（begin_turn 会重触发
+    # ON_BATTLE_START/ON_ENTER/PASSIVE 三个时机）
+    done = getattr(pet, "_ability_done", None)
+    if done is None:
+        done = set()
+        pet._ability_done = done
+    fp = (action, json.dumps(params, ensure_ascii=False, sort_keys=True))
+    if fp in done:
+        return None
+    done.add(fp)
+    if action == "count_poison_skills":
+        n = sum(1 for m in getattr(pet, "moves", [])
+                if (m.get("type") or "") == "\u6bd2")
+        if n:
+            pet._poison_skill_count = n
+            return "%s 携带 %d 个毒系技能（水系技附加中毒）" % (pet.name, n)
+        return None
+    if action == "modify_matching_skills":
+        mods = getattr(pet, "_skill_power_mods", None) or {}
+        swifts = getattr(pet, "_swift_pred_state", None) or []
+        moves = getattr(pet, "moves", [])
+        if params.get("count_source") == "self_element":
+            # 冻土：数 count_element 技能数 → element 技能威力 +N*pct
+            cnt = sum(1 for m in moves
+                      if (m.get("type") or "")
+                      in (params.get("count_element") or []))
+            if not cnt:
+                return None
+            for m in moves:
+                if (m.get("type") or "") in (params.get("element") or []) \
+                        and (not params.get("attack_only")
+                             or int(m.get("power") or 0) > 0):
+                    mods[m["name"]] = mods.get(m["name"], 0) + \
+                        cnt * float(params.get("power_pct") or 0)
+            pet._skill_power_mods = mods
+            return "%s 冰系技能 x%d → 地系技能威力 +%.0f%%" % (
+                pet.name, cnt, 100 * cnt * float(params.get("power_pct") or 0))
+        if params.get("grant_agility"):
+            # 快锤（能耗<N）/ 暴食（系别）
+            lt = params.get("energy_cost_lt")
+            elems = params.get("element") or []
+            for m in moves:
+                if lt is not None and int(m.get("cost") or 0) < int(lt):
+                    if m["name"] not in swifts:
+                        swifts.append(m["name"])
+                elif elems and (m.get("type") or "") in elems:
+                    if m["name"] not in swifts:
+                        swifts.append(m["name"])
+            pet._swift_pred_state = swifts
+            return "%s %d 个技能获得迅捷" % (pet.name, len(swifts))
+        # 不移：pure_attack → 威力 +pct
+        pct = float(params.get("power_pct") or 0)
+        if pct and params.get("pure_attack"):
+            n = 0
+            for m in moves:
+                if int(m.get("power") or 0) <= 0:
+                    continue
+                # 纯攻击：无任何附加效果（desc_effects 全空）
+                if desc_effects(m.get("name") or ""):
+                    continue
+                mods[m["name"]] = mods.get(m["name"], 0) + pct
+                n += 1
+            pet._skill_power_mods = mods
+            if n:
+                return "%s %d 个纯攻击技能威力 +%.0f%%" % (
+                    pet.name, n, 100 * pct)
+        return None
+    if action == "shared_wing_skills":
+        # 飓风：全场翼系精灵携带同名技能 → 迅捷（battle 上下文）
+        battle = getattr(pet, "_battle", None) or (ctx or {}).get("battle")
+        if battle is None:
+            return None
+        wing = "\u7ffc"
+        shared = set()
+        for team in (battle.a, battle.b):
+            for other in team:
+                if other is pet or not getattr(other, "alive", True):
+                    continue
+                if wing not in (other.types or []):
+                    continue
+                for m in getattr(other, "moves", []):
+                    shared.add(m.get("name") or "")
+        swifts = getattr(pet, "_swift_pred_state", None) or []
+        n0 = len(swifts)
+        for m in getattr(pet, "moves", []):
+            if (m.get("name") or "") in shared and \
+                    m["name"] not in swifts:
+                swifts.append(m["name"])
+        pet._swift_pred_state = swifts
+        if len(swifts) > n0:
+            return "%s %d 个共享翼系技能获得迅捷" % (
+                pet.name, len(swifts) - n0)
+        return None
     return None
     elem = params.get("count_key")
     n = 0
@@ -642,7 +767,14 @@ HANDLERS = {
     "ON_SKILL_ELEMENT_COST_REDUCE": _h_elem_cost_reduce,
     "BURN_NO_DECAY": _h_burn_no_decay,
     "CONVERT_POISON_TO_MARK": _h_convert_poison,
+    # S12 ABILITY_COMPUTE：开场技能改写引擎（溶解扩散/不移/快锤/暴食/
+    # 冻土/飓风），消费点在 Battle
+    "ABILITY_COMPUTE": _h_ability_compute,
+    # S12 飓风的被击败时机：ENEMY_LOSE_ENERGY target=self_mp →
+    # 自己魔力 -1（与 KILL_MP_PENALTY 的 ON_FAINT 同语义）
 }
+
+
 
 
 # ---------------------------------------------------------------- 应对（counter）
@@ -735,7 +867,7 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
 # 允许的技能/特性时机
 TRAIT_TIMINGS = {"ON_ENTER", "ON_BATTLE_START", "ON_TURN_START",
                  "ON_USE_SKILL", "ON_TURN_END", "PASSIVE", "ON_TAKE_HIT",
-                 "ON_COUNTER_SUCCESS", "ON_KILL", "ON_FAINT",
+                 "ON_COUNTER_SUCCESS", "ON_KILL", "ON_FAINT", "ON_BE_KILLED",
                  "ON_ENEMY_SWITCH"}
 SKILL_TIMINGS = {"ON_USE", "PRE_USE", "POST_USE"}
 

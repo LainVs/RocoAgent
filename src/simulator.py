@@ -735,6 +735,12 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
                        + getattr(attacker, "nrc_power_bonus", 0)))
     # S11 向心力：永久威力 +delta
     power = max(0, power + int(getattr(attacker, "_perm_power_delta", 0)))
+    # S12 ABILITY_COMPUTE：开场技能改写（不移/冻土/冰钻类的威力%）
+    _spmods = getattr(attacker, "_skill_power_mods", None) or {}
+    if _spmods:
+        _pct = _spmods.get(move.get("name") or "")
+        if _pct:
+            power = max(0, int(power * (1.0 + float(_pct))))
     # S11 坠星/观星：守方身上每层星陨印记威力 +pct
     _mpct = float(getattr(attacker, "_meteor_pct", 0) or 0)
     if _mpct and battle is not None:
@@ -1002,6 +1008,17 @@ class Battle:
         self.team_magic = {"a": magic_kind_a, "b": magic_kind_b}
         # S10 进化之力：首领血脉精灵战斗中进化，每场 1 次（773 攻略原文）
         self.evolution_used = {"a": False, "b": False}
+        # S12 ABILITY_COMPUTE：开场技能改写（挂在 pet 上的标记）。
+        # 必须在 _battle/_side 赋值**之前**触发（handler 里 _battle 还没挂，
+        # 飓风的全场扫描走 ctx 传入的 battle 引用）。
+        import nrc_fx as _nfx0
+        import trait_lib as _tl0
+        for team in (self.a, self.b):
+            for p in team:
+                if not _tl0.supported_rules(getattr(p, "trait", None)):
+                    for e in _nfx0.trait_fire(p, None, "ON_BATTLE_START",
+                                              {"battle": self}):
+                        self.pending.append(e)
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -1625,6 +1642,14 @@ class Battle:
                 ev2 = nrc_fx._bump_status(target_of, key, stacks)
                 if ev2:
                     events.append("%s（%s 描述）" % (ev2, mv["name"]))
+                # S12 溶解扩散：水系技能 → 按毒系技能数附加中毒
+                if (mv.get("type") or "") == "\u6c34":
+                    _pc = int(getattr(owner, "_poison_skill_count", 0) or 0)
+                    if _pc:
+                        ev3 = nrc_fx._bump_status(target_of, "poison", _pc)
+                        if ev3:
+                            events.append("%s（%s 溶解扩散 +%d）"
+                                          % (ev3, owner.name, _pc))
                 # S11 加个雪球/捉迷藏：施加冻结时额外 +N 层
                 if key == "freeze" and stacks > 0:
                     _fe = int(getattr(owner, "_freeze_extra", 0) or 0)
@@ -1762,8 +1787,12 @@ class Battle:
                               % (me.name, sw["debuff"]))
             # 迅捷：换人入场 → 自动出第一个能量满足且带迅捷的技能
             import cond_fx as _cf
+            _sw = _cf.swift_skills(self.dex)
             for m in me.moves:
-                if m["name"] in _cf.swift_skills(self.dex) and m["cost"] <= me.energy:
+                _pred_hit = m["name"] in _sw or (
+                    m["name"] in (getattr(me, "_swift_pred_state", None)
+                                  or []))
+                if _pred_hit and m["cost"] <= me.energy:
                     swift_acts.append((me.spe + 999, "a", me, foe, m))
                     events.append("迅捷：%s 入场立即使用 %s"
                                   % (me.name, m["name"]))
@@ -1792,8 +1821,12 @@ class Battle:
                 events.append("暗涌印记：%s 获得 %d 层属性减益"
                               % (foe.name, sw["debuff"]))
             # 迅捷（对方换人入场）
+            _swb = _cf.swift_skills(self.dex)
             for m in foe.moves:
-                if m["name"] in _cf.swift_skills(self.dex) and m["cost"] <= foe.energy:
+                _pred_hit = m["name"] in _swb or (
+                    m["name"] in (getattr(foe, "_swift_pred_state", None)
+                                  or []))
+                if _pred_hit and m["cost"] <= foe.energy:
                     swift_acts.append((foe.spe + 999, "b", foe, me, m))
                     events.append("迅捷：%s 入场立即使用 %s"
                                   % (foe.name, m["name"]))
@@ -2041,6 +2074,9 @@ class Battle:
                 if not trait_lib.supported_rules(
                         getattr(dfn, "trait", None)):
                     for e in nrc_fx.trait_fire(dfn, atk, "ON_FAINT"):
+                        events.append(e)
+                    # S12 飓风：ON_BE_KILLED 时机（被击败魔力-1）
+                    for e in nrc_fx.trait_fire(dfn, atk, "ON_BE_KILLED"):
                         events.append(e)
             # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
             gain = battle_fx.mark_on_skill(
