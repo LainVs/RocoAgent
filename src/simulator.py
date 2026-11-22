@@ -469,12 +469,16 @@ class Pet:
         import statmodel as S
         b = self.data["base"]
         inv = set(invest or ["hp", "atk", "spe"])
+        # S10：记下构建参数，首领化（rebuild_as）重算六维用
+        self._build_args = {"iv": iv, "nature": nature,
+                            "nature_hp": nature_hp, "invest": sorted(inv)}
         mult = S.nature_mult(nature) if nature else {
             "hp": nature_hp, "patk": 1.0, "matk": 1.0,
             "pdef": 1.0, "mdef": 1.0, "spd": 1.0}
         self.nature = nature
         self.iv = iv
         self.invest = sorted(inv)
+        self._nature_hp = nature_hp if not nature else None
         self.max_hp = S.calc_real_stat(b[0], iv if "hp" in inv else 0,
                                        mult["hp"], is_hp=True)
         self.hp = self.max_hp
@@ -569,6 +573,49 @@ class Pet:
         return {"hp": self.max_hp, "atk": self.atk, "spa": self.spa,
                 "def": self.dfn, "spd": self.spd, "spe": self.spe}
 
+    def rebuild_as(self, dex, new_species):
+        """S10 首领化：按**同一只个体**（iv/nature/invest）重算新形态六维。
+
+        保留：当前血量**比例**（首领化不回血，原文未提）、能量、增益、
+        异常状态、技能表（原文未提当场换技能）。替换：name/data/
+        types/trait/六维（trait 变化后 trait_atk_buff 由调用方重算）。
+        """
+        new_data = dex.species(new_species)
+        if not new_data:
+            return None
+        a = self._build_args
+        import statmodel as S
+        b = new_data["base"]
+        inv = set(a["invest"])
+        mult = S.nature_mult(a["nature"]) if a["nature"] else {
+            "hp": self._nature_hp if hasattr(self, "_nature_hp") else 1.0,
+            "patk": 1.0, "matk": 1.0, "pdef": 1.0, "mdef": 1.0,
+            "spd": 1.0}
+        ratio = self.hp / self.max_hp if self.max_hp else 1.0
+        self.name = new_species
+        self.data = new_data
+        self.types = new_data["types"]
+        self.trait = new_data["trait"]
+        self.max_hp = S.calc_real_stat(b[0], 60 if "hp" in inv else 0,
+                                       mult["hp"], is_hp=True)
+        # S10：配置面板的 max_hp（实测面板值）优先于重算值
+        if getattr(self, "_cfg_max_hp", None):
+            self.max_hp = self._cfg_max_hp
+        self.hp = max(1, int(self.max_hp * ratio))
+        self.atk = S.calc_real_stat(b[1], 60 if "atk" in inv else 0,
+                                    mult["patk"])
+        self.spa = S.calc_real_stat(b[2], 60 if "spa" in inv else 0,
+                                    mult["matk"])
+        self.dfn = S.calc_real_stat(b[3], 60 if "def" in inv else 0,
+                                    mult["pdef"])
+        self.spd = S.calc_real_stat(b[4], 60 if "spd" in inv else 0,
+                                    mult["mdef"])
+        self.spe = S.calc_real_stat(b[5], 60 if "spe" in inv else 0,
+                                    mult["spd"])
+        # 首领化形态按默认攻速体投资补个体值（与 Pet 缺省一致），
+        # 但保留原个体投资口径：iv 只作用于原投资项，其余 0
+        return self
+
     @property
     def alive(self):
         return self.hp > 0
@@ -607,6 +654,16 @@ YUANLI_TRAITS = {
     "\u70b9\u71c3": 1,    # 点燃 -> 火
     "\u51c0\u5316": 2,    # 净化 -> 水
 }
+
+
+def _load_leader_forms():
+    """S10 首领化映射表（data/leader_forms.json，生成脚本核对过 species 表）。"""
+    import io as _io
+    p = os.path.join(ROOT, "data", "leader_forms.json")
+    try:
+        return json.load(_io.open(p, encoding="utf-8"))
+    except Exception:
+        return {}
 
 
 def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
@@ -933,6 +990,8 @@ class Battle:
         self.magic_state = {"a": {"used": 0, "cd": 0},
                             "b": {"used": 0, "cd": 0}}
         self.team_magic = {"a": magic_kind_a, "b": magic_kind_b}
+        # S10 进化之力：首领血脉精灵战斗中进化，每场 1 次（773 攻略原文）
+        self.evolution_used = {"a": False, "b": False}
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -1047,6 +1106,7 @@ class Battle:
             if c.get("max_hp"):
                 p.max_hp = int(c["max_hp"])
                 p.hp = p.max_hp
+                p._cfg_max_hp = p.max_hp     # S10：首领化后仍用 cfg 面板血量
             pets.append(p)
         return pets
 
@@ -1219,8 +1279,69 @@ class Battle:
         # 闪焰爆发（+150%）。魔法分派在其声明之后写这里，故先声明。
         counter_power_bonus = {"a": 0, "b": 0}
 
-        # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
-        # S8/S9 共鸣魔法："magic" 动作按队伍携带的魔法分派。
+        # S10 进化之力："evolve" 动作 → 首领血脉精灵当场首领化，
+        # 每场 1 次。**不占当回合行动**（道具施放），精灵用 payload
+        # 技能照常出手（🟡 假设：原文未明确，按道具语义建模）。
+        # 首领化被视为进场（TapTap/NGA 原文）→ 触发入场时机。
+        for side, kind, pet in (("a", ka, me), ("b", kb, foe)):
+            if kind != "evolve":
+                continue
+            _who = "我方" if side == "a" else "对方"
+            if self.evolution_used.get(side):
+                events.append("%s 进化之力每场只能使用 1 次" % _who)
+                continue
+            forms = _load_leader_forms().get(pet.name) or {}
+            _fmap = forms.get("forms") or {}
+            if not _fmap:
+                events.append("%s %s 无法首领化（没有首领形态数据）"
+                              % (_who, pet.name))
+                continue
+            bl = getattr(pet, "bloodline", None)
+            # 选形态：单一形态要求血脉=首领；分支形态（圣X迪莫）按血脉挑
+            cand = None
+            _need_leader = all(
+                (f.get("bloodline") == "\u9996\u9886")
+                for f in _fmap.values())
+            if _need_leader:
+                if bl == "\u9996\u9886":
+                    cand = next(iter(_fmap))
+            else:
+                # 分支：血脉对应的形态（圣光←光、圣草←草…）
+                for fname, f in _fmap.items():
+                    _elem = fname[1] if fname.startswith("\u5723") else None
+                    if _elem is not None and bl == _elem:
+                        cand = fname
+                        break
+            if cand is None:
+                events.append("%s %s 血脉 %s 不满足首领化条件"
+                              % (_who, pet.name, bl or "未配置"))
+                continue
+            _fdata = _fmap[cand]
+            if not _fdata or not _fdata.get("species_id"):
+                events.append("%s 首领形态数据缺失" % _who)
+                continue
+            # 生成校验：目标形态必须是本体的首领行（按名字解析，
+            # Dex.species 只按名字查；species_id 仅作数据溯源）
+            _new_sp = self.dex.species(cand)
+            if not _new_sp:
+                events.append("%s 首领形态 species 解析失败" % _who)
+                continue
+            self.evolution_used[side] = True
+            _old_name = pet.name
+            _old_trait = pet.trait
+            pet.rebuild_as(self.dex, _new_sp["name"])
+            # 特性变化 → 重算特性常驻增益（助燃→爆燃的 buff 层数清零重挂）
+            pet.trait_atk_buff = 0.0
+            pet.trait_def_buff = 0.0
+            import trait_lib as _tl
+            _a, _d = _tl.carrier_buffs(pet)
+            pet.trait_atk_buff += _a
+            pet.trait_def_buff += _d
+            pet._nrc_entered = False        # 首领化=进场：入场时机重触发
+            self._nrc_entered.discard((side, id(pet)))
+            events.append("%s %s 首领化 → %s！（特性 %s → %s）"
+                          % (_who, _old_name, pet.name,
+                             _old_trait or "?", pet.trait or "?"))
         # ⚠ 行动模型：施放魔法的当回合精灵**仍然出手**（愿力强化原文
         #   「本回合被替换…持续1回合」；三个增益魔法同模型）——
         #   payload = 精灵本回合用的技能下标（愿力强化忽略，固定第一格）。
@@ -1297,15 +1418,24 @@ class Battle:
                 events.append("%s 节流术！%s 本回合技能不扣能耗"
                               % (_who, pet.name))
             else:
-                # S10 进化之力：首领血脉 + 战斗中进化，独立批次
-                events.append("%s 共鸣魔法 %s 尚未实现（S10）"
-                              % (_who, spell))
-        # S9 落空的魔法（没扣次数）→ 转普通技能动作，精灵照常出手
+                # S10 进化之力：走 step("evolve") 动作，不走共鸣魔法槽
+                events.append("%s 共鸣魔法 %s 未支持（进化之力请用 "
+                              "evolve 动作）" % (_who, spell))
+        # S9/S10 落空的魔法或 evolve 动作（没消耗行动）→
+        # 精灵用 payload 技能照常出手
         skill_a = None
         skill_b = None
         for side, kind, pet, p_idx in (("a", ka, me, pa),
                                        ("b", kb, foe, pb)):
-            if kind != "magic":
+            if kind not in ("magic", "evolve"):
+                continue
+            if kind == "evolve":
+                # 进化之力不占行动：payload 技能照常出手
+                if p_idx is not None and 0 <= p_idx < len(pet.moves):
+                    if side == "a":
+                        skill_a = pet.moves[p_idx]
+                    else:
+                        skill_b = pet.moves[p_idx]
                 continue
             _spell = self.team_magic.get(side)
             _spent = (
@@ -1781,7 +1911,8 @@ class Battle:
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
         # S8：kind=="magic" 时精灵本回合出手 = 第一格（愿力冲击），
         # 已在 skill_a/skill_b 处赋值，这里直接用。
-        if (not switched_a and not skip_act["a"] and ka in ("skill", "magic")):
+        if (not switched_a and not skip_act["a"]
+                and ka in ("skill", "magic", "evolve")):
             # 蓄力中的回合：只有正在释放蓄力完成技的才出手，其他技不上
             if getattr(me, "charging", 0) == 1 and not charge_release["a"]:
                 events.append("我方蓄力中（%s），本回合无法行动"
@@ -1801,7 +1932,8 @@ class Battle:
                     else:
                         events.append("我方能量不足（含能耗操纵 +%.0f），%s 没放出来"
                                       % (enemy_cost_up.get("a", 0), mv["name"]))
-        if (not switched_b and not skip_act["b"] and kb in ("skill", "magic")):
+        if (not switched_b and not skip_act["b"]
+                and kb in ("skill", "magic", "evolve")):
             if getattr(foe, "charging", 0) == 1 and not charge_release["b"]:
                 events.append("对方蓄力中（%s），本回合无法行动"
                               % getattr(foe, "charge_skill", "?"))

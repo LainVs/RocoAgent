@@ -1,0 +1,41 @@
+{
+ "迪莫": {
+  "forms": {
+   "圣光迪莫": {
+    "species_id": 5025,
+    "total": 667,
+    "trait": "裁决",
+    "bloodline": null
+   },
+   "圣草迪莫": {
+    "species_id": 3051,
+    "total": 594,
+    "trait": "滋养",
+    "bloodline": null
+   }
+  },
+  "base_id": 8007
+ },
+ "火神": {
+  "forms": {
+   "烈火战神": {
+    "species_id": 5017,
+    "total": 672,
+    "trait": "爆燃",
+    "bloodline": "首领"
+   }
+  },
+  "base_id": 3006
+ },
+ "喵喵": {
+  "forms": {
+   "叶冕魔力猫": {
+    "species_id": 5003,
+    "total": 640,
+    "trait": "深层氧循环",
+    "bloodline": "首领"
+   }
+  },
+  "base_id": 3001
+ }
+}

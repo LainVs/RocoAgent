@@ -457,10 +457,11 @@ def _h_energy_cost_condition_buff(pet, foe, params, ctx):
 def _apply_buff_pair(pet, buff, label):
     """把 {"atk": x, "spatk": y, "def": z} 加到 pet，返回事件文本或 None。
 
-    label 是完整模板（含 %s/%d 槽位），例如：
-      "%s 火系技能后获得双攻 +%d%%"
+    ⚠ 模拟器的 atk_buff 是**单槽**，物/魔两条伤害路径共用：
+    「物攻+30% 魔攻+30%」→ atk_buff=0.3（两条路径各得 30%）。
+    相加成 0.6 会让物攻路径吃到 60%（S10 实测抓到，已修正）。
     """
-    atk = float(buff.get("atk") or 0) + float(buff.get("spatk") or 0)
+    atk = max(float(buff.get("atk") or 0), float(buff.get("spatk") or 0))
     dfn = float(buff.get("def") or 0)
     if not (atk or dfn):
         return None
