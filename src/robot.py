@@ -192,6 +192,11 @@ def _foe_hp_max(name):
 
 
 class Bot:
+    # 每只精灵每次上场最多尝试 BAND 几次（1.5s 间隔）。
+    # 换人动画期间经常只画出 2~3 张卡，给 3 次能补读，又不至于在
+    # 卡面长期画不全时每帧都跑 find_pills（~107ms）。
+    BAND_TRIES = 3
+
     def __init__(self, args):
         self.screen = Screen()
         self.perc = Perc(self.screen)
@@ -1990,6 +1995,7 @@ class Bot:
                     self.bench_names[self.cur_slot] = sp
                     # 换精灵了 -> 名字带读法的触发窗口打开（见 _band_scan）
                     self._band_scan_at = 0.0
+                    self._band_tries = 0
             return
         # Unknown bust: keep ONE sample per distinct pet per match.
         #
@@ -2377,7 +2383,22 @@ class Bot:
         为什么可以承受：一次 OCR 1.5s，只在 (my_name, slot) 没有确认答案时
         调；换精灵后的 1~2 秒本来在等 UI，不占决策窗口（参照
         _maybe_scan_foe 的窗口纪律）。触发窗口由 _check_active_pet 打开
-        （换宠物时 _band_scan_at 清零），每只精灵每次上场最多扫一轮。
+        （换宠物时 _band_scan_at/_band_tries 清零）。
+
+        ★ 2026-11-23 两处修正（实机 0 条 BAND 日志的直接原因）：
+
+        1. **按槽位身份取 box，不按数量**
+           旧代码 `if len(boxes) < len(pending): return`：pending={2,4} 时
+           boxes 有 2 个（其实对应槽 1、3）也会放行，然后拿 slot=2 的
+           索引去读槽 1 的盒子 —— 读到的是别的技能，还发现不了。
+           现在 skill_pill_boxes 返回固定长度 4、缺槽为 None，索引即槽位。
+
+        2. **不再静默 return**
+           旧代码卡面没画全时直接 return，不写日志也不记状态，于是
+           "整场 0 条 BAND 日志"这个现象无从诊断。现在缺槽会打限流日志。
+
+        另外每只精灵每次上场给 BAND_TRIES 次机会（间隔 >=1.5s）：
+        换人动画期间卡面经常只画出 2~3 张，一次读不全就整场放弃太亏。
         """
         my = getattr(self, "my_name", None)
         if not my or not st.get("bar"):
@@ -2387,11 +2408,14 @@ class Bot:
             return
         if getattr(self, "acted_at", 0.0) and now - self.acted_at < 2.0:
             return
-        # 每次上场只扫一轮：_band_scan_at>0 表示本轮已尝试
-        if getattr(self, "_band_scan_at", 0.0):
-            return
         # 上场稳定 1.2 秒再扫（换人动画期间卡面还没画完）
         if now - getattr(self, "pet_at", 0.0) < 1.2:
+            return
+        tries = getattr(self, "_band_tries", 0)
+        if tries >= self.BAND_TRIES:
+            return
+        # 同一轮两次尝试至少隔 1.5s，别在同一帧上反复烧 OCR
+        if tries and now - getattr(self, "_band_scan_at", 0.0) < 1.5:
             return
         try:
             import perceive as _P
@@ -2399,13 +2423,24 @@ class Bot:
             pending = [slot for slot in (1, 2, 3, 4)
                        if SM.get(my, slot) is None]
             if not pending:
-                self._band_scan_at = now     # 全齐了，本轮不再扫
+                self._band_tries = self.BAND_TRIES   # 全齐了，本轮不再扫
                 return
             boxes = _P.skill_pill_boxes(self.screen)
-            if len(boxes) < len(pending):
-                # 卡面没画全（动画中）——不算失败，下帧再试
-                return
+            # 这轮先记次数：无论读到几个槽位都算用掉一次机会，
+            # 避免卡面长期只画 2 张时每帧都跑 find_pills。
+            self._band_tries = tries + 1
             self._band_scan_at = now
+            if not boxes:
+                log("BAND -> %s 技能栏未画出（本轮第 %d/%d 次）"
+                    % (my, self._band_tries, self.BAND_TRIES))
+                return
+            missing = [slot for slot in pending
+                       if slot - 1 >= len(boxes) or not boxes[slot - 1]]
+            if missing:
+                log("BAND -> %s 缺卡 槽%s（本轮第 %d/%d 次，已画 %d/4）"
+                    % (my, ",".join(str(s) for s in missing),
+                       self._band_tries, self.BAND_TRIES,
+                       sum(1 for b in boxes if b)))
             for slot in pending:
                 idx = slot - 1
                 if idx >= len(boxes) or not boxes[idx]:
@@ -2418,7 +2453,7 @@ class Bot:
                         % (my, slot, conf))
         except Exception as e:
             log("BAND scan failed: %s: %s" % (type(e).__name__, e))
-            self._band_scan_at = now     # 出错也别每帧重试
+            self._band_tries = self.BAND_TRIES     # 出错也别每帧重试
 
     def _maybe_scan_foe(self, st, now):
         """未知对手就点开头像补录。独立于出手逻辑，和放技能并行。

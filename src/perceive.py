@@ -796,17 +796,25 @@ def _fill_missing(crop, slots):
 
 
 def skill_pill_boxes(screen):
-    """返回当前技能栏 4 个主胶囊在**整帧客户区**坐标的 (x0,y0,x1,y1)。
+    """返回技能栏 4 个主胶囊在**整帧客户区**坐标的 (x0,y0,x1,y1)。
 
-    给 session_moves.read_band 用：名字带 ROI 是相对胶囊下缘的。
-    读不出技能栏返回 []。一次 find_pills ~107ms，只在换精灵后调用。
+    固定长度 4 的列表，缺槽位置 None —— **位置就是槽位号**（索引 0 = 槽 1）。
+    找不到任何胶囊返回 []（表示"技能栏没画出来"，与"画了但缺卡"区分开）。
+    一次 find_pills ~107ms，只在换精灵后调用。
     """
     try:
         import config as _C
     except Exception:
         return []
+    # ⚠ SKILL_BOX 是**角点** (x0,y0,x1,y1)，而 grab_client 的契约是
+    # (x, y, w, h)。直接传会把 530x1040 当 780x1520 裁，多出来的
+    # 250x480 落在技能栏下方，find_pills 在那里检出垃圾胶囊
+    # （整帧坐标 (250,1401,334,1442)，实机反复出现过），既挤占真槽位
+    # 也把名字带 ROI 带到空白处。同一文件的 observe() 用的是
+    # `cw, ch = x1-x0, y1-y0`，这里对齐它。
+    bx0, by0, bx1, by1 = _C.SKILL_BOX
     try:
-        img = screen.grab_client(_C.SKILL_BOX)
+        img = screen.grab_client((bx0, by0, bx1 - bx0, by1 - by0))
     except Exception:
         return []
     if img is None or getattr(img, "size", 0) == 0:
@@ -818,20 +826,19 @@ def skill_pill_boxes(screen):
         return []
     if not pills:
         return []
+    # 直接用 _slots 的 lattice fit 结果：它已经按 pitch 150~215 拟合并用
+    # _fill_missing 补齐缺槽，每个槽位都带 box。旧代码误以为"没有 box"，
+    # 改用硬编码 180px 间距重排，既白扔了拟合结果又把槽位排错。
     slots = _slots(img, (0, 0, cw, ch), pills)
-    # _slots 返回的槽位 dict 没有 box；直接用 pill 格子在整帧坐标里排
-    boxes = [None, None, None, None]
-    sx, sy = _C.SKILL_BOX[0], _C.SKILL_BOX[1]
-    for p in pills:
-        bx = p["box"]
-        cy = (bx[1] + bx[3]) / 2.0
-        # 胶囊在技能栏裁图内按 y 格子分槽（与 _slots 同规则：间距 ~180px）
-        k = int(round((cy - pills[0]["box"][1]) / 180.0)) if len(pills) > 1 else 0
-        k = max(0, min(3, k))
-        if boxes[k] is None or bx[0] > boxes[k][0]:
-            boxes[k] = (int(sx + bx[0]), int(sy + bx[1]),
-                        int(sx + bx[2]), int(sy + bx[3]))
-    return [b for b in boxes if b]
+    boxes = []
+    for s in slots:
+        b = s.get("box") if s else None
+        if not b:
+            boxes.append(None)
+            continue
+        boxes.append((int(bx0 + b[0]), int(by0 + b[1]),
+                      int(bx0 + b[2]), int(by0 + b[3])))
+    return boxes if any(boxes) else []
 
 
 def _slots(crop, region, pills=None):

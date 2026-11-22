@@ -62,8 +62,8 @@ def main():
     frame, names = build_frame()
     fs = FakeScreen(frame)
     boxes = P.skill_pill_boxes(fs)
-    check("4 boxes found", len(boxes) == 4, str(boxes))
-    if len(boxes) == 4:
+    check("4 boxes found", len(boxes) == 4 and all(boxes), str(boxes))
+    if len(boxes) == 4 and all(boxes):
         exp = [(250 + 200, 480 + y, 250 + 265, 480 + y + 34)
                for y in (300, 480, 660, 840)]
         check("lattice geometry", all(tuple(g) == w for g, w in zip(boxes, exp)),
@@ -84,6 +84,48 @@ def main():
                 os.remove(SM.STORE)
             except OSError:
                 pass
+
+    # ---- 裁图范围回归（缺陷 1：角点当宽高）-------------------------
+    #
+    # 旧实现把 SKILL_BOX 的角点当宽高传给 grab_client，实机 4:3 下
+    # 多裁掉大片技能栏下方区域（基准坐标 y 1520~2000），find_pills
+    # 在空白处检出垃圾胶囊，实测整帧坐标 (250,1401,334,1442)。
+    #
+    # 合成帧测不出这一条：真胶囊有 4 个时旧实现也能收齐（诱饵被挤掉）。
+    # 所以这里直接断言**请求给 Screen 的矩形**必须是 w=x1-x0、h=y1-y0。
+    class SpyScreen:
+        client_size = (2560, 1600)
+
+        def __init__(self, frame):
+            self.frame = frame
+            self.asked = []
+
+        def grab_client(self, box):
+            self.asked.append(tuple(box))
+            x, y, w, h = box
+            return self.frame[y:y + h, x:x + w]
+
+    spy = SpyScreen(frame)
+    P.skill_pill_boxes(spy)
+    import config as C
+    x0, y0, x1, y1 = C.SKILL_BOX
+    check("grab rect is w/h (not corners)",
+          spy.asked == [(x0, y0, x1 - x0, y1 - y0)], str(spy.asked))
+
+    # ---- 缺卡时必须保留 None 占位，不能压缩列表 ---------------------
+    #
+    # 压缩会让索引错位：pending={2,4} 时 boxes 只剩 2 项，调用方拿
+    # slot=2 的索引读到的其实是槽 3 的盒子。旧实现返回 2 项，这里必须 4 项。
+    partial = np.full((1600, 2560, 3), 30, np.uint8)
+    for y in (300, 660):                       # 只画槽 1、3
+        partial[480 + y:480 + y + 34, 450:515] = (61, 61, 61)
+        partial[480 + y + 6:480 + y + 28, 462:500] = (240, 240, 240)
+    pboxes = P.skill_pill_boxes(FakeScreen(partial))
+    check("partial keeps slot index", len(pboxes) == 4, str(pboxes))
+    check("partial slot2 missing", len(pboxes) == 4 and pboxes[1] is None,
+          str(pboxes))
+    check("partial slot1 present", len(pboxes) == 4 and pboxes[0] is not None,
+          str(pboxes))
 
     # 没画胶囊时必须返回空（不抛异常）
     empty = np.zeros((1600, 2560, 3), np.uint8)
