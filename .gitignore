@@ -39,6 +39,8 @@ data/cache/
 # 我方技能的会话缓存（跑出来的，非配置；删掉会自动重建）
 data/session_moves.json
 data/session_moves.json.tmp
+# 每日仪表报告（nightly_report.py 生成，随时可重建）
+docs/NIGHTLY_*.md
 # 手操对战的记录（自己打的每一局，供「手操战绩」分析用）。
 # 是个人游玩数据，不该进仓库：文件名固定，但内容每次都在长。
 logs/sim_manual.jsonl
