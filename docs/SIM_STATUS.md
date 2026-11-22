@@ -161,6 +161,14 @@
 - [x] 确认 species() **没有 bug**（是 PowerShell 字面量编码陷阱：魔力喵
       U+732B vs 魔力咪 U+55B5 是不同精灵）
 
+## 本轮（S6.16）
+
+- [x] **traits_text_derived 特性规则端到端生效**：
+      氧循环 heal_pct 回合末回复（魔力喵水刃 → hp 3000→3500 ✓）
+- [x] trait_lib._load 覆盖条件修正（主表无**规则**时用补充表，非"无条目"）
+- [x] Battle.step 回合末加 heal_pct 消费
+- [x] SUPPORTED 白名单加 (turn_end,always)/heal_pct + (ON_USE_SKILL,always)/stat_buff
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
