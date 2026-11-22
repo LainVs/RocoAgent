@@ -3,6 +3,20 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S15 应对技效果引擎（2026-11-23，commit 4646c21）
+
+- [x] 153 个应对技效果子句解析（按**命中类别**取子句——desc 可含
+      多个应对子句，跨子句串扰已修复：放晴"永久+50% vs 改为永久+100%"）
+- [x] 9 个 ctx 原语：self_buff / enemy_debuff / power_mult(乘法) /
+      perm_power / enemy_energy_loss / refund_cost / force_enemy_leave /
+      interrupt / enemy_cost_up
+- [x] Battle 消费：add_buff 负值直写（add_buff 钳 ≥0 的坑）、
+      应对威力乘法通道（与闪焰爆发共用）、能量返还、敌方脱离
+- [x] 计划：docs/PLAN_S15_COUNTER.md
+- 测试：`src/test_s15_counter.py`（10 断言）；基线 15/15 零变化
+- 明确不做：下回合只能用被应对技（临时槽锁）、速度+160（口径未证）、
+  冷却+1/能耗永久-N（CD 系统未建模）、立即使用被应对技（技能复制）
+
 ## S14 authority 链路第 4 层（2026-11-23，commit 660f7b1）
 
 - [x] **desc_effects 4 层结构**：desc_fx(手写) > authority_fx(180技) >
