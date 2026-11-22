@@ -121,6 +121,16 @@
       （实测镜像升龙咆哮 200 ✓）
 - [x] **奉献队伍计数**：devotion 计数器 + 威力+20/次（飞断实测）
 
+## 本轮（S7）
+
+- [x] **authority_effects.json** 入库：官方完整效果链路
+      （buff 3352 条 / skill 2032 条 / 有链路的技能 1205 个 /
+      10 种状态类 buff：中毒/灼烧/冻结/寄生/萌化/眩晕/引电/禁足/湿润/星陨）
+  · 来源：authority/buff.json + skill.json（rocom-parse JSON 子集）
+  · skill_links 技能名 → effect_id → buff 完整链路
+  · status_buffs 状态类 buff 的 id/desc 清单
+  · 数据入库（445 KB），后续引擎消费不需要 Downloads 目录
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
