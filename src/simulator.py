@@ -444,6 +444,10 @@ class Pet:
         self.nrc_power_mult = 1.0
         self.nrc_power_bonus = 0
         self._nrc_entered = False
+        # S6.7：蓄力 / 迸发 / 打断
+        self.charging = 0          # >0 = 蓄力中（下回合释放所选技能）
+        self.charge_skill = None   # 蓄力的技能名
+        self._burst_used = False   # 入场后首行动（迸发）已消耗
 
     def panel(self):
         """六项面板（UI 展示用）。"""
@@ -514,6 +518,19 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     # nrc-ai 手写特性的常驻威力修正（`目空` / `破空` 这类 PASSIVE）
     power = max(0, int(power * getattr(attacker, "nrc_power_mult", 1.0)
                        + getattr(attacker, "nrc_power_bonus", 0)))
+    # 迸发（入场后首次行动）：描述里的加成。_burst_used 由 Battle 标记。
+    burst_applied = False
+    if not getattr(attacker, "_burst_used", True):
+        import cond_fx as _cf
+        desc = (_skill_desc(move.get("id")) or "") if move.get("id") else (
+            move.get("desc") or "")
+        bb = _cf.burst_bonus(desc)
+        if bb:
+            if "power_mult" in bb:
+                power = int(power * bb["power_mult"])
+            if "power_bonus" in bb:
+                power += bb["power_bonus"]
+            burst_applied = True
     atk = attacker.atk * (1.0 + attacker.atk_buff
                           + getattr(attacker, "trait_atk_buff", 0.0)
                           + getattr(attacker, "trait_tmp_atk", 0.0))
@@ -525,6 +542,7 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     dmg *= trait_lib.incoming_mult(defender, move)
     dmg *= getattr(defender, "taken_mult", 1.0)
     calc_damage.last_self_damage_pct = self_damage_pct
+    calc_damage._last_burst = burst_applied
     return max(1, int(dmg))
 
 
@@ -717,6 +735,7 @@ class Battle:
         self.marks = {"a": {}, "b": {}}
         self.pending = []          # begin_turn 里产生的待播报事件
         self._nrc_entered = set()  # (side, id(pet)) 已触发过入场效果的
+        self._first_turn_done = set()  # 首回合增益已触发（可轮转重置）
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -860,6 +879,10 @@ class Battle:
                     p._focus_layers = 5          # 100% / 20% = 5 层
                     p._focus_init = True
                 p.trait_tmp_atk = 0.2 * p._focus_layers
+            # 入场首回合增益（专注力/全神贯注这类）：**每次上场**都触发。
+            # 用户实测纠正（2026-11-22）：换下再换上，第一回合攻击照样翻倍 ——
+            # 「入场」的定义是可轮转的。换人时 clear_buffs 重置
+            # _trait_first_done，所以这里直接检查该标记。
             if not getattr(p, "_trait_first_done", True):
                 a, d = trait_lib.first_turn_buffs(p)
                 p.trait_tmp_atk += a
@@ -971,8 +994,19 @@ class Battle:
             # 回能/吸能。吸血和先手在下方各自的结算路径里消费。
             # ★ 描述效果默认 target=对手（power=0 状态技几乎全是控场）；
             #   ctx["_from_desc"]=True 让 _h_status 跳过 target=self 分支。
+            import cond_fx
             dv = nrc_fx.desc_effects(mv.get("name") or "")
             target_of = foe if owner is me else me
+
+            # 蓄力：选了蓄力技 → 本回合蓄力（不攻击），下回合才能释放
+            is_charge = mv.get("name") in cond_fx.charge_skills(self.dex)
+            if is_charge and getattr(owner, "charging", 0) == 0:
+                owner.charging = 1
+                owner.charge_skill = mv["name"]
+                events.append("%s 开始蓄力（%s，下回合释放）"
+                              % ("我方" if owner is me else "对方",
+                                 mv["name"]))
+                continue            # 蓄力回合不攻击
             # 条件型状态施加（灵魂灼伤/溶解扩散/溶解腐蚀）：
             # 按本次技能系别选状态，优先于无条件 status
             import cond_fx
@@ -1172,24 +1206,47 @@ class Battle:
         if skill_b is not None and not pri_b:
             pri_b = (nrc_fx.desc_effects(skill_b.get("name") or {})
                      .get("priority") or 0)
+        # 蓄力完成的技能本回合释放（charging 归 0）
+        charge_release = {"a": False, "b": False}
+        if getattr(me, "charging", 0) == 1 and ka == "skill":
+            mv_a = me.moves[pa] if pa is not None and pa < len(me.moves) else None
+            if mv_a and mv_a.get("name") == getattr(me, "charge_skill", None):
+                me.charging = 0
+                charge_release["a"] = True
+                events.append("我方 %s 蓄力完成，释放！" % mv_a["name"])
+        if getattr(foe, "charging", 0) == 1 and kb == "skill":
+            mv_b = foe.moves[pb] if pb is not None and pb < len(foe.moves) else None
+            if mv_b and mv_b.get("name") == getattr(foe, "charge_skill", None):
+                foe.charging = 0
+                charge_release["b"] = True
+                events.append("对方 %s 蓄力完成，释放！" % mv_b["name"])
         if (not switched_a and not skip_act["a"] and ka == "skill"
                 and pa is not None and pa < len(me.moves)):
-            mv = me.moves[pa]
-            cost = self.eff_cost("a", mv)
-            if cost <= me.energy:
-                me.energy -= cost
-                acts.append((self.eff_spe("a", me), "a", me, foe, mv))
+            # 蓄力中的回合：只有正在释放蓄力完成技的才出手，其他技不上
+            if getattr(me, "charging", 0) == 1 and not charge_release["a"]:
+                events.append("我方蓄力中（%s），本回合无法行动"
+                              % getattr(me, "charge_skill", "?"))
             else:
-                events.append("我方能量不足，%s 没放出来" % mv["name"])
+                mv = me.moves[pa]
+                cost = self.eff_cost("a", mv)
+                if cost <= me.energy:
+                    me.energy -= cost
+                    acts.append((self.eff_spe("a", me), "a", me, foe, mv))
+                else:
+                    events.append("我方能量不足，%s 没放出来" % mv["name"])
         if (not switched_b and not skip_act["b"] and kb == "skill"
                 and pb is not None and pb < len(foe.moves)):
-            mv = foe.moves[pb]
-            cost = self.eff_cost("b", mv)
-            if cost <= foe.energy:
-                foe.energy -= cost
-                acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
+            if getattr(foe, "charging", 0) == 1 and not charge_release["b"]:
+                events.append("对方蓄力中（%s），本回合无法行动"
+                              % getattr(foe, "charge_skill", "?"))
             else:
-                events.append("对方能量不足，%s 没放出来" % mv["name"])
+                mv = foe.moves[pb]
+                cost = self.eff_cost("b", mv)
+                if cost <= foe.energy:
+                    foe.energy -= cost
+                    acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
+                else:
+                    events.append("对方能量不足，%s 没放出来" % mv["name"])
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
         # （原文：先手度更高的技能忽略速度差异优先释放，可叠加），
         # 再按速度；速度相同则随机（不能固定偏向 A，否则自对弈 100% 偏 A）。
