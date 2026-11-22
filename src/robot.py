@@ -847,6 +847,7 @@ class Bot:
                 self._check_active_pet(st, now)
                 self._check_foe(st, now)
                 self._maybe_scan_foe(st, now)
+                self._maybe_band_scan(st, now)
                 self._cast_banner(st)
                 self._cast_ocr(st)
                 if self.cur_slot and st.get("my_pct") is not None:
@@ -1877,6 +1878,8 @@ class Bot:
                 if self.slot_species.get(self.cur_slot) != sp:
                     self.slot_species[self.cur_slot] = sp
                     self.bench_names[self.cur_slot] = sp
+                    # 换精灵了 -> 名字带读法的触发窗口打开（见 _band_scan）
+                    self._band_scan_at = 0.0
             return
         # Unknown bust: keep ONE sample per distinct pet per match.
         #
@@ -2235,6 +2238,55 @@ class Bot:
             return nm
         except Exception:
             return None
+
+    def _maybe_band_scan(self, st, now):
+        """换精灵后对缓存 miss 的槽位做一次卡面名字带 OCR。
+
+        为什么可以承受：一次 OCR 1.5s，只在 (my_name, slot) 没有确认答案时
+        调；换精灵后的 1~2 秒本来在等 UI，不占决策窗口（参照
+        _maybe_scan_foe 的窗口纪律）。触发窗口由 _check_active_pet 打开
+        （换宠物时 _band_scan_at 清零），每只精灵每次上场最多扫一轮。
+        """
+        my = getattr(self, "my_name", None)
+        if not my or not st.get("bar"):
+            return
+        # 出招窗口/倒计时内绝不动（OCR 会占住感知线程）
+        if st.get("countdown"):
+            return
+        if getattr(self, "acted_at", 0.0) and now - self.acted_at < 2.0:
+            return
+        # 每次上场只扫一轮：_band_scan_at>0 表示本轮已尝试
+        if getattr(self, "_band_scan_at", 0.0):
+            return
+        # 上场稳定 1.2 秒再扫（换人动画期间卡面还没画完）
+        if now - getattr(self, "pet_at", 0.0) < 1.2:
+            return
+        try:
+            import perceive as _P
+            import session_moves as SM
+            pending = [slot for slot in (1, 2, 3, 4)
+                       if SM.get(my, slot) is None]
+            if not pending:
+                self._band_scan_at = now     # 全齐了，本轮不再扫
+                return
+            boxes = _P.skill_pill_boxes(self.screen)
+            if len(boxes) < len(pending):
+                # 卡面没画全（动画中）——不算失败，下帧再试
+                return
+            self._band_scan_at = now
+            for slot in pending:
+                idx = slot - 1
+                if idx >= len(boxes) or not boxes[idx]:
+                    continue
+                name, conf = SM.read_band(my, slot, self.screen, boxes[idx])
+                if name:
+                    log("BAND -> %s 槽%d = %s (%.2f)" % (my, slot, name, conf))
+                else:
+                    log("BAND -> %s 槽%d 未识别 (conf %.2f)"
+                        % (my, slot, conf))
+        except Exception as e:
+            log("BAND scan failed: %s: %s" % (type(e).__name__, e))
+            self._band_scan_at = now     # 出错也别每帧重试
 
     def _maybe_scan_foe(self, st, now):
         """未知对手就点开头像补录。独立于出手逻辑，和放技能并行。

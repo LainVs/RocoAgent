@@ -795,6 +795,45 @@ def _fill_missing(crop, slots):
     return slots
 
 
+def skill_pill_boxes(screen):
+    """返回当前技能栏 4 个主胶囊在**整帧客户区**坐标的 (x0,y0,x1,y1)。
+
+    给 session_moves.read_band 用：名字带 ROI 是相对胶囊下缘的。
+    读不出技能栏返回 []。一次 find_pills ~107ms，只在换精灵后调用。
+    """
+    try:
+        import config as _C
+    except Exception:
+        return []
+    try:
+        img = screen.grab_client(_C.SKILL_BOX)
+    except Exception:
+        return []
+    if img is None or getattr(img, "size", 0) == 0:
+        return []
+    ch, cw = img.shape[:2]
+    try:
+        pills = [p for p in dr.find_pills(img, (0, 0, cw, ch)) if p.get("box")]
+    except Exception:
+        return []
+    if not pills:
+        return []
+    slots = _slots(img, (0, 0, cw, ch), pills)
+    # _slots 返回的槽位 dict 没有 box；直接用 pill 格子在整帧坐标里排
+    boxes = [None, None, None, None]
+    sx, sy = _C.SKILL_BOX[0], _C.SKILL_BOX[1]
+    for p in pills:
+        bx = p["box"]
+        cy = (bx[1] + bx[3]) / 2.0
+        # 胶囊在技能栏裁图内按 y 格子分槽（与 _slots 同规则：间距 ~180px）
+        k = int(round((cy - pills[0]["box"][1]) / 180.0)) if len(pills) > 1 else 0
+        k = max(0, min(3, k))
+        if boxes[k] is None or bx[0] > boxes[k][0]:
+            boxes[k] = (int(sx + bx[0]), int(sy + bx[1]),
+                        int(sx + bx[2]), int(sy + bx[3]))
+    return [b for b in boxes if b]
+
+
 def _slots(crop, region, pills=None):
     """Fit the four damage capsules onto a vertical lattice.
 

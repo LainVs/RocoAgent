@@ -229,6 +229,8 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     raw = " ".join(r[1] for r in (res or [])).strip()
     if not raw:
+        # 空区域也缓存，避免同一空带反复 OCR（_band_stats 可见）
+        _BAND_LAST[key] = (None, 0.0, now)
         return None, 0.0
     db = sqlite3.connect(DB)
     try:
