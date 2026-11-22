@@ -123,6 +123,32 @@ from policy_legacy import (  # noqa: F401
 
 
 # ------------------------------------------------------------------ main loop
+def _foe_hp_max(name):
+    """对面最大血量：`foe_hp`（statmodel half-up）优先，`pvp_engine` 兜底。
+
+    为什么统一到这里（2026-11-22）
+    ----------------------------
+    同一个对手，`foe_hp.max_hp()` 用 statmodel（half-up 舍入，30/30 面板
+    验证过），`pvp_engine.max_hp()` 用 `damage.calc_hp`（Python round 的
+    银行家舍入）。实测 200 只里有 10 只差 1 点。判"会不会被秒"时 1 点
+    不重要，但两条链路给前端/决策不同的数字会让人误判成 bug。
+    """
+    if not name:
+        return None
+    try:
+        import foe_hp as _FH
+        v = _FH.max_hp(name)
+        if v:
+            return v
+    except Exception:
+        pass
+    try:
+        import pvp_engine as _E
+        return _E.max_hp(name)
+    except Exception:
+        return None
+
+
 class Bot:
     def __init__(self, args):
         self.screen = Screen()
@@ -1440,7 +1466,7 @@ class Bot:
             return None, "policy_v2: pet identity unknown"
 
         my_max = E.max_hp(my_name)
-        foe_max = E.max_hp(foe_name)
+        foe_max = _foe_hp_max(foe_name)
         if not my_max or not foe_max:
             return None, "policy_v2: %s not in dataset" % (
                 my_name if not my_max else foe_name)
@@ -2065,8 +2091,12 @@ class Bot:
                   and getattr(self, "foe_ident_source", "") and
                   str(self.foe_ident_source).startswith("portrait")
                   and getattr(self, "foe_conf", 0.0) >= ONNX_LOCK)
-        if name is not None and sc >= 0.60 \
-                and (margin if 'margin' in dir() else 1.0) >= 0.06:
+        # 2026-11-22：删掉 `(margin if 'margin' in dir() else 1.0) >= 0.06`。
+        # 函数里从来没有 `margin` 变量，这个条件恒为 True —— 等于没有第二道
+        # 门槛，却让人误以为"领先 0.06"在生效。模板阈值 0.60 已用 140 张
+        # 标注裁图标定（>=0.60 正确率约 76%）；真要用 margin 得走
+        # `_identify_with_margin()`，那条路当前没有接线。
+        if name is not None and sc >= 0.60:
             # 头像通道已经用高置信结果定名：0.60~0.95 的模板不足以推翻它。
             if (getattr(self, "foe_ident_source", "") == "avatar"
                     and sc < 0.95):
@@ -2930,11 +2960,7 @@ class Bot:
 
     def _foe_max_hp(self):
         """对面最大血量（用于卡面伤害合理性过滤）。未知返回 None。"""
-        try:
-            import pvp_engine as E
-            return E.max_hp(self.foe_name) if self.foe_name else None
-        except Exception:
-            return None
+        return _foe_hp_max(self.foe_name)
 
     def _foe_now_hp(self, st):
         """对面**当前**血量绝对值。
@@ -2983,24 +3009,11 @@ class Bot:
         if not skill_name or not foe_name:
             return None
         try:
-            import sqlite3
+            import foe_hp as FH
             import statmodel as _S
             import pvp_engine as _E
-            from portrait_db import DB_PATH
-            db = sqlite3.connect(DB_PATH)
-            try:
-                r = db.execute(
-                    "SELECT power, type_name FROM skills WHERE name=? "
-                    "ORDER BY power DESC LIMIT 1", (skill_name,)).fetchone()
-            finally:
-                db.close()
-            if not r:
-                return None
-            power, stype = (r[0] or 0), (r[1] or "")
-            if power <= 0 or not stype:
-                return None
 
-            # 我方攻击：优先用 my_team 的实测面板，否则按种族值+PvP 个体算
+            # 我方攻击：优先用 my_team 的实测面板
             atk = None
             try:
                 import team_db
@@ -3013,24 +3026,33 @@ class Bot:
             if not atk:
                 p = _E.pet(self.my_name) if self.my_name else None
                 if p:
-                    atk = _S.calc_real_stat(
-                        int(p["stats"]["attack"]), _S.IV_PVP, 1.0,
-                        is_hp=False)
-            if not atk:
-                return None
+                    try:
+                        atk = _S.calc_real_stat(
+                            int(p["stats"]["attack"]), _S.IV_PVP, 1.0,
+                            is_hp=False)
+                    except Exception:
+                        atk = None
 
-            # 对面物防：同上
+            # 对面物防：DB 优先，json 兜底
             dfe = None
             p = _E.pet(foe_name)
             if p:
-                dfe = _S.calc_real_stat(
-                    int(p["stats"]["defense"]), _S.IV_PVP, 1.0, is_hp=False)
-            if not dfe:
-                return None
+                try:
+                    dfe = _S.calc_real_stat(
+                        int(p["stats"]["defense"]), _S.IV_PVP, 1.0,
+                        is_hp=False)
+                except Exception:
+                    dfe = None
 
-            mult = _S.type_effect(stype, foe_types or [])
-            dmg = _S.damage(atk, dfe, power, type_eff=mult, stab=1.0)
-            return int(round(dmg)) if dmg else None
+            # ★ 关键修正（2026-11-22）：属性必须兜底查库。
+            # 机器人不读属性图标，`self.foe_types` 常年是 None；旧实现
+            # 于是把克制和本系都当 1.0，一张"本系+双克制"的卡会被低估
+            # 3.75 倍，再被 0.35~2.5 的交叉校验判成"读数离谱"。
+            ft = foe_types
+            if not ft:
+                ft = FH.types_of(foe_name) or None
+            return FH.outgoing(self.my_name, foe_name, skill_name,
+                               foe_types=ft, atk_stat=atk, foe_def=dfe)
         except Exception:
             return None
 

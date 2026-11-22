@@ -63,16 +63,18 @@ check(base == same, "雨天对非水系技能无影响（%d == %d）" % (base, s
 
 print()
 print("--- 3. 印记 ---")
-mm = battle_fx.mark_mods({"attack_mark_stacks": 3}, "升龙咆哮")
-check(abs(mm["power_mult"] - 1.3) < 1e-9,
-      "攻击印记 3 层 -> 威力 x%.2f（每层 +10%%）" % mm["power_mult"])
+# 2026-11-22：battle_fx 改成新口径（每类最多 1 个印记，见 test_battle_fx.py），
+# "3 层攻击印记"不再是合法状态。这条测试改为验证新口径下的行为。
+mm = battle_fx.mark_mods({"attack_mark": 1}, "升龙咆哮")
+check(abs(mm["power_mult"] - 1.10) < 1e-9,
+      "攻击印记 1 个 -> 威力 x%.2f（每类最多 1 个）" % mm["power_mult"])
 mm0 = battle_fx.mark_mods({}, "升龙咆哮")
 check(abs(mm0["power_mult"] - 1.0) < 1e-9, "没有印记 -> x1.0")
 bt.set_weather("none")
 b0 = SIM.calc_damage(bt.me, bt.foe, mv)
-bt.set_marks("a", "attack_mark_stacks", 3)
+bt.set_marks("a", "attack_mark", 3)   # set_marks 内部会归一成 1 个
 b1 = SIM.calc_damage(bt.me, bt.foe, mv)
-check(b1 > b0 * 1.25, "3 层攻击印记后伤害上升（%d -> %d）" % (b0, b1))
+check(b1 > b0 * 1.05, "攻击印记后伤害上升（%d -> %d）" % (b0, b1))
 
 print()
 print("--- 4. 防御类变化技能 ---")
@@ -141,6 +143,42 @@ SIM.add_buff(pp, 0.1)
 check(abs(pp.atk_buff - SIM.BUFF_CAP) < 1e-9,
       "超过 10 层封顶在 +%.0f%%（实际 %.2f）"
       % (100 * SIM.BUFF_CAP, pp.atk_buff))
+
+print()
+print("--- 8. foe_hp.outgoing：自算伤害必须含本系 + 克制 ---")
+# 这是 robot._calc_card_dmg 的唯一实现。旧版本在机器人里传
+# foe_types=None 且 stab=1.0，等于把本系和克制全丢了；一张"本系+双克制"
+# 的卡会被低估 3.75 倍，再被 0.35~2.5 的交叉校验判成"读数离谱"。
+import foe_hp as FH  # noqa: E402
+
+super_ = FH.outgoing("音速犬", "冰钻布鲁斯", "火云车")          # 火克冰
+neutral = FH.outgoing("音速犬", "冰钻布鲁斯", "火云车",
+                      foe_types=["普通"])
+check(super_ == 2 * neutral,
+      "火打冰是 2 倍（%s vs %s，允许 floor 差 0）" % (super_, neutral))
+nostab = FH.outgoing("音速犬", "音速犬", "火云车", my_types=["水"])
+stab = FH.outgoing("音速犬", "音速犬", "火云车")
+check(abs(stab / float(nostab) - 1.25) < 0.02,
+      "本系 1.25 倍（%d / %d = %.3f）" % (stab, nostab, stab / float(nostab)))
+check(FH.outgoing("音速犬", "不存在", "火云车") is None,
+      "未知对手 -> None（绝不编造）")
+check(FH.outgoing("音速犬", "冰钻布鲁斯", "不存在的技能") is None,
+      "未知技能 -> None")
+# 显式传 HUD 直读的属性时，必须优先于查库
+check(FH.outgoing("音速犬", "冰钻布鲁斯", "火云车",
+                  foe_types=["水"]) < super_,
+      "显式属性优先于查库（水抵抗火）")
+
+print()
+print("--- 9. battle_fx 印记新口径（另一会话改的，确认兼容）---")
+# mark_mods 现在收 {mark_id: True}（每类最多 1 个），不再是 xxx_stacks。
+# test_battle_fx.py 是新口径的权威测试；这里只确认旧调用方式的行为
+# 文档化：normalize_marks 把层数字段翻译成"有一个"。
+mm = battle_fx.mark_mods({"attack_mark": 1}, "升龙咆哮")
+check(abs(mm["power_mult"] - 1.10) < 1e-9,
+      "攻击印记 1 个 -> 威力 x%.2f（新口径：每类最多 1）" % mm["power_mult"])
+check(battle_fx.normalize_marks({"attack_mark_stacks": 3}) == {"attack_mark": 1},
+      "旧层数字段归一成 1 个")
 
 print()
 if bad:

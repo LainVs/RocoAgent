@@ -148,6 +148,62 @@ def incoming(foe_name, skill_name, my_name, my_def_iv=S.IV_PVP):
     return tuple(out)
 
 
+def outgoing(my_name, foe_name, skill_name, foe_types=None, my_types=None,
+             atk_stat=None, foe_def=None):
+    """我方这个技能打对面**当前这只**的伤害（含本系 + 属性克制）。
+
+    这是"自算伤害"的唯一入口，`robot._calc_card_dmg` 只是它的薄包装。
+
+    为什么必须显式支持 foe_types / my_types
+    --------------------------------------
+    机器人在战斗里**不读属性图标**（那是独立计算器/`foe_ident` 的通道），
+    所以 `robot` 传进来的 `self.foe_types` 经常是 None。旧实现直接
+    `type_effect(stype, [])` -> 1.0、`stab=1.0`，等于把克制和本系全丢了：
+    一张"本系 + 双克制"的卡（卡面 1.25×3=3.75 倍）会被自算低估 3.75 倍，
+    再拿去和卡面做 0.35~2.5 的交叉校验，就会把**正确的卡面**判成"离谱"。
+
+    参数
+    ----
+    foe_types / my_types : 给了就用（HUD 直读的属性优先），否则查库。
+    atk_stat / foe_def   : 实测面板优先；不传则按 IV=60、中性性格算。
+
+    返回 int，算不出返回 None。
+    """
+    import damage as D
+
+    sk = D.skill(skill_name)
+    if not sk:
+        return None
+    power = _num(sk.get("power"))
+    atk_type = sk.get("attribute")
+    if power <= 0 or not atk_type:
+        return None
+
+    me = species(my_name)
+    foe = species(foe_name)
+    if not me or not foe:
+        return None
+
+    my_types = list(my_types) if my_types else types_of(me)
+    foe_types = list(foe_types) if foe_types else types_of(foe)
+
+    if atk_stat is None:
+        atk_sv = _num(me.get("atk"))
+        if atk_sv <= 0:
+            return None
+        atk_stat = S.calc_real_stat(atk_sv, S.IV_PVP, 1.0, is_hp=False)
+    if foe_def is None:
+        def_sv = _num(foe.get("def"))
+        if def_sv <= 0:
+            return None
+        foe_def = S.calc_real_stat(def_sv, S.IV_PVP, 1.0, is_hp=False)
+
+    mult = S.type_effect(atk_type, foe_types)
+    stab = 1.25 if atk_type in my_types else 1.0
+    dmg = DMG.damage(atk_stat, foe_def, power, type_eff=mult, stab=stab)
+    return int(dmg) if dmg else None
+
+
 def lethal(lo, hi, my_hp_max, my_hp_pct):
     """这一击能不能打死我。"""
     cur = (my_hp_max or 0) * (my_hp_pct or 0) / 100.0
