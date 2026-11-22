@@ -101,13 +101,15 @@ def _type_mult(atk_name, def_name):
 def best_damage_from(name, foe_name):
     """Our best theoretical hit when the cards are not readable (e.g. on switch)."""
     best = 0
+    import foe_calib
+    _k = foe_calib.k(foe_name)
     for skill in E.move_pool(name):
         try:
             r = D.estimate(skill, name, foe_name)
         except Exception:
             continue
         if r and r.get("dmg"):
-            best = max(best, int(r["dmg"]))
+            best = max(best, int(int(r["dmg"]) * _k))
     return best
 
 
@@ -160,6 +162,14 @@ def decide(state):
     bench = state.get("bench") or []
 
     my_name, foe_name = me["name"], foe["name"]
+    # S20 实战校准：我方伤害预测 × k(对手)（per-foe 承伤系数，
+    # data/foe_calibration.json；未知对手 k=1.0 行为不变）
+    import foe_calib
+    _k = foe_calib.k(foe_name)
+    if _k != 1.0:
+        me = dict(me)
+        me["skills"] = [dict(s, dmg=int(round((s.get("dmg") or 0) * _k)))
+                        for s in (me.get("skills") or [])]
     my_hp = me["hp"]
     my_max = me["hp_max"]
     foe_hp = foe["hp"]
