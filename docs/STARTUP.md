@@ -267,5 +267,14 @@ http.proxy 没用；必须把 git 配置指向 socks5 的 17896（或清掉环�
 验证：`git fetch origin` rc=0、`git ls-remote origin` rc=0。
 曾因这个断口积压了 353 个 commit 未推送（2026-11-22 已补推）。
 
+### 夜间检查清单（策略标定用）
+
+    & $py scripts\audit_incoming.py --min-n 3     # 承伤估计偏差
+    & $py src\opponent_model.py --stats           # 对手行为模型样本量
+    & $py src\winrate.py                          # 胜率（唯一衡量指标）
+
+audit_incoming 的 median weighted/observed <0.8 时把
+`config/policy_weights.json` 的 `incoming_blend` 降到 0.6。
+
 ---
 

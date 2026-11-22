@@ -76,6 +76,8 @@
 | `bench_skillbar.py` | 技能栏识别精度（396 帧） |
 | `verify_portraits.py` | 头像库体检（找错误标签） |
 | `verify_channels.py` | 多通道并行交叉验证 |
+| `audit_incoming.py` | 承伤估计器偏差审计（weighted/observed 比值，每晚跑一次） |
+
 | `bench_avatar_ident.py` | 头像通道精度评测（162 张已标注真值） |
 | `label_portraits.py` | 自动标注 `_unknown_*.png` |
 | `cleanup_portraits.py` | 清理头像库重复 |
