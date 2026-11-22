@@ -173,9 +173,13 @@ class Session:
             kb, pb = self.pol_b.choose(foe, me, self.bt.bench("b"),
                                        self.bt.turn)
 
+            # 日志按回合分组：先打一条回合头，再逐条挂事件。
+            # 用户要求"显示当前回合、对面放什么技能、我方放什么技能"，
+            # 平铺一长串很难看出回合边界。
+            self._say("第 %d 回合" % self.bt.turn)
             ev = self.bt.step(kind, payload, kb, pb)
             for e in ev:
-                self._say("T%d %s" % (self.bt.turn, e))
+                self._say("  " + e)
             if not self.bt.done:
                 self.bt.begin_turn()
             if self.bt.done:

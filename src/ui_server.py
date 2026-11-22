@@ -42,12 +42,14 @@ import argparse
 import io
 import json
 import os
+import posixpath
 import re
 import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from collections import Counter
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -1169,6 +1171,72 @@ def sim_species_pool():
 SIM_PRESETS = os.path.join(ROOT, "data", "sim_presets.json")
 
 
+_IDMAP = {"at": 0.0, "data": None}
+
+
+def species_idmap():
+    """{精灵名: 图鉴 id}，给前端拼 `/pet_avatars/<id>.png` 用。
+
+    为什么要有（2026-11-22，用户要"精灵图形资源"）
+    ---------------------------------------------
+    头像/立绘资源是按**图鉴 id** 命名的（`3259.png` = 冰钻布鲁斯），
+    而前端手里只有精灵名。之前 `loadAvatarImg` 拼的是
+    `/portraits/<中文名>.png`，但 `assets/portraits` 里的文件是
+    portrait_key（拼音键），于是阵容卡头像**全是 404**。
+
+    ★ 这里只返回**确实有头像文件**的 id，而且形态名会退到本体：
+      `蹦蹦花（象牙球形态）` 在 species 表里有自己的 id（2000000163，
+      形态专用编号），但外部资源只覆盖 3001~3999 那批，直接用它就是 404；
+      所以退回本体 `蹦蹦花`（3305）的图。实测形态名共 12 个，不兜底全是空的。
+
+    同名多行（占位数据）按 total 降序取第一行，和 `Dex.species()` 的口径一致。
+    """
+    now = time.time()
+    if _IDMAP["data"] is not None and now - _IDMAP["at"] < 600:
+        return _IDMAP["data"]
+    try:
+        db = _db()
+        rows = db.execute(
+            "SELECT name, id FROM species WHERE name IS NOT NULL "
+            "ORDER BY total DESC, implemented DESC, id ASC").fetchall()
+    except Exception:
+        return {}
+    av_dir = os.path.join(ROOT, "assets", "pet_avatars")
+    try:
+        have = {os.path.splitext(f)[0] for f in os.listdir(av_dir)}
+    except OSError:
+        have = set()
+
+    exact = {}
+    for r in rows:
+        exact.setdefault(r["name"], str(r["id"]))
+
+    def base_ids(name):
+        out = []
+        b = re.sub(r"[（(].*?[)）]", "", name).strip()
+        if b and b != name:
+            out.append(b)
+        for sep in ("_", "-"):
+            if sep in name:
+                h = name.split(sep)[0].strip()
+                if h:
+                    out.append(h)
+        return out
+
+    out = {}
+    for name, sid in exact.items():
+        if not have or sid in have:
+            out[name] = int(sid)
+            continue
+        for b in base_ids(name):
+            bid = exact.get(b)
+            if bid and bid in have:
+                out[name] = int(bid)
+                break
+    _IDMAP.update(at=now, data=out)
+    return out
+
+
 def sim_preset_list():
     """预设队伍清单（存 data/sim_presets.json，无库依赖）。"""
     try:
@@ -2195,6 +2263,34 @@ class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=UI, **kw)
 
+    # 静态资源前缀 -> assets 下的真实目录。
+    #
+    # 为什么需要（2026-11-22）：handler 的根目录是 `ui/`，而 `ui/portraits`
+    # 和 `ui/portraits_foe` 是**本地 junction**（git 不跟踪），换机器就没
+    # 有了 —— 实测阵容卡的头像全是 404。新加的精灵头像/立绘/战斗背景
+    # 也不想再靠 junction，所以这里把几个前缀显式映射到 `assets/`。
+    _ASSET_PREFIXES = {
+        "/portraits/": "portraits",
+        "/portraits_foe/": "portraits_foe",
+        "/pet_avatars/": "pet_avatars",
+        "/pet_art/": "pet_art",
+        "/battle/": "battle",
+    }
+
+    def translate_path(self, path):
+        clean = urllib.parse.urlsplit(path).path
+        for prefix, sub in self._ASSET_PREFIXES.items():
+            if not clean.startswith(prefix):
+                continue
+            rest = clean[len(prefix):]
+            # 过一遍 normpath 挡掉 ../ 穿越，只允许落在目标目录里
+            rest = posixpath.normpath("/" + rest).lstrip("/")
+            if not rest or rest.startswith(".."):
+                break
+            return os.path.join(str(ROOT), "assets", sub,
+                                *rest.split("/"))
+        return super().translate_path(path)
+
     def log_message(self, fmt, *args):
         # 高频轮询会把控制台刷爆，只记错误
         pass
@@ -2290,6 +2386,9 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/pool":
             return self._json(sim_species_pool())
+
+        if path == "/api/species/idmap":
+            return self._json({"ids": species_idmap()})
 
         if path == "/api/sim/species":
             return self._json(sim_species_detail(q.get("name") or ""))

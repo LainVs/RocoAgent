@@ -1724,9 +1724,55 @@ function simRenderSlots() {
   });
 }
 
-/* 头像 URL：控制台根下 /portraits/<名>.png（404 时 onerror 兜底首字） */
+/* 精灵图形资源：assets/pet_avatars/<图鉴id>.png（128px 头像）
+   和 assets/pet_art/<id>.webp（官方立绘，已裁透明边）。
+   由 scripts/import_pet_assets.py 从外部项目导入，按**图鉴 id** 命名。
+   前端手里只有名字，所以先拉一次 name -> id 映射（~995 条，20 KB）。
+
+   ★ 2026-11-22 修：原来拼的是 `/portraits/<中文名>.png`，但
+   `assets/portraits` 里的文件名是 portrait_key（拼音键），中文名一律
+   404 —— 实测阵容卡头像全是空白。 */
+let SPECIES_ID = {};
+
+async function loadSpeciesIdMap() {
+  try {
+    const r = await fetch(API + '/api/species/idmap', { cache: 'no-store' });
+    const o = await r.json();
+    SPECIES_ID = o.ids || {};
+  } catch (e) {
+    SPECIES_ID = {};
+  }
+  // 映射到位后重画：首屏那一轮还没拿到 id，只能显示首字兜底
+  simRenderSlots();
+  if (PLAY.st) playRender(PLAY.st);
+}
+
+function speciesIdOf(name) {
+  if (!name) return null;
+  let id = SPECIES_ID[name];
+  if (id) return id;
+  // 形态名兜底：`蹦蹦花（象牙球形态）` 这种是独立 id（2xxxxxxxxx），
+  // 外部资源只覆盖 3001~3999 这一批，所以退回去用**本体**的画。
+  // 名字本身来自我们自己的图鉴表，去掉括号后缀一定能命中本体。
+  const base = name.replace(/[（(].*?[)）]/g, '').trim();
+  if (base && base !== name && SPECIES_ID[base]) return SPECIES_ID[base];
+  // `鸭吉吉_普` / `圣剑-X` 这类带分隔符的写法也退到本体
+  for (const sep of ['_', '-']) {
+    if (name.indexOf(sep) < 0) continue;
+    const head = name.split(sep)[0].trim();
+    if (head && SPECIES_ID[head]) return SPECIES_ID[head];
+  }
+  return null;
+}
+
 function loadAvatarImg(name) {
-  return name ? `${API}/portraits/${encodeURIComponent(name)}.png` : '';
+  const id = speciesIdOf(name);
+  return id ? `${API}/pet_avatars/${id}.png` : '';
+}
+
+function loadArtImg(name) {
+  const id = speciesIdOf(name);
+  return id ? `${API}/pet_art/${id}.webp` : '';
 }
 
 function simRenderEditor() {
@@ -2036,16 +2082,18 @@ function playHpClass(pct) {
 
 function playPetCard(p, mine) {
   if (!p) return '<div class="pw-sub">—</div>';
-  const av = loadAvatarImg(p.name);
+  const art = loadArtImg(p.name);
   const types = (p.types || []).join('/') || '—';
   const extra = p.nature ? ` · ${p.nature}` : '';
   const energy = mine
     ? `<div class="pw-energy">${Array.from({ length: 10 }, (_, i) =>
         `<i class="${i < (p.energy || 0) ? 'on' : ''}"></i>`).join('')}</div>`
     : '';
-  return `<div class="pw-head">
-      <div class="pw-av">${av
-        ? `<img src="${av}" onerror="this.remove()">`
+  return `<div class="pw-art${mine ? '' : ' foe'}">${art
+      ? `<img src="${art}" onerror="this.remove()">` : ''}</div>
+    <div class="pw-head">
+      <div class="pw-av">${loadAvatarImg(p.name)
+        ? `<img src="${loadAvatarImg(p.name)}" onerror="this.remove()">`
         : (p.name || '?').slice(0, 1)}</div>
       <div style="min-width:0">
         <div class="pw-name">${p.name}</div>
@@ -2082,10 +2130,11 @@ function playActsHtml(st) {
 }
 
 function playLogHtml(log) {
-  return (log || []).slice(-60).map((line) => {
-    // 事件文案约定：以「我方」/「对方」开头表示谁在动，方便上色。
+  return (log || []).slice(-70).map((line) => {
+    // 事件文案约定：回合头是「第 N 回合」，正文以「我方」/「对方」开头。
     let cls = '';
-    if (line.indexOf('倒下') >= 0) cls = 'die';
+    if (/^第 \d+ 回合$/.test(line)) cls = 'turnhdr';
+    else if (line.indexOf('倒下') >= 0) cls = 'die';
     else if (line.indexOf('我方') >= 0) cls = 'hit-a';
     else if (line.indexOf('对方') >= 0) cls = 'hit-b';
     return `<div class="${cls}">${line}</div>`;
@@ -2326,6 +2375,7 @@ $('playActs').addEventListener('click', (ev) => {
 });
 loadPlayTeams();
 loadPlayHistory();
+loadSpeciesIdMap();
 
 $('btnSimPresetSave').addEventListener('click', async () => {
   const name = $('simPresetName').value.trim();

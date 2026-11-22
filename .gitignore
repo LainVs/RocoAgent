@@ -21,6 +21,13 @@ logs/digits/glyphs/
 # （否则换机器后 test_switch_panel.py 没样张可跑）。
 !data/fixtures/switch/*.png
 
+# 精灵图形资源（第三方，见 assets/pet_art/VERSION.md）
+# 由 scripts/import_pet_assets.py 生成：头像 128px / 立绘最长边 420px
+# 共约 27 MB，必须入库，否则换机器后对战窗口和阵容卡全是空白。
+!assets/pet_avatars/*.png
+!assets/pet_art/*.webp
+!assets/battle/*.png
+
 # ------------------------------------------------------------------ 运行期产物
 *.log
 *.lock

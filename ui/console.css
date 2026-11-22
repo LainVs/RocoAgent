@@ -1363,8 +1363,20 @@ input:focus-visible,
 .play-arena {
   display: grid; grid-template-columns: 1fr 104px 1fr; gap: 10px;
   align-items: stretch; margin: 12px 0;
+  background: url(/battle/bg.png) center / cover no-repeat;
+  border: 1px solid var(--line); border-radius: 12px; padding: 10px;
 }
 .play-arena[hidden] { display: none; }
+/* 官方立绘：最长边 420px，已裁透明边。敌方镜像，像真的面对面 */
+.pw-art {
+  height: 150px; display: flex; align-items: flex-end;
+  justify-content: center; margin-bottom: 8px;
+}
+.pw-art img {
+  max-height: 150px; max-width: 100%; object-fit: contain;
+  filter: drop-shadow(0 6px 10px rgba(0, 0, 0, .38));
+}
+.pw-art.foe img { transform: scaleX(-1); }
 .pw-card {
   background: var(--bg-2); border: 1px solid var(--line);
   border-radius: 10px; padding: 12px; min-width: 0;
@@ -1444,3 +1456,8 @@ input:focus-visible,
 .play-log .hit-a { color: #9AC56B; }
 .play-log .hit-b { color: #D98A7A; }
 .play-log .die { color: #C1554A; font-weight: 600; }
+.play-log .turnhdr {
+  color: var(--ink-3); font-size: 10px; letter-spacing: .06em;
+  margin-top: 6px; border-top: 1px dashed var(--line);
+  padding-top: 4px;
+}
