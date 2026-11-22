@@ -203,7 +203,8 @@ def build_from_actions(rows):
     """
     pairs = defaultdict(lambda: {"n": 0, "actions": Counter(),
                                  "switch_to": Counter(),
-                                 "next_types": Counter()})
+                                 "next_types": Counter(),
+                                 "kinds": Counter()})
     matches = set()
     for r in rows:
         foe = r.get("foe")
@@ -221,6 +222,12 @@ def build_from_actions(rows):
         e = pairs[key]
         e["n"] += 1
         e["actions"][act] += 1
+        # a1/a2/a3 细分（2026-11-22 官方效果链）
+        # act_kind 来自 opponent_log：横幅读到的技能名过
+        # skill_kind_official 分类的结果
+        kind = r.get("act_kind")
+        if kind:
+            e["kinds"][kind] += 1
         if act == "switch" and r.get("switched_to"):
             e["switch_to"][r["switched_to"]] += 1
         if r.get("foe_types"):
@@ -283,6 +290,9 @@ def build_from_actions(rows):
             "level": "pair",
             "switch_top": e["switch_to"].most_common(3),
             "next_types_top": e["next_types"].most_common(3),
+            # a1攻击 / a2防御(增益) / a3状态(减益) / a4其它 的细分
+            # （官方效果链分类，见 skill_kind_official.py）
+            "kind_top": e["kinds"].most_common(4),
         })
     return out, len([m for m in matches if m is not None])
 

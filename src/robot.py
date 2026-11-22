@@ -2374,6 +2374,10 @@ class Bot:
                     if foe_moves.skill(name):
                         foe_moves.note_observation(foe, name)
                         log("CAST -> %s 用过 %s" % (foe, name))
+                    # 记下对面刚用的技能（2026-11-22）：喂给 opponent_log，
+                    # 结合官方效果链分类 -> a1攻击/a2防御/a3状态 细分
+                    self._foe_cast_skill = name
+                    self._foe_cast_at = time.time()
                 return
             if "召唤了" in text:
                 tail = text.split("召唤了", 1)[1]
@@ -3596,10 +3600,16 @@ class Bot:
         try:
             rec = getattr(self, "_opp_rec", None)
             if rec is not None:
+                # 最近 6 秒内横幅读到的对面技能名（2026-11-22）：
+                # opponent_log 会用官方效果链把它分类成 a1/a2/a3
+                _cast = None
+                if time.time() - getattr(self, "_foe_cast_at", 0.0) < 6.0:
+                    _cast = getattr(self, "_foe_cast_skill", None)
                 rec.observe(st, self.turn, getattr(self, "foe_name", None),
                             getattr(self, "foe_types", None),
                             getattr(self, "foe_types_conf", "none"),
-                            getattr(self, "active_pet", None))
+                            getattr(self, "active_pet", None),
+                            foe_cast_skill=_cast)
         except Exception:
             pass
         self._shot("T%d_%s" % (self.turn, action[0] if len(action) == 1

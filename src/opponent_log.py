@@ -73,10 +73,14 @@ class Recorder:
         self.prev = None
 
     def observe(self, st, turn, foe_name, foe_types, foe_conf,
-                our_name=None):
+                our_name=None, foe_cast_skill=None):
         """喂一次状态。st 是 Perc.observe() 的结果。
 
         返回 (act, switched_to) 供上层决策参考；数据不足时返回 (None, None)。
+
+        foe_cast_skill（2026-11-22）：robot._cast_ocr 从出招横幅读到的
+        「对面刚刚用了什么技能」。有了它 + 官方效果链分类，
+        opponent_model 才能把对面行为细分 a1攻击/a2防御/a3状态。
         """
         cur = {
             "my_pct": st.get("my_pct"),
@@ -86,6 +90,8 @@ class Recorder:
             "conf": foe_conf,
             "me": our_name,
             "turn": turn,
+            # 对面出招横幅（下一帧 classify 时才用得上）
+            "foe_cast_skill": foe_cast_skill,
         }
         if self.prev is None:
             self.prev = cur
@@ -105,6 +111,23 @@ class Recorder:
             self.prev = cur
             return None, None
 
+        # ---- 对面这一手的技能类别（2026-11-22，官方效果链）
+        #
+        # 用户要的 a1攻击/a2防御/a3状态 细分，靠光标（cast banner）读到的
+        # 技能名 + 官方效果链分类。机器人对面对我们时通常只读得到
+        # 「XX 使用了 YY」的横幅，那一刻 _cast_nick/skill 记录在哪，
+        # 由 robot._cast_ocr 喂进来（self.last_foe_cast）。
+        act_kind = None
+        act_skill = cur.get("foe_cast_skill")
+        if act_skill:
+            try:
+                import skill_kind_official as SKO
+                import skill_kind as SK
+                act_kind = SKO.classify_official_first(
+                    act_skill, SK.classify(act_skill))
+            except Exception:
+                act_kind = None
+
         rec = {
             "t": time.strftime("%H:%M:%S"),
             "match": self.match,
@@ -118,6 +141,8 @@ class Recorder:
             "foe_pct_before": p.get("foe_pct"),
             "foe_pct_after": cur.get("foe_pct"),
             "act": act,
+            "act_kind": act_kind,
+            "act_skill": act_skill,
             "switched_to": foe_name if switched else None,
         }
         try:
