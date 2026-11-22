@@ -152,6 +152,15 @@
 - [x] **虚拟技能条目**：resolve 失败但 desc_fx 有效果的技能构造
       power=0 虚拟条目（氧循环 heal 回复 0 根因修复）
 
+## 本轮（S6.15）
+
+- [x] **180 技全量分类**：真技能 113 / 真特性 50 / 两表都有 4 / 都没有 13
+- [x] **50 条特性** → `data/traits_text_derived.json`（trait_lib 补充表）
+- [x] **113 条真技能**保留 authority_consumable（走 desc_effects）
+- [x] `trait_lib._load()` 读两个文件（主表 + 补充表）
+- [x] 确认 species() **没有 bug**（是 PowerShell 字面量编码陷阱：魔力喵
+      U+732B vs 魔力咪 U+55B5 是不同精灵）
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
