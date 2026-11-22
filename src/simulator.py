@@ -1272,10 +1272,18 @@ class Battle:
                 p.trait_tmp_atk = 0.0
             p.trait_tmp_def = 0.0
 
-        # 回合末：印记（光合 +1 能量 / 中毒印记 3%）+ 异常状态 + 特性 ON_TURN_END
+        # 回合末：异常状态（buff，含衰减）+ 印记（毒伤 3%/层，不衰减）
+        # + 特性 ON_TURN_END（回血/回能）。
+        # ★ 中毒 buff 与中毒印记**数值相同但生命周期不同**：buff 换人清空、
+        #   层数减半由 status_tick 处理；印记换人保留、由 mark_tick 结算。
+        #   两者叠加时总毒伤 = 3%×(buff层数 + 印记层数)。
         for p, other, side in ((me, foe, "a"), (foe, me, "b")):
             if p is None:
                 continue
+            # buff 部分（status_tick 内部做衰减）
+            for e in nrc_fx.status_tick(p, other):
+                events.append(e)
+            # 印记部分
             tick = battle_fx.mark_tick(self.marks.get(side) or {})
             if tick["energy"] and p.alive:
                 before = p.energy
@@ -1290,8 +1298,9 @@ class Battle:
                 events.append("%s 中毒印记 -%d（剩 %d/%d）"
                               % ("我方" if side == "a" else "对方",
                                  d2, p.hp, p.max_hp))
-            for e in nrc_fx.status_tick(p, other):
-                events.append(e)
+            if not trait_lib.supported_rules(getattr(p, "trait", None)):
+                for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
+                    events.append(e)
             if not trait_lib.supported_rules(getattr(p, "trait", None)):
                 for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
                     events.append(e)
