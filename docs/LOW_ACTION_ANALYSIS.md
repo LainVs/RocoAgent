@@ -69,3 +69,15 @@ vs 战斗帧的 54。→ 这些帧本来就没有战斗 HUD，识别返回 unkno
 
 实盘预期修正：结算页/大厅帧本来就不该出名字，avata 通道的线上
 命中率统计应只在 battle 帧上做（以后用 battle 帧过滤后再算）。
+
+---
+
+## 附：robot.lock 里的旧 PID（2026-11-22 深夜）
+
+selfcheck 报 robot.lock 空闲、但文件里写着 PID 360800 —— 查证后确认
+`config.acquire_lock()` 用的是 **msvcrt 文件锁**，进程死亡时锁自动释放，
+文件内容只是"最后一次持锁者"的记录，不是活锁。PID 360800 已死
+（EnumProcesses 确认），不影响下次启动机器人。无需清理逻辑——
+文件锁的设计本来就防了这一手。（自检工具的 PID 检测走了三次弯路：
+OpenProcess 对已回收 PID 误报存活、tasklist 的本地化"无任务"输出
+破坏字符串匹配——最终 EnumProcesses 才是权威。）
