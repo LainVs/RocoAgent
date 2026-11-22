@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import random
@@ -39,13 +40,77 @@ MAX_TURNS = 60          # 单局上限，防死循环
 ENERGY_CAP = 10
 ENERGY_GAIN = 2         # 聚能一次 +2（实测值）
 
-# 一次 buff 技能的攻击增益，取自 roco-cal 真实技能数据的中位数。
+# 一次 buff 技能的攻击增益。
 #
-# 统计口径（scripts/check_buff_values.py）：
-#   phys_atk_buff + mag_atk_buff 共 51 条 self 增益
-#   取值 [-50,10,20,...,150,190]，中位 +70%，均值 +64%
-# 取中位 0.70。真实机制下 buff 不可叠（每个技能一次性给固定值）。
+# ★ 2026-11-22 升级：官方精确值优先，中位数兜底（抄作业 S1）
+# ----------------------------------------------------------
+# 原来用 ATK_BUFF_MEDIAN=0.70（roco-cal 51 条 self 增益的中位数）。
+# 现在有官方精确映射 `roco_buff_calc_map.json`：
+#
+#     「物攻等级提升」-> {"phyAtkPercent": 10}   （+10%）
+#     「最好的伙伴」   -> 双攻双防速各 +20%
+#
+# 全链：技能 skill_result[].effect_id -> buff group(id) -> percent 字段。
+# 实测官方 2032 技能里 147 个引用了带百分比的 buff group。
+# 精确值查不到时仍回退中位数。
 ATK_BUFF_MEDIAN = 0.70
+
+# 官方 buff 计算映射：group_id -> {"name", "phyAtkPercent", ...}
+_BUFF_CALC = None
+
+
+def buff_calc_map():
+    global _BUFF_CALC
+    if _BUFF_CALC is None:
+        p = os.path.join(ROOT, "data", "external", "rkpp-official",
+                         "roco_buff_calc_map.json")
+        try:
+            with io.open(p, encoding="utf-8") as fh:
+                _BUFF_CALC = json.load(fh)
+        except Exception:
+            _BUFF_CALC = {}
+    return _BUFF_CALC
+
+
+# 技能名 -> 官方百分比增益（首次用到时从 authority/skill.json 建）
+_SKILL_BUFF_PCT = None
+
+
+def skill_buff_pct(skill_name):
+    """查一个技能给自身的官方增益（0~1 的小数），查不到返回 None。
+
+    链路：authority/skill.json 的 skill_result[].effect_id
+          -> roco_buff_calc_map（group_id -> phyAtkPercent 等）
+    """
+    global _SKILL_BUFF_PCT
+    if _SKILL_BUFF_PCT is None:
+        out = {}
+        try:
+            p = os.path.join(
+                r"C:/Users/Lenovo/Downloads/洛克PVP助手/洛克PVP助手/app/wwwroot/native-data/authority/skill.json")
+            with io.open(p, encoding="utf-8") as fh:
+                auth = json.load(fh)
+        except Exception:
+            auth = {}
+        for s in auth.values():
+            dp = s.get("dam_para") or [0]
+            if (dp[0] or 0) > 0:
+                continue          # 有伤害的主卡不在 buff 技能之列
+            pct = {}
+            for e in (s.get("skill_result") or []):
+                g = buff_calc_map().get(str(e.get("effect_id")))
+                if not g:
+                    continue
+                for f in ("phyAtkPercent", "magAtkPercent"):
+                    if g.get(f):
+                        pct[f] = max(pct.get(f, 0), g[f])
+            if pct:
+                # 双攻取 max（模拟器只有一个 atk_buff 槽）
+                out[s.get("name")] = max(
+                    pct.get("phyAtkPercent", 0),
+                    pct.get("magAtkPercent", 0)) / 100.0
+        _SKILL_BUFF_PCT = out
+    return _SKILL_BUFF_PCT.get(skill_name)
 
 
 # ---------------------------------------------------------------- 数据
@@ -359,6 +424,12 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None):
         ka, pa = pol_a.choose(me, foe, bench_a, turn)
         kb, pb = pol_b.choose(foe, me, bench_b, turn)
 
+        # 取出双方本回合选的技能对象（buff 精确值要用它的名字，2026-11-22）
+        _skill_a = me.moves[pa] if (ka == "skill" and pa is not None
+                                    and pa < len(me.moves)) else None
+        _skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
+                                     and pb < len(foe.moves)) else None
+
         # 处理聚能
         if ka == "energy":
             me.energy = min(ENERGY_CAP, me.energy + ENERGY_GAIN)
@@ -378,16 +449,20 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None):
             foe = b[ib]
             switched_b = True
 
-        # 处理 buff：按 roco-cal 真实数据，一次给固定数值
+        # 处理 buff：官方精确值优先（skill_buff_pct），中位数兜底
         #
         # 旧代码是 me.buffs = min(3, me.buffs + 1)（虚构的叠层），
         # 但 roco-cal 的 607 个技能里**没有叠层机制**，且攻/防 buff
         # 是不同技能，一个技能不会同时加两者。
         if ka == "buff":
-            me.atk_buff = max(me.atk_buff, ATK_BUFF_MEDIAN)
+            _p = skill_buff_pct((_skill_a or {}).get("name", "")) \
+                if _skill_a else None
+            me.atk_buff = max(me.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
             me.buffed = True
         if kb == "buff":
-            foe.atk_buff = max(foe.atk_buff, ATK_BUFF_MEDIAN)
+            _p = skill_buff_pct((_skill_b or {}).get("name", "")) \
+                if _skill_b else None
+            foe.atk_buff = max(foe.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
             foe.buffed = True
 
         # 出手（速度快的先打）。换人方这回合不攻击。
