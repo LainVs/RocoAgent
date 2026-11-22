@@ -1315,6 +1315,36 @@ def sim_lineup_list():
     return {"items": items, "stats": flat}
 
 
+def sim_traits_info(name=""):
+    """特性信息：不传 name 就给覆盖率；传了就给这一条特性的规则明细。
+
+    为什么要暴露覆盖率（2026-11-22）：roco-cal 有 261 条特性，但大量触发
+    条件依赖天气/印记/等级/异常状态这些本模拟器**没有建模**的东西。
+    与其让人以为"特性都做了"，不如把「能应用 18 条」这个事实摆在接口里。
+    """
+    import trait_lib as _TL
+    cov = _TL.coverage()
+    data = _TL._load()
+    items = []
+    for k in sorted(data):
+        rs = _TL.supported_rules(k)
+        if not rs:
+            continue
+        items.append({
+            "name": k, "desc": (data[k].get("desc") or ""),
+            "rules": [{"when": r.get("timing"), "mode": r.get("mode"),
+                       "kind": r.get("kind"), "value": r.get("value"),
+                       "values": r.get("values"),
+                       "source": r.get("source")} for r in rs],
+        })
+    out = {"coverage": cov, "usable": items}
+    if name:
+        out["spec"] = _TL.spec(name)
+        out["supported"] = _TL.supported_rules(name)
+        out["unsupported"] = _TL.unsupported_rules(name)
+    return out
+
+
 def sim_skills_by_ids(ids):
     """按 id 批量取技能详情（编辑器里「外部技能」显示名字用）。
 
@@ -1429,9 +1459,18 @@ def sim_species_detail(name):
     # 三项60建模的默认面板（PvP 真实建模，见 simulator.Pet docstring）：
     # 音速犬 -> hp366/atk221/mat97/def171/mdef150/spe260
     p = _SIM.Pet(dex, name, iv=60, invest=["hp", "atk", "spe"])
+    # 特性：描述 + 能应用的规则 + 有几条因为缺建模而没应用（诚实交代）
+    import trait_lib as _TL
+    _spec = _TL.spec(s["trait"]) or {}
     return {
         "name": s["name"], "id": s["id"], "types": s["types"],
         "trait": s["trait"],
+        "trait_desc": _spec.get("desc") or "",
+        "trait_rules": [{"when": r.get("timing"), "mode": r.get("mode"),
+                         "kind": r.get("kind"),
+                         "value": r.get("value"), "values": r.get("values")}
+                        for r in _TL.supported_rules(s["trait"])],
+        "trait_unsupported": len(_TL.unsupported_rules(s["trait"])),
         "base": {"hp": base[0], "patk": base[1], "matk": base[2],
                  "pdef": base[3], "mdef": base[4], "spd": base[5]},
         "panel_iv60": panel_std,
@@ -2420,6 +2459,9 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/sim/skills":
             return self._json(sim_skills_by_ids(
                 [x for x in (q.get("ids") or "").split(",") if x.strip()]))
+
+        if path == "/api/sim/traits":
+            return self._json(sim_traits_info(q.get("name") or ""))
 
         if path == "/api/sim/presets":
             return self._json(sim_preset_list())

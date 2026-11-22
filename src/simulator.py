@@ -365,6 +365,27 @@ class Pet:
         self.atk_buff = 0.0     # 攻击增益比例，例如 0.70 = +70%
         self.def_buff = 0.0     # 防御增益比例
         self.buffed = False     # 是否已经用过 buff 技能（不再叠）
+        # ---- 特性（2026-11-22）
+        #
+        # 规则来自 data/traits.json（roco-cal 的结构化特性 + 3 条文本推导）。
+        # 只应用能判定的条件，见 src/trait_lib.py 的 SUPPORTED 白名单。
+        #
+        # 实测两个用户点名的例子：
+        #   · `专注力`（音速犬）: 入场首回合物攻 +100%  -> trait_atk_buff=1.0
+        #   · `渴求`（蝙蝠类）  : 入场获得 30% 吸血      -> 命中后回血
+        import trait_lib
+        self.trait_spec = trait_lib.spec(self.trait)
+        # 特性增益分两类：
+        #   trait_atk_buff/def_buff  常驻（「携带的技能都<4耗能」这类）
+        #   trait_tmp_atk/tmp_def    只在**本回合**有效（「入场首回合」这类）
+        self.trait_atk_buff = 0.0
+        self.trait_def_buff = 0.0
+        self.trait_tmp_atk = 0.0
+        self.trait_tmp_def = 0.0
+        a, d = trait_lib.carrier_buffs(self)
+        self.trait_atk_buff += a
+        self.trait_def_buff += d
+        self._trait_first_done = False
 
     def panel(self):
         """六项面板（UI 展示用）。"""
@@ -381,23 +402,47 @@ class Pet:
 
 # ---------------------------------------------------------------- 伤害
 
-def calc_damage(attacker, defender, move):
-    """用真实的 roco-cal 引擎算伤害。
+def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None):
+    """用真实的 roco-cal 引擎算伤害（含特性修正）。
 
     增益按 roco-cal 的真实公式处理（damresult.py）：
         buff_numerator = 1 + atk_up + enemy_def_down
         buff_denominator = 1 + atk_down + enemy_def_up
     也就是"攻方攻击提升"和"守方防御下降"在**同一个分子**里相加，
     而不是各自独立相乘。这里只实现攻方增益这一侧（守方减益暂不模拟）。
+
+    特性修正（2026-11-22）：
+      · 威力倍率/加成：trait_lib.attack_mods（carried/usage/action 等 mode）
+      · 受击减免    ：trait_lib.incoming_mult
+      · 首回合增益  ：attacker.trait_atk_buff（Battle 在回合开始时挂上）
+    策略也直接调这个函数，所以**决策和结算用的是同一套修正** ——
+    否则策略会按"无特性"估伤害，选出来的招和实际对不上。
     """
     import damage_v2 as DMG
     import statmodel as S
+    import trait_lib
     stab = 1.25 if move["type"] in attacker.types else 1.0
     eff = S.type_effect(move["type"], defender.types)
-    atk = attacker.atk * (1.0 + attacker.atk_buff)
-    dfn = defender.dfn * (1.0 + defender.def_buff)
-    dmg = DMG.damage(int(atk), int(dfn), move["power"],
+    if power_mult is None or power_bonus is None:
+        try:
+            foe_cost = sum(int(m.get("cost") or 0) for m in defender.moves)
+        except Exception:
+            foe_cost = 0
+        mods = trait_lib.attack_mods(attacker, move,
+                                     foe_total_cost=foe_cost)
+        power_mult = mods["power_mult"]
+        power_bonus = mods["power_bonus"]
+    power = max(0, int(int(move["power"]) * float(power_mult)
+                       + int(power_bonus)))
+    atk = attacker.atk * (1.0 + attacker.atk_buff
+                          + getattr(attacker, "trait_atk_buff", 0.0)
+                          + getattr(attacker, "trait_tmp_atk", 0.0))
+    dfn = defender.dfn * (1.0 + defender.def_buff
+                          + getattr(defender, "trait_def_buff", 0.0)
+                          + getattr(defender, "trait_tmp_def", 0.0))
+    dmg = DMG.damage(int(atk), int(dfn), power,
                      type_eff=eff, stab=stab)
+    dmg *= trait_lib.incoming_mult(defender, move)
     return max(1, int(dmg))
 
 
@@ -658,6 +703,15 @@ class Battle:
         if self.ib >= len(self.b):
             self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
             return False
+        # 特性：入场首回合的临时增益（`专注力` 这类）
+        import trait_lib
+        for p in (self.me, self.foe):
+            if p is None or getattr(p, "_trait_first_done", True):
+                continue
+            a, d = trait_lib.first_turn_buffs(p)
+            p.trait_tmp_atk += a
+            p.trait_tmp_def += d
+            p._trait_first_done = True
         return True
 
     def step(self, ka, pa, kb, pb):
@@ -667,6 +721,7 @@ class Battle:
         kind ∈ {"skill","energy","switch","buff"}。
         """
         events = []
+        import trait_lib
         me, foe = self.me, self.foe
         if me is None or foe is None:
             return events
@@ -778,7 +833,7 @@ class Battle:
         # 的基线，动之前先想清楚。
         acts.sort(key=lambda x: (-x[0], self.rnd.random()))
 
-        for _spe, who, atk, dfn, mv in acts:
+        for idx, (_spe, who, atk, dfn, mv) in enumerate(acts):
             if not atk.alive or not dfn.alive:
                 continue
             d = calc_damage(atk, dfn, mv)
@@ -786,8 +841,27 @@ class Battle:
             events.append("%s %s → %s -%d（剩 %d/%d）"
                           % ("我方" if who == "a" else "对方",
                              mv["name"], dfn.name, d, dfn.hp, dfn.max_hp))
+            # 吸血（`渴求` 入场 30% / `先机虹吸` 先手 30%）：按**实际造成**
+            # 的伤害回血，上限自身最大血量。idx==0 表示这一手是先手。
+            ls = trait_lib.attack_mods(
+                atk, mv, first=(idx == 0),
+                foe_total_cost=sum(int(m.get("cost") or 0)
+                                   for m in dfn.moves))["lifesteal"]
+            if ls > 0 and d > 0 and atk.alive:
+                before = atk.hp
+                atk.hp = min(atk.max_hp, atk.hp + max(1, int(d * ls)))
+                gained = atk.hp - before
+                if gained > 0:
+                    events.append("%s 吸血 +%d（剩 %d/%d）"
+                                  % ("我方" if who == "a" else "对方",
+                                     gained, atk.hp, atk.max_hp))
             if not dfn.alive:
                 events.append("%s 倒下" % dfn.name)
+
+        # 首回合临时增益只在那一回合有效，回合结束就撤掉
+        for p in list(self.a) + list(self.b):
+            p.trait_tmp_atk = 0.0
+            p.trait_tmp_def = 0.0
 
         if not any(p.alive for p in self.a):
             self._finish("b", self.turn, 0, sum(p.hp for p in self.b))

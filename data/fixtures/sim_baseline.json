@@ -36,10 +36,10 @@
    "policy_a": "smart",
    "policy_b": "smart",
    "seed": 1,
-   "winner": "b",
-   "turns": 7,
-   "hp_a": 0,
-   "hp_b": 146
+   "winner": "a",
+   "turns": 5,
+   "hp_a": 580,
+   "hp_b": 0
   },
   {
    "case": "mirror",
@@ -56,10 +56,10 @@
    "policy_a": "smart",
    "policy_b": "smart",
    "seed": 2,
-   "winner": "a",
-   "turns": 8,
-   "hp_a": 146,
-   "hp_b": 0
+   "winner": "b",
+   "turns": 5,
+   "hp_a": 0,
+   "hp_b": 580
   },
   {
    "case": "fire_vs_ice",

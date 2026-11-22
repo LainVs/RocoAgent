@@ -1904,9 +1904,14 @@ async function simLoadMoves(name, checked, names) {
     }
     simEdBase = o.base;
     if (o.nature_table) simNatureTable = o.nature_table;
+    // 特性写在种族值旁边：描述 + 有几条效果因为缺建模没模拟（诚实交代）
     $('simEdInfo').innerHTML =
-      `属性 <b>${o.types.join('/')}</b> · 特性 <b>${o.trait}</b> · ` +
-      `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
+      `属性 <b>${o.types.join('/')}</b> · 特性 <b>${o.trait || '无'}</b>` +
+      (o.trait_desc ? ` — ${o.trait_desc}` : '') +
+      (o.trait_unsupported
+        ? ` <span class="trait-warn">（另有 ${o.trait_unsupported} 条效果未建模）</span>`
+        : '') +
+      ` · 种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
       `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
     const want = new Set(checked);
     // 形态变体提示：`卡瓦重` 在 S5 里只有四个形态条目，这里是并集，
@@ -2111,6 +2116,7 @@ function playPetCard(p, mine) {
   const art = loadArtImg(p.name);
   const types = (p.types || []).join('/') || '—';
   const extra = p.nature ? ` · ${p.nature}` : '';
+  const trait = p.trait ? ` · ${p.trait}` : '';
   const energy = mine
     ? `<div class="pw-energy">${Array.from({ length: 10 }, (_, i) =>
         `<i class="${i < (p.energy || 0) ? 'on' : ''}"></i>`).join('')}</div>`
@@ -2123,7 +2129,7 @@ function playPetCard(p, mine) {
         : (p.name || '?').slice(0, 1)}</div>
       <div style="min-width:0">
         <div class="pw-name">${p.name}</div>
-        <div class="pw-sub">${types}${extra}</div>
+        <div class="pw-sub">${types}${extra}${trait}</div>
       </div>
     </div>
     <div class="pw-hp ${playHpClass(p.pct)}"><i style="width:${Math.max(0, Math.min(100, p.pct))}%"></i></div>
