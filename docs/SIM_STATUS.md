@@ -138,6 +138,13 @@
 - [x] **引电/禁足**补入 STATUS_RULES（authority 权威定义）
 - [x] test_battle_fx 印记数和龙噬数值断言对齐
 
+## 本轮（S7.2）
+
+- [x] **authority_consumable.json**（180 技新增效果）：从 authority
+      buff_desc 正则抽取，与 desc_fx（176 技）合并后覆盖 356 技
+- [x] desc_effects 合并（authority 优先，desc 补充）
+- [x] heal_pct/buff_atk/buff_def 新 handler 字段（引擎待接）
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
