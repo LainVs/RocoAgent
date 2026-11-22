@@ -47,3 +47,25 @@ review 文件证实：这场从 08:40:20 到 08:40:44 只有 2 个回合记录�
 - 把幻影局从 nightly_report 的对局数里剔除（按 turns.jsonl 里有无
   (mid,turn) 去重后的动作序列判断，0 动作且 0 时长的丢弃）
 - 跑几局实盘验证 BAND/CAST 链路后再看是否还需要面板扫描触发器
+
+
+---
+
+## 附：foe_ident 全量离线 dry-run（2026-11-22 深夜）
+
+用 logs/resultshots 的 108 张真实帧跑完整识别链（属性→候选→名字→
+头像→ONNX），作为实盘前的基线：
+
+```
+named=69 (64%)   candidates-only=2   unknown=37   errors=0
+by source: name=68, none=37, types=2, onnx=1
+2.09 s/frame（离线；线上跑在后台线程 + 20s 节流，不影响决策）
+```
+
+37 个 unknown **全部**来自 094345 系列（结算页帧）：预测坐标处图标
+NCC 为负、HoughCircles 找不到任何圆盘、名字框亮度 133（结算横幅）
+vs 战斗帧的 54。→ 这些帧本来就没有战斗 HUD，识别返回 unknown 是
+**fail-closed 的正确行为**，不是 bug。
+
+实盘预期修正：结算页/大厅帧本来就不该出名字，avata 通道的线上
+命中率统计应只在 battle 帧上做（以后用 battle 帧过滤后再算）。
