@@ -417,8 +417,12 @@ def identify(screen, prev=None, side="foe"):
     # ---- 3.5 头像通道（pet_avatars）：高精确，只在高置信时定名
     #
     # 实测（162 张已标注 HUD 裁图，属性约束后）：普通配色 74.2% Top-1；
-    # 高置信档（score>=0.60 且 margin>=0.03）产出的 80 次投票里 95% 正确。
+    # 高置信档（score>=0.60 且 margin>=0.03）产出的 78 次投票里 96.2% 正确。
     # 所以它可以排在模板/ONNX 之前 —— 那两条通道的精度都低于这个数。
+    #
+    # ⚠ 但属性没读出来时**不许**做全库投票：同一批真值上全库高置信只有
+    # 90.1%，且错例里有一个 0.918（乌拉塔 -> 花影羚羊）。属性硬约束是
+    # 这条通道的安全带，没有它就只能返回候选、不返回名字。
     #
     # 银行首次构建约 2.8s（之后走 data/cache/avatar_bank_*.npz），
     # 单次打分 ~20ms，远低于 OCR。构建失败不影响主链路。
@@ -429,7 +433,7 @@ def identify(screen, prev=None, side="foe"):
         av = []
     if av:
         out["detail"]["avatar_top"] = [(a["name"], a["score"]) for a in av[:3]]
-    if av and av[0]["conf"] == "high" and _accept(av[0]["name"]):
+    if types and av and av[0]["conf"] == "high" and _accept(av[0]["name"]):
         out.update(name=av[0]["name"], source="avatar",
                    conf=float(av[0]["score"]))
         return out

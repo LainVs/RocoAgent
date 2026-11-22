@@ -165,6 +165,14 @@ def main():
             check("foe_ident uses avatar channel",
                   r.get("source") == "avatar" and r.get("name") == "寂灭骨龙",
                   "%s/%s" % (r.get("source"), r.get("name")))
+
+            # 8.1 没有属性就不许全库投票（全库高置信只有 90.1%）
+            foe_ident.hud_ident.read_types = lambda *a, **k: []
+            foe_ident._ICON_CACHE.clear()      # 指纹缓存会绕过上面的打桩
+            r2 = foe_ident.identify(FakeScreen(frame), side="foe")
+            check("no types -> avatar does not decide",
+                  r2.get("source") != "avatar",
+                  "%s/%s" % (r2.get("source"), r2.get("name")))
         finally:
             foe_ident.hud_ident.read_types = real_types
             foe_ident.hud_ident.read_name = real_name

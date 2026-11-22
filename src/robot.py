@@ -1998,14 +1998,15 @@ class Bot:
             self._foe_sig_streak = 0
             if hud_name:
                 self._foe_name_seen = hud_name
-        # ---- 第三通道：pet_avatars 头像库（639 类，高精确）
+        # ---- 第三通道：pet_avatars 头像库（639 类）
         #
-        # 与 HUD 模板库的区别：模板库只有 ~162 张已标注实机裁图，头像库覆盖
-        # 639 个图鉴 id，且高置信档实测精确率 95%（docs/PLAN_AVATAR_IDENT.md）。
-        # 只在两种情况下采纳：
-        #   · 现在还没有名字；或
-        #   · 现在的名字来自模板通道且置信度 < 0.90（模板 0.60 只有 ~76% 正确）
-        # ONNX 高置信（>=0.90）时不覆盖，交给下面已有的锁逻辑。
+        # ⚠ 安全规则（2026-11-22 实测）：机器人这条链路**没有属性图标**，
+        # 全库 639 里投票的高置信精度只有 90.1%（81 票错 8 票，其中
+        # `乌拉塔 -> 花影羚羊 0.918`）。单独用它定名比"未知"更危险 ——
+        # 错的属性会让克制算错 4 倍。所以这里只接受**第二意见**：
+        #   · HUD 模板（sc>=0.75）说的也是它；或
+        #   · ONNX Top-1 说的也是它。
+        # 两者都不一致时只记分数，不改 foe_name。
         av = []
         try:
             import avatar_ident as _AV
@@ -2016,12 +2017,19 @@ class Bot:
             self.foe_avatar_score = float(av[0]["score"])
         if av and av[0]["conf"] == "high":
             av_name = av[0]["name"]
-            cur_src = str(getattr(self, "foe_ident_source", "") or "")
-            cur_conf = float(getattr(self, "foe_conf", 0.0) or 0.0)
-            weak = (not self.foe_name) or (cur_src.startswith("portrait")
-                                           and cur_conf < 0.90)
-            if weak and av_name != self.foe_name:
-                log("FOE -> %s (%.2f, avatar)" % (av_name, av[0]["score"]))
+            ann = _AV.normalize(av_name)
+            tpl_name = None
+            if name is not None and sc >= 0.75:
+                tpl_name = self._portrait_species(name, "foe")
+            onnx_name = p_res[0][0] if p_res else None
+            agree = bool(ann) and (
+                (tpl_name and _AV.normalize(tpl_name) == ann)
+                or (onnx_name and _AV.normalize(onnx_name) == ann))
+            if agree and av_name != self.foe_name:
+                log("FOE -> %s (%.2f, avatar+%s)"
+                    % (av_name, av[0]["score"],
+                       "tpl" if tpl_name and _AV.normalize(tpl_name) == ann
+                       else "onnx"))
                 self.foe_name = av_name
                 self.foe_bust = av_name
                 self.foe_ident_source = "avatar"
