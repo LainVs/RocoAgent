@@ -37,6 +37,16 @@
 - [x] **先手**：解析「先手 +N」，出手排序第一级应对、第二级先手度、第三级速度
       （实测低速方带「先发制人」+1 可以抢在高速度方前面出手）
 
+## 本轮（S6 第二层修正）
+
+- [x] **悲悯/悼亡按原文修正**（用户指出「+60%」可疑）：
+      timing=current 持续状态（不是入场一次性）、每只力竭 +30%（双攻是
+      物攻/魔攻两个面向，不是相加）、回到 roco 层不再走 nrc
+- [x] 新增 `trait_lib.dead_buffs()` + Battle 每回合重算
+- [x] S6 第二层 handler：ON_KILL_BUFF / FAINTED_ALLIES_BUFF /
+      ENEMY_LOSE_ENERGY / FREEZE / PARASITE / COUNTER_SUCCESS_DOUBLE_DAMAGE
+- [x] 名字模糊匹配（恶魔的晚餐 vs nrc 恶魔的晚宴）
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
