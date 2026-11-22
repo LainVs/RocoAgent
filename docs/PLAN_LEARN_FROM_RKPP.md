@@ -51,10 +51,14 @@
    - `official_kind()` 按效果链分类 self_buff/enemy_debuff/heal
    - **只信三类明确的**：初版把"有效果链"都标 control，会误导
      （岩脉崩毁效果链只是"位置固定"，它是纯攻击技）
-3. **接进决策**（进行中）
-   - `skill_kind.info()` 已补注释，主类仍是 damage，附带效果单独查
+3. **接进决策**（✅ a1/a2/a3 链路已通）
+   - ✅ `opponent_log.observe` 新增 `foe_cast_skill` 参数：
+     robot 的出招横幅 OCR（`_cast_ocr`）读到「对面用了 YY」后 6 秒内有效
+   - ✅ 记录新增 `act_kind` / `act_skill` 字段
+   - ✅ `opponent_model.build_from_actions` 聚合 `kind_top`
+   - 诚实说明：横幅 OCR 覆盖有限，历史 318 条无 act_kind，
+     新对局才开始积累；无 kind 的记录照常聚合不影响旧功能
    - 待做：policy_v2 的 `w_energy`/`buff first` 分支接 official_kind
-   - 待做：opponent_model 用分类细分 a1/a2/a3
 
 ### P0.5：官方 priority 语义（✅ 已完成，含纠错）
 
