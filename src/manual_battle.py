@@ -56,6 +56,10 @@ def _pet_json(p, with_moves=False, foe=None):
         "tmp_atk": round(getattr(p, "trait_tmp_atk", 0.0), 3),
         "tmp_def": round(getattr(p, "trait_tmp_def", 0.0), 3),
         "taken_mult": round(getattr(p, "taken_mult", 1.0), 3),
+        # S8 血脉 / S13 槽位锁 / S16 条件规则（UI 展示）
+        "bloodline": getattr(p, "bloodline", None),
+        "allowed_slots": sorted(getattr(p, "_allowed_slots", None) or []),
+        "cond_mods": getattr(p, "_cond_mods", None) or None,
     }
     if with_moves:
         out["moves"] = []
@@ -286,6 +290,39 @@ class Session:
                                      "spell": spell})
                 self.actions.append({"turn": self.bt.turn, "kind": "magic",
                                      "spell": spell})
+            elif kind == "evolve":
+                # S10 进化之力：首领血脉精灵战斗中进化，每场 1 次。
+                # payload = 本回合照常出的技能下标（不占行动）。
+                if self.bt.evolution_used.get("a"):
+                    return {"error": "进化之力每场只能使用 1 次"}
+                _lf_path = os.path.join(os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))),
+                    "data", "leader_forms.json")
+                try:
+                    _lf = json.load(io.open(_lf_path, encoding="utf-8"))
+                except Exception:
+                    _lf = {}
+                _forms = (_lf.get(me.name) or {}).get("forms") or {}
+                _target = None
+                bl = getattr(me, "bloodline", None)
+                for fname, f in _forms.items():
+                    if f.get("bloodline") == "首领":
+                        if bl == "首领":
+                            _target = fname
+                    else:
+                        _elem = fname[1] if fname.startswith("圣") else None
+                        if _elem and (bl == _elem or
+                                      _elem in (me.types or [])):
+                            _target = fname
+                if not _target:
+                    return {"error": "%s 不满足首领化条件（血脉 %s）"
+                                     % (me.name, bl or "未配置")}
+                try:
+                    payload = int(action.get("i"))
+                except (TypeError, ValueError):
+                    payload = 0
+                self.actions.append({"turn": self.bt.turn, "kind": "evolve",
+                                     "target": _target})
             else:
                 return {"error": "未知动作 %s" % kind}
 
@@ -358,7 +395,15 @@ class Session:
                     "cd": bt.magic_state["a"]["cd"],
                     "usable": (bool(bt.team_magic.get("a"))
                                and bt.magic_state["a"]["used"] < 2
-                               and bt.magic_state["a"]["cd"] == 0),
+                               and bt.magic_state["a"]["cd"] == 0
+                               and getattr(bt.me, "bloodline", None)
+                               != "首领"),
+                },
+                # S10 进化之力状态：UI 按钮用（每场 1 次）
+                "evolution": {
+                    "used": bool(bt.evolution_used.get("a")),
+                    "usable": not bt.evolution_used.get("a")
+                    and getattr(bt.me, "bloodline", None) == "首领",
                 },
                 "events": events or [],
                 "log": self.log[-MAX_LOG:],
