@@ -145,6 +145,13 @@
 - [x] desc_effects 合并（authority 优先，desc 补充）
 - [x] heal_pct/buff_atk/buff_def 新 handler 字段（引擎待接）
 
+## 本轮（S7.3）
+
+- [x] **heal_pct**（38 技）接入引擎：desc_effects 消费路径直接回血
+- [x] **buff_atk/buff_def**（67+31 技）接入引擎：add_buff 线性叠加
+- [x] **虚拟技能条目**：resolve 失败但 desc_fx 有效果的技能构造
+      power=0 虚拟条目（氧循环 heal 回复 0 根因修复）
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
