@@ -185,6 +185,12 @@
 - [x] **听桥镜像块位置修正**：从 acts.append 之后挪到之前——
       镜像威力 200 现在正常产生伤害（-431 而不是占位 1 点）
 
+## 本轮（S7.6）
+
+- [x] **buff_fx_index 42 条特性 → trait 层**（traits_text_derived +20 条）
+- [x] trait_lib 覆盖更新：traits 268 / with_rules 128 / usable 30
+- [x] authority_consumable 移除特性条目 3 条（剩 127 技）
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
