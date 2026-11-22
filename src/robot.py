@@ -244,6 +244,7 @@ class Bot:
         # the party panel does not include the pet that is on the field.
         self.active_pet = None
         self.pet_at = 0.0
+        self._self_onnx_conf = 0.0    # 最近一次 ONNX 我方身份的置信度
         self._pet_poll_at = 0.0
         self._pet_unknown_at = 0.0
         self._foe_poll_at = 0.0
@@ -1876,6 +1877,8 @@ class Bot:
                                 % (sp, _conf,
                                    "" if in_team else " [不在 my_team，表可能过期]"))
                             self.my_name = sp
+                        # 记下 ONNX 的置信度，avatar 次通道靠它判断能否覆盖
+                        self._self_onnx_conf = float(_conf)
                         # ⚠ pet_at 是"这只精灵**上场**的时刻"，只在身份变化时
                         # 更新。旧代码在这里无条件赋值，而本函数每 0.5s 跑一次
                         # —— 于是 `now - pet_at` 永远 < 1.2s，下游两个 1.2s
@@ -1920,12 +1923,34 @@ class Bot:
                 a0 = avs[0]
                 # 池内标定：score>=0.50 且 margin>=0.02（实测中位 0.413，
                 # 0.50 已高于中位一个量级差）
-                if (a0["score"] >= 0.50
+                #
+                # ⚠ 2026-11-23 实测问题：这个门槛**足以覆盖 ONNX 已确认的身份**。
+                # 一轮里的实际序列：
+                #
+                #   07:04:24 PET -> 恶魔狼      (ONNX 1.00)   <- 正确
+                #   07:06:11 PET -> 冰钻布鲁斯   (avatar 0.51) <- 被低分覆盖
+                #   07:07:20 PET -> 卡瓦重       (avatar 0.59) <- 又被覆盖
+                #
+                # 后果：BAND 用错精灵的技能池去匹配真实卡面，读到"火焰切割"
+                # （恶魔狼的技能）时按音速犬的池子校验，conf 0.55 被拒。
+                # 用户看到的"技能识别不准"其实是**身份在抖**。
+                #
+                # 修法两条：
+                #   1. 硬门槛提到 0.62（中位 0.413，0.62 已是明显高分区）
+                #   2. 已有 ONNX 高分确认（>=0.85）时，avatar 不得覆盖 ——
+                #      除非 avatar 自己也很高（>=0.75）且 margin 够
+                _upper = float(getattr(self, "_self_onnx_conf", 0.0) or 0.0)
+                _may_overwrite = (a0["score"] >= 0.75
+                                  or _upper < 0.85)
+                if (a0["score"] >= 0.62
                         and (a0.get("margin") or 0) >= 0.02
-                        and self._in_my_team(a0["name"])):
+                        and self._in_my_team(a0["name"])
+                        and _may_overwrite):
                     if a0["name"] != self.my_name:
-                        log("PET -> %s (avatar %.2f) -> 采纳"
-                            % (a0["name"], a0["score"]))
+                        log("PET -> %s (avatar %.2f) -> 采纳%s"
+                            % (a0["name"], a0["score"],
+                               "" if _upper < 0.85
+                               else " [覆盖 ONNX %.2f]" % _upper))
                         self.my_name = a0["name"]
                     was = self.active_pet
                     self.active_pet = a0["name"]
@@ -4974,6 +4999,9 @@ def main():
     ap.add_argument("--no-foe-scan", action="store_true",
                     help="(default) do not click the foe portrait to identify "
                          "unknown pets; kept for backwards compatibility")
+    ap.add_argument("--band-dump", action="store_true",
+                    help="把 BAND 读取时的胶囊+名字带落盘到 logs/band_dump/，"
+                         "用于目视核对槽位对应关系")
     ap.add_argument("--foe-scan", action="store_true",
                     help="re-enable clicking the foe portrait. OFF by default: "
                          "measured 0/136 successful opens while burning 3-7 s "
@@ -4992,6 +5020,16 @@ def main():
     if not acquire_lock():
         print("another robot.py is already running; exiting")
         return 3
+    # --band-dump：把 BAND 的名字带 + 胶囊上下文落盘，便于目视核对槽位。
+    if getattr(args, "band_dump", False):
+        try:
+            import session_moves as _SM
+            d = os.path.join(LOG_DIR, "band_dump")
+            os.makedirs(d, exist_ok=True)
+            _SM._DUMP_DIR = d
+            log("band dump enabled -> %s" % d)
+        except Exception as e:
+            log("band dump setup failed: %s" % e)
     log("boot pid=%d python=%s" % (os.getpid(), sys.version.split()[0]))
     try:
         rc = Bot(args).run()

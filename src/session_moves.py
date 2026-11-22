@@ -188,6 +188,10 @@ _BAND_LAST = {}       # (pet, slot) -> (name, conf, at)
 _BAND_RAW = {}        # (pet, slot) -> (raw_text, vocab_n, threshold, at)
 _BAND_TTL = 600.0     # 同一槽位 10 分钟内不重复 OCR（名字不会变）
 
+# 调试落盘目录（robot --band-dump 会设置）。空字符串 = 关闭。
+# 用途：槽位错位时，必须能目视看到"这个 box 指向哪张卡"，光看名字不够。
+_DUMP_DIR = ""
+
 
 def read_band(pet, slot, screen, pill_box):
     """读一张卡下方的技能名带（OCR，慢，只在缓存 miss 时调）。
@@ -241,6 +245,22 @@ def read_band(pet, slot, screen, pill_box):
               max(0, fx0 - 90):min(2560, fx1 + 90)]
     if roi.size == 0 or roi.shape[0] < 20:
         return None, 0.0
+
+    # 调试落盘（--band-dump）：把**名字带 ROI** 和它上方的胶囊一起存图，
+    # 用来目视核对"这个槽位读的到底是哪张卡"。槽位错位是当前唯一的
+    # 残留问题，光靠日志里的名字无法判断对应关系。
+    if _DUMP_DIR:
+        try:
+            import cv2 as _cv
+            stem = os.path.join(_DUMP_DIR, "band_%s_%d_%d"
+                                % (pet, int(slot), int(now)))
+            # 胶囊 + 名字带（上下各留白），便于一眼看清对应关系
+            ctx = img[max(0, fy0 - 10):min(1600, fy1 + 70),
+                      max(0, fx0 - 100):min(2560, fx1 + 100)]
+            _cv.imencode(".png", ctx[:, :, ::-1])[1].tofile(stem + "_ctx.png")
+            _cv.imencode(".png", roi[:, :, ::-1])[1].tofile(stem + "_roi.png")
+        except Exception:
+            pass
 
     import cv2
     import ability_read as AR
