@@ -967,6 +967,39 @@ class Battle:
                                             "PRE_USE", ctx))
             events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
                                             "ON_USE", ctx))
+            # 技能描述抽取效果（202 技能长尾）：施加异常状态/印记、
+            # 回能/吸能。吸血和先手在下方各自的结算路径里消费。
+            dv = nrc_fx.desc_effects(mv.get("name") or "")
+            target_of = foe if owner is me else me
+            st = dv.get("status") or {}
+            for key, stacks in st.items():
+                ev2 = nrc_fx._bump_status(target_of, key, stacks)
+                if ev2:
+                    events.append("%s（%s 描述）" % (ev2, mv["name"]))
+            mk = dv.get("mark") or {}
+            side_of = "a" if owner is me else "b"
+            for mid, stacks in mk.items():
+                _added, gone = battle_fx.set_mark(
+                    self.marks.setdefault(side_of, {}), mid)
+                suffix = "（顶掉 {}）".format(gone) if gone else ""
+                events.append("{} 施加印记 {}{}".format(mv["name"], mid,
+                                                        suffix))
+            eg = dv.get("energy_gain")
+            if eg and owner.alive:
+                before = owner.energy
+                owner.energy = min(ENERGY_CAP, owner.energy + int(eg))
+                if owner.energy > before:
+                    events.append("%s 回能 +%d（%d）"
+                                  % (mv["name"], owner.energy - before,
+                                     owner.energy))
+            ed = dv.get("energy_drain")
+            if ed and target_of.alive:
+                before = target_of.energy
+                target_of.energy = max(0, target_of.energy - int(ed))
+                if target_of.energy < before:
+                    events.append("%s 吸走对方能量 -%d（剩 %d）"
+                                  % (mv["name"], before - target_of.energy,
+                                     target_of.energy))
         # 应对（counter）：两边技能都定了才判得出。谁应对成功谁吃收益。
         # 游戏内原文：**应对成功时无视速度差，必定先手**。所以这里记一个
         # 标记，后面排出手顺序时优先。另外「先手 +N」的技能也提优先级。
@@ -1122,6 +1155,13 @@ class Battle:
             (skill_a or {}).get("desc") or "") if skill_a else 0
         pri_b = battle_fx.parse_priority(
             (skill_b or {}).get("desc") or "") if skill_b else 0
+        # 描述抽取表里的先手度（与 parse_priority 同源）
+        if skill_a is not None and not pri_a:
+            pri_a = (nrc_fx.desc_effects(skill_a.get("name") or {})
+                     .get("priority") or 0)
+        if skill_b is not None and not pri_b:
+            pri_b = (nrc_fx.desc_effects(skill_b.get("name") or {})
+                     .get("priority") or 0)
         if (not switched_a and not skip_act["a"] and ka == "skill"
                 and pa is not None and pa < len(me.moves)):
             mv = me.moves[pa]
@@ -1206,8 +1246,11 @@ class Battle:
                                    for m in dfn.moves))["lifesteal"]
             sk_ls = battle_fx.parse_lifesteal(
                 (mv.get("desc") or "") or _skill_desc(mv.get("id")))
-            if sk_ls:
-                ls += sk_ls
+            # 描述抽取表（与 parse_lifesteal 同源，但以 JSON 为准）
+            dv_ls = (nrc_fx.desc_effects(mv.get("name") or {})
+                     .get("lifesteal") or 0)
+            if dv_ls:
+                ls += dv_ls
             if ls > 0 and d > 0 and atk.alive:
                 before = atk.hp
                 atk.hp = min(atk.max_hp, atk.hp + max(1, int(d * ls)))

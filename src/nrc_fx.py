@@ -24,6 +24,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 from collections import Counter
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,6 +65,25 @@ STATUS_RULES = {
 STATUS_DOT = {k: v["pct"] for k, v in STATUS_RULES.items()}
 
 _CACHE = {"data": None}
+_DESC_FX = None
+
+
+def _desc_fx():
+    """技能描述抽取表（data/skill_effects_desc.json），懒加载。
+
+    202 个技能的 priority/lifesteal/power_bonus/status/mark 直接来自
+    游戏内描述原文（scripts/build_desc_effects.py 正则抽取）。
+    nrc 效果表只覆盖 139 个热门技能，这张表补长尾。
+    """
+    global _DESC_FX
+    if _DESC_FX is None:
+        try:
+            p = os.path.join(ROOT, "data", "skill_effects_desc.json")
+            with io.open(p, encoding="utf-8") as fh:
+                _DESC_FX = json.load(fh).get("skills") or {}
+        except Exception:
+            _DESC_FX = {}
+    return _DESC_FX
 _SKIP = Counter()
 _APPLIED = Counter()
 
@@ -80,11 +100,58 @@ def _load():
 
 
 def trait_rows(name):
-    return (_load().get("traits") or {}).get(name) or []
+    """特性名 -> nrc 效果组；**名字对不上时试形态归一化**。
+
+    库内名和 nrc 名偶有出入（库里「恶魔的晚餐」vs nrc「恶魔的晚宴」），
+    直接查不到时用编辑距离 ≈1 的候选兜底（只在 nrc 键总数 169 里找，
+    成本可忽略）。
+    """
+    table = _load().get("traits") or {}
+    if name in table:
+        return table[name] or []
+    if not name:
+        return []
+    target = re.sub(r"[（(].*?[)）]", "", name).strip()
+    for k in table:
+        if not isinstance(k, str):
+            continue
+        k2 = re.sub(r"[（(].*?[)）]", "", k).strip()
+        if k2 == target and abs(len(k2) - len(target)) <= 1:
+            return table[k] or []
+    # 「晚餐/晚宴」「型/行」这类一字之差
+    if len(target) >= 3:
+        for k in table:
+            if isinstance(k, str) and _near(k, target):
+                return table[k] or []
+    return []
+
+
+def _near(a, b):
+    """一字之差（替换或增删一处）且前两字相同 —— 只在 169 个键里线性扫。"""
+    if abs(len(a) - len(b)) > 1:
+        return False
+    if a[:2] != b[:2]:
+        return False
+    i = 0
+    while i < min(len(a), len(b)) and a[i] == b[i]:
+        i += 1
+    ra, rb = a[i:], b[i:]
+    if len(ra) == len(rb) == 1:
+        return True                      # 替换
+    if len(ra) == 0 and len(rb) == 1:
+        return True                      # 多一字
+    if len(rb) == 0 and len(ra) == 1:
+        return True                      # 少一字
+    return False
 
 
 def skill_rows(name):
     return (_load().get("skills") or {}).get(name) or []
+
+
+def desc_effects(name):
+    """技能描述抽取的效果（202 技能），与 nrc 表互补。"""
+    return _desc_fx().get(name) or {}
 
 
 def has_trait(name):
@@ -186,12 +253,66 @@ def _h_status(key):
 
 
 def _h_power_mod(pet, foe, params, ctx):
-    """给「本回合的威力」挂一个倍率，由调用方收集。"""
-    pct = float(params.get("bonus_pct") or 0)
+    """给「本回合的威力」挂一个倍率，由调用方收集。
+
+    `bonus_pct` 是加成比例（0.25 = +25%）；`value`（应对后翻倍的
+    COUNTER_SUCCESS_DOUBLE_DAMAGE）默认 1.0 = 再乘 (1+1.0)。
+    params 全空时也按 +100% 处理（原文：下次攻击威力翻倍）。
+    """
+    pct = params.get("bonus_pct")
+    if pct is None:
+        pct = params.get("value")
+    if pct is None:
+        pct = 1.0                  # COUNTER_SUCCESS_DOUBLE_DAMAGE 无参 = 翻倍
+    pct = float(pct or 0)
     if pct <= 0:
         return None
     ctx["power_mult"] = ctx.get("power_mult", 1.0) * (1.0 + pct)
     return None
+
+
+def _h_enemy_lose_energy(pet, foe, params, ctx):
+    """ENEMY_LOSE_ENERGY：对手（新入场或当前）失去能量。"""
+    amt = int(params.get("amount") or 0)
+    if amt <= 0 or not foe.alive:
+        return None
+    before = foe.energy
+    foe.energy = max(0, foe.energy - amt)
+    return ("%s 被吸取能量 -%d（剩 %d）" % (foe.name, before - foe.energy,
+                                          foe.energy)) if foe.energy < before else None
+
+
+def _h_fainted_allies_buff(pet, foe, params, ctx):
+    """FAINTED_ALLIES_BUFF（悲悯/悼亡）：按己方倒下数获得增益。
+
+    params 形如 {"buff_per": {"atk": 0.3, "spatk": 0.3}, "scope": "allies"}
+    scope: allies = 只数己方倒下的；all = 双方都数（悼亡原文如此）。
+
+    ⚠ 只在**入场时**结算一次（nrc 的 timing=ON_ENTER）。若在每回合重复
+    触发，恶魔狼（悲悯）会每回合 +30% 无上限叠加 —— 原文是
+    「入场时，根据己方被击倒的宠物数量获得双攻提升」，是一次性的。
+    """
+    per = params.get("buff_per") or params.get("values_per_stack") or {}
+    battle = getattr(pet, "_battle", None)
+    side = getattr(pet, "_side", "a")
+    if battle is None:
+        return None
+    scope = params.get("scope") or "allies"
+    if scope == "all":
+        dead = sum(1 for p in battle.a if not p.alive) + \
+            sum(1 for p in battle.b if not p.alive)
+    else:
+        dead = sum(1 for p in battle.a if side == "a" and not p.alive) + \
+            sum(1 for p in battle.b if side == "b" and not p.alive)
+    if dead <= 0:
+        return None
+    atk, dfn = _norm_stat(per)
+    a, d = atk * dead, dfn * dead
+    if a or d:
+        import simulator as _S
+        _S.add_buff(pet, a, d)
+    return "%s 按倒下数获得增益（%d 只，双攻 +%.0f%%）" % (
+        pet.name, dead, 100 * a)
 
 
 def _h_entry_per_skill(pet, foe, params, ctx):
@@ -212,6 +333,17 @@ def _h_entry_per_skill(pet, foe, params, ctx):
     return None
 
 
+def _h_on_kill_buff(pet, foe, params, ctx):
+    """ON_KILL_BUFF（恶魔的晚餐）：击杀后获得双攻增益。"""
+    buff = params.get("buff") or {}
+    atk, dfn = _norm_stat(buff)
+    if not (atk or dfn):
+        return None
+    import simulator as _S
+    _S.add_buff(pet, atk, dfn)
+    return "%s 击杀获得双攻 +%.0f%%" % (pet.name, 100 * atk)
+
+
 HANDLERS = {
     "SELF_BUFF": _h_self_buff,
     "ENEMY_DEBUFF": _h_enemy_debuff,
@@ -221,6 +353,8 @@ HANDLERS = {
     "POISON": _h_status("poison"),
     "BURN": _h_status("burn"),
     "MOISTURE_MARK": _h_status("moisture"),
+    "FREEZE": _h_status("freeze"),
+    "PARASITE": _h_status("parasite"),
     "DAMAGE_MOD_NON_LIGHT": _h_power_mod,
     "FIRST_STRIKE_POWER_BONUS": _h_power_mod,
     "ENTRY_BUFF_PER_SKILL_COUNT": _h_entry_per_skill,
@@ -228,6 +362,25 @@ HANDLERS = {
     # 实际伤害由技能自身的威力算，所以这里是个显式的空操作，
     # 不能算「未实现」（否则 58 条永远顶着 skipped）。
     "DAMAGE": lambda pet, foe, params, ctx: None,
+    # `ON_KILL_BUFF`：击杀后获得增益（恶魔的晚餐：双攻 +50%）。
+    # 由 Battle.step 在对手倒下时触发。
+    "ON_KILL_BUFF": _h_on_kill_buff,
+    # `ENEMY_LOSE_ENERGY`（飓风/小偷小摸/做噩梦）：对手换上时被吸能量。
+    # 由 Battle 换人分支触发。
+    "ENEMY_LOSE_ENERGY": _h_enemy_lose_energy,
+    # `FAINTED_ALLIES_BUFF`（悲悯/悼亡）：己方倒下数 -> 增益。
+    # 由 Battle 在倒下结算时触发。
+    "FAINTED_ALLIES_BUFF": _h_fainted_allies_buff,
+    # `FREEZE` / `PARASITE`（灵魂灼伤等）：给对手上异常状态
+    "FREEZE": _h_status("freeze"),
+    "PARASITE": _h_status("parasite"),
+    # `COUNTER_SUCCESS_DOUBLE_DAMAGE`（圣火骑士）：应对成功后下次攻击威力翻倍
+    "COUNTER_SUCCESS_DOUBLE_DAMAGE": _h_power_mod,
+    # `THREAT_SPEED_BUFF`（哨兵/预警）：速度 +50%（进 eff_spe 路径）
+    "THREAT_SPEED_BUFF": _h_self_buff,
+    # `CONDITIONAL_ENTRY_BUFF_MP`（图书守卫者）：按血脉条件入场加成 ——
+    # 血脉没建模，参数 mp_value 判不了，占位并如实 skip
+    "CONDITIONAL_ENTRY_BUFF_MP": lambda pet, foe, params, ctx: None,
 }
 
 
@@ -299,7 +452,8 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
 # 允许的技能/特性时机
 TRAIT_TIMINGS = {"ON_ENTER", "ON_BATTLE_START", "ON_TURN_START",
                  "ON_USE_SKILL", "ON_TURN_END", "PASSIVE", "ON_TAKE_HIT",
-                 "ON_COUNTER_SUCCESS"}
+                 "ON_COUNTER_SUCCESS", "ON_KILL", "ON_FAINT",
+                 "ON_ENEMY_SWITCH"}
 SKILL_TIMINGS = {"ON_USE", "PRE_USE", "POST_USE"}
 
 
