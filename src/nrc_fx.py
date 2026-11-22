@@ -397,6 +397,113 @@ def _h_steal_all_energy(pet, foe, params, ctx):
 def _h_entry_per_skill(pet, foe, params, ctx):
     """入场时按「携带的技能里满足条件的个数」叠加。"""
     per = params.get("per_count") or {}
+
+
+# ---------------------------------------------------------------- S11 原语
+
+def _h_perm_mod(pet, foe, params, ctx):
+    """PERMANENT_MOD（向心力）：永久威力修正。
+
+    params: {"target": "power", "delta": 30} → 挂 pet._perm_power_delta，
+    calc_damage 出手时加到威力上。
+    （身经百练的 per_counter 变体需要计数器系统，暂缓——见 PLAN_S11）
+    """
+    if params.get("target") != "power":
+        return None
+    delta = int(params.get("delta") or 0)
+    if not delta:
+        return None
+    pet._perm_power_delta = delta
+    return "%s 永久威力 +%d（向心力）" % (pet.name, delta)
+
+
+def _h_mark_power_per_meteor(pet, foe, params, ctx):
+    """MARK_POWER_PER_METEOR（坠星/观星）：每层星陨印记威力+15%。
+
+    挂 pet._meteor_pct，calc_damage 按守方（我方放上）星陨层数乘算。
+    """
+    pct = float(params.get("bonus_pct_per_mark") or 0)
+    if not pct:
+        return None
+    pet._meteor_pct = pct
+    return "%s 每层星陨印记威力 +%d%%" % (pet.name, round(100 * pct))
+
+
+def _h_extra_freeze(pet, foe, params, ctx):
+    """EXTRA_FREEZE_ON_FREEZE（加个雪球/捉迷藏）：施加冻结时额外 +N 层。"""
+    extra = int(params.get("extra") or 0)
+    if not extra:
+        return None
+    pet._freeze_extra = extra
+    return "%s 冻结施加时额外 +%d 层" % (pet.name, extra)
+
+
+def _h_elem_cost_reduce(pet, foe, params, ctx):
+    """ON_SKILL_ELEMENT_COST_REDUCE（浸润/浪潮）：特定系别技能能耗 -N。
+
+    params: {"element": "水", "reduce": 1} → pet._elem_cost_reduce 映射，
+    Battle.eff_cost 消费。幂等（重复触发不叠加）。
+    """
+    elem = params.get("element") or ""
+    reduce_n = int(params.get("reduce") or 0)
+    if not elem or not reduce_n:
+        return None
+    m = getattr(pet, "_elem_cost_reduce", None) or {}
+    if m.get(elem) == reduce_n:
+        return None
+    m[elem] = reduce_n
+    pet._elem_cost_reduce = m
+    return "%s %s系技能能耗 -%d" % (pet.name, elem, reduce_n)
+
+
+def _h_burn_no_decay(pet, foe, params, ctx):
+    """BURN_NO_DECAY（煤渣）：自身灼烧层数不衰减。"""
+    pet._burn_no_decay = True
+    return "%s 灼烧层数不衰减" % pet.name
+
+
+def _h_convert_poison(pet, foe, params, ctx):
+    """CONVERT_POISON_TO_MARK（蚀刻）：回合末敌方 2 层中毒 buff
+    转化为 1 层中毒印记（印记换人保留、不被 buff 衰减清掉）。"""
+    ratio = int(params.get("ratio") or 2)
+    st = getattr(foe, "status", None) or {}
+    n = int(st.get("poison", 0) or 0)
+    k = n // ratio
+    if k <= 0:
+        return None
+    st["poison"] = n - k * ratio
+    battle = getattr(pet, "_battle", None)
+    side = getattr(foe, "_side", None)
+    if battle is not None and side:
+        marks = battle.marks.setdefault(side, {})
+        marks["poison_mark"] = int(marks.get("poison_mark") or 0) + k
+    return "%s 蚀刻：敌方 %d 层中毒转化为 %d 层中毒印记" % (
+        pet.name, k * ratio, k)
+
+
+def _h_kill_mp_penalty(pet, foe, params, ctx):
+    """KILL_MP_PENALTY（付给恶魔的赎价）：
+    ON_KILL 时机（pet=击杀者，foe 已倒下）→ 敌方魔力 -1；
+    ON_FAINT 时机（pet=被击败者，foe 存活）→ 自己魔力 -1。
+    按存活状态区分时机（handler 不接收 timing）。"""
+    battle = getattr(pet, "_battle", None)
+    if battle is None:
+        return None
+    if not foe.alive:                      # ON_KILL：敌方 -1
+        eside = getattr(foe, "_side", None)
+        if not eside:
+            return None
+        battle.magic[eside] = max(0, battle.magic.get(eside, 0) - 1)
+        return "%s 击败 %s：敌方魔力 -1（剩 %d 格）" % (
+            pet.name, foe.name, battle.magic[eside])
+    if not pet.alive:                      # ON_FAINT：自己 -1
+        side = getattr(pet, "_side", None)
+        if not side:
+            return None
+        battle.magic[side] = max(0, battle.magic.get(side, 0) - 1)
+        return "%s 被击败：魔力 -1（剩 %d 格）" % (
+            pet.name, battle.magic[side])
+    return None
     elem = params.get("count_key")
     n = 0
     for m in getattr(pet, "moves", []):
@@ -504,8 +611,16 @@ HANDLERS = {
     # `ENEMY_LOSE_ENERGY`（飓风/小偷小摸/做噩梦）：对手换上时被吸能量。
     # 由 Battle 换人分支触发。
     "ENEMY_LOSE_ENERGY": _h_enemy_lose_energy,
-    # `FAINTED_ALLIES_BUFF`（悲悯/悼亡）：己方倒下数 -> 增益。
-    # 由 Battle 在倒下结算时触发。
+    # `KILL_MP_PENALTY`（付给恶魔的赎价）：击败敌方 → 敌方魔力 -1；
+    # 被击败 → 自己魔力 -1。ON_KILL/ON_FAINT 两时机都注册同一 handler。
+    "KILL_MP_PENALTY": _h_kill_mp_penalty,
+    # ---- S11 低难度原语 ----
+    "PERMANENT_MOD": _h_perm_mod,
+    "MARK_POWER_PER_METEOR": _h_mark_power_per_meteor,
+    "EXTRA_FREEZE_ON_FREEZE": _h_extra_freeze,
+    "ON_SKILL_ELEMENT_COST_REDUCE": _h_elem_cost_reduce,
+    "BURN_NO_DECAY": _h_burn_no_decay,
+    "CONVERT_POISON_TO_MARK": _h_convert_poison,
     "FAINTED_ALLIES_BUFF": _h_fainted_allies_buff,
     # `FREEZE` / `PARASITE`（灵魂灼伤等）：给对手上异常状态
     "FREEZE": _h_status("freeze"),
@@ -517,6 +632,16 @@ HANDLERS = {
     # `CONDITIONAL_ENTRY_BUFF_MP`（图书守卫者）：按血脉条件入场加成 ——
     # 血脉没建模，参数 mp_value 判不了，占位并如实 skip
     "CONDITIONAL_ENTRY_BUFF_MP": lambda pet, foe, params, ctx: None,
+    # `KILL_MP_PENALTY`（付给恶魔的赎价）：击败敌方 → 敌方魔力 -1；
+    # 被击败 → 自己魔力 -1。ON_KILL/ON_FAINT 两时机共用。
+    "KILL_MP_PENALTY": _h_kill_mp_penalty,
+    # ---- S11 低难度原语 ----
+    "PERMANENT_MOD": _h_perm_mod,
+    "MARK_POWER_PER_METEOR": _h_mark_power_per_meteor,
+    "EXTRA_FREEZE_ON_FREEZE": _h_extra_freeze,
+    "ON_SKILL_ELEMENT_COST_REDUCE": _h_elem_cost_reduce,
+    "BURN_NO_DECAY": _h_burn_no_decay,
+    "CONVERT_POISON_TO_MARK": _h_convert_poison,
 }
 
 
@@ -687,7 +812,11 @@ def status_tick(pet, foe=None):
                 out.append("%s 从寄生吸取 +%d（剩 %d/%d）"
                            % (foe.name, foe.hp - before, foe.hp, foe.max_hp))
         if rule.get("halve") and n > 1:
-            st[key] = (n + 1) // 2          # 向上取整
+            # S11 煤渣（BURN_NO_DECAY）：灼烧层数不衰减
+            if key == "burn" and getattr(pet, "_burn_no_decay", False):
+                st[key] = n
+            else:
+                st[key] = (n + 1) // 2          # 向上取整
         if not pet.alive:
             out.append("%s 倒下" % pet.name)
             break

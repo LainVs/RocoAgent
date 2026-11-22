@@ -733,6 +733,16 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     # nrc-ai 手写特性的常驻威力修正（`目空` / `破空` 这类 PASSIVE）
     power = max(0, int(power * getattr(attacker, "nrc_power_mult", 1.0)
                        + getattr(attacker, "nrc_power_bonus", 0)))
+    # S11 向心力：永久威力 +delta
+    power = max(0, power + int(getattr(attacker, "_perm_power_delta", 0)))
+    # S11 坠星/观星：守方身上每层星陨印记威力 +pct
+    _mpct = float(getattr(attacker, "_meteor_pct", 0) or 0)
+    if _mpct and battle is not None:
+        _dside = getattr(defender, "_side", None)
+        _dstars = int((battle.marks.get(_dside) or {}).get("star_mark")
+                      or 0) if _dside else 0
+        if _dstars:
+            power = max(0, int(power * (1.0 + _mpct * _dstars)))
     # 迸发（入场后首次行动）：描述里的加成。_burst_used 由 Battle 标记。
     burst_applied = False
     if not getattr(attacker, "_burst_used", True):
@@ -1030,6 +1040,13 @@ class Battle:
         cu = getattr(self, "_cost_up_next", None)
         if cu:
             cost_up += cu.get(side, 0)
+        # S11 浸润/浪潮：特定系别技能能耗 -N（特性挂 pet._elem_cost_reduce）
+        pet = self.a[self.ia] if side == "a" else (
+            self.b[self.ib] if self.ib < len(self.b) else None)
+        ecr = getattr(pet, "_elem_cost_reduce", None) or {}
+        _elem = (move or {}).get("type") or ""
+        if _elem in ecr:
+            d -= int(ecr[_elem])
         return max(0, base + d + cost_up)
 
     def eff_spe(self, side, pet):
@@ -1608,6 +1625,13 @@ class Battle:
                 ev2 = nrc_fx._bump_status(target_of, key, stacks)
                 if ev2:
                     events.append("%s（%s 描述）" % (ev2, mv["name"]))
+                # S11 加个雪球/捉迷藏：施加冻结时额外 +N 层
+                if key == "freeze" and stacks > 0:
+                    _fe = int(getattr(owner, "_freeze_extra", 0) or 0)
+                    if _fe:
+                        ev3 = nrc_fx._bump_status(target_of, "freeze", _fe)
+                        if ev3:
+                            events.append("%s（%s 冻结附加）" % (ev3, owner.name))
             mk = dv.get("mark") or {}
             side_of = "a" if owner is me else "b"
             for mid, stacks in mk.items():
@@ -2007,12 +2031,16 @@ class Battle:
                               % ("我方" if who == "a" else "对方",
                                  round(100 * gain)))
             # 特性 ON_KILL（恶魔的晚餐：击杀后双攻 +50%）+
-            # ON_FAINT（诈死等，被击杀方的入场时机）
+            # ON_FAINT（诈死/付给恶魔的赎价：被击败方时机，S11 补触发）
             if not dfn.alive:
                 other = me if who == "a" else foe
                 if not trait_lib.supported_rules(
                         getattr(atk, "trait", None)):
                     for e in nrc_fx.trait_fire(atk, other, "ON_KILL"):
+                        events.append(e)
+                if not trait_lib.supported_rules(
+                        getattr(dfn, "trait", None)):
+                    for e in nrc_fx.trait_fire(dfn, atk, "ON_FAINT"):
                         events.append(e)
             # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
             gain = battle_fx.mark_on_skill(
