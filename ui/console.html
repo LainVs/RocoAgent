@@ -101,6 +101,13 @@
         </svg>
         <span>模拟器</span>
       </button>
+      <button class="nav-item" data-page="play">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="7" r="5.4" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M5.8 4.6l3.4 2.4-3.4 2.4z" fill="currentColor"/>
+        </svg>
+        <span>手操对战</span>
+      </button>
       <button class="nav-item" data-page="label">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M1.6 2.4h5.2l5.6 5.6-5.2 5.2L1.6 7.6z" stroke="currentColor"
@@ -296,23 +303,26 @@
             </div>
           </div>
           <div id="simSlots" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px"></div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px">
+            <span class="sim-lab" style="min-width:34px">队伍</span>
             <button class="btn" id="btnSimMine" style="padding:4px 9px;font-size:11px">载入 my_team 到我方</button>
-            <select id="simPresetSel" style="max-width:200px;font-size:11px">
-              <option value="">— 预设队伍 —</option>
-            </select>
-            <button class="btn" id="btnSimPresetLoad" style="padding:4px 9px;font-size:11px">载入到当前侧</button>
-            <button class="btn" id="btnSimPresetSave" style="padding:4px 9px;font-size:11px">保存当前侧</button>
-            <button class="btn" id="btnSimPresetDel" style="padding:4px 9px;font-size:11px">删除</button>
-            <input id="simPresetName" placeholder="预设名" style="width:110px;font-size:11px">
-          </div>
-          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
-            <select id="simLineupSel" style="max-width:320px;font-size:11px">
+            <select id="simLineupSel" style="max-width:300px;font-size:11px">
               <option value="">— 真实玩家阵容 —</option>
             </select>
             <button class="btn" id="btnSimLineupA" style="padding:4px 9px;font-size:11px">作为我方</button>
             <button class="btn" id="btnSimLineupB" style="padding:4px 9px;font-size:11px">作为对方</button>
             <span id="simLineupInfo" style="font-size:11px;color:var(--ink-3)"></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <span class="sim-lab" style="min-width:34px">预设</span>
+            <select id="simPresetSel" style="max-width:190px;font-size:11px">
+              <option value="">— 预设队伍 —</option>
+            </select>
+            <button class="btn" id="btnSimPresetLoad" style="padding:4px 9px;font-size:11px">载入到当前侧</button>
+            <input id="simPresetName" placeholder="预设名" style="width:110px;font-size:11px">
+            <button class="btn primary" id="btnSimPresetSave" style="padding:4px 9px;font-size:11px">保存当前侧为预设</button>
+            <button class="btn" id="btnSimPresetDel" style="padding:4px 9px;font-size:11px">删除</button>
+            <span id="simDirty" style="font-size:11px;color:#D9A441"></span>
           </div>
           <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ink-2);margin-bottom:8px">
             <span>我方策略</span>
@@ -353,6 +363,73 @@
         </div>
 
        </section>
+
+      <!-- ══════════ 手操对战 ══════════ -->
+      <section class="page" id="page-play">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">手操对战</span>
+            <span class="card-sub">和模拟器同一套战斗循环 · 每局自动落盘，可回看分析</span>
+            <div class="card-actions">
+              <span class="sim-status" id="playStatus"></span>
+            </div>
+          </div>
+
+          <div class="sim-toolbar" id="playSetup">
+            <span class="sim-lab">我方</span>
+            <select id="playMyTeam" class="sim-select" style="max-width:260px"></select>
+            <span class="sim-lab">对方</span>
+            <select id="playFoeSrc" class="sim-select">
+              <option value="lineups">随机真实阵容</option>
+              <option value="current">用模拟器页的对方队伍</option>
+            </select>
+            <span class="sim-lab">对手策略</span>
+            <select id="playPolB" class="sim-select">
+              <option value="smart">smart</option>
+              <option value="greedy">greedy</option>
+              <option value="buff">buff</option>
+            </select>
+            <span class="sim-lab">seed</span>
+            <input id="playSeed" type="number" value="0" class="sim-input" style="width:64px">
+            <button class="btn primary" id="btnPlayNew">开始新对局</button>
+          </div>
+
+          <div class="play-arena" id="playArena" hidden>
+            <div class="pw-card" id="playMe"></div>
+            <div class="pw-mid">
+              <div class="pw-turn" id="playTurn">第 1 回合</div>
+              <div class="pw-vs">VS</div>
+              <div class="pw-src" id="playSrc"></div>
+            </div>
+            <div class="pw-card" id="playFoe"></div>
+          </div>
+
+          <div class="play-acts" id="playActs" hidden></div>
+          <div class="play-log" id="playLog" hidden></div>
+        </div>
+
+        <div class="card" id="playResultCard" hidden>
+          <div class="card-head">
+            <span class="card-title">本局结果</span>
+            <span class="card-sub" id="playResultSub"></span>
+          </div>
+          <div id="playResultBody"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">手操战绩</span>
+            <span class="card-sub" id="playHistSub">全部记录在 logs/sim_manual.jsonl</span>
+          </div>
+          <div class="metrics" id="playHistMetrics"></div>
+          <div class="tbl-wrap">
+            <table class="tbl" id="playHistTbl">
+              <thead><tr><th>时间</th><th>结果</th><th>对手</th><th>回合</th><th>常用出手</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
 
       <!-- ══════════ 回合明细 ══════════ -->
       <section class="page" id="page-turns">

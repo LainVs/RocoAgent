@@ -527,19 +527,42 @@ class BuffPolicy(Policy):
 
 # ---------------------------------------------------------------- 对局
 
-def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
-              cfg_a=None, cfg_b=None):
-    """跑一局。返回 (winner, turns, hp_a, hp_b)。
+class Battle:
+    """一场对局的**可单步**状态机。
 
-    cfg_a/cfg_b（2026-11-22，UI 模拟器）：
-        [{"name":..., "iv":60, "nature":"固执", "moves":[技能id...],
-          "max_hp":417(可选覆盖)}, ...]
-        与 team_a/team_b 按位置对应；None 的字段用默认值。
-        moves 传入后 Pet 用指定技能而不是 Dex 学法表。
+    为什么要从 run_match() 抽出来（2026-11-22，手操对战窗口）
+    ------------------------------------------------------
+    手操窗口必须和批量模拟共用同一套战斗循环。各写一套的话，同一个
+    局面手操和批量会给出不同结果，这个窗口就完全没有参考价值了。
+
+    所以 `run_match()` 现在只是「两边都交给策略」的薄壳，
+    手操窗口用 `begin_turn()` + `step(我方动作, 敌方动作)` 单步推进。
+
+    语义逐条对齐原来的 run_match（改动会立刻被
+    `data/fixtures/sim_baseline.json` + `src/test_sim_engine.py` 抓到）：
+
+      · 每回合先跳过倒下的精灵；一方全灭即判负
+      · 聚能 +2 能量（上限 ENERGY_CAP）
+      · 换人回合不攻击，换上的精灵能量补满
+      · buff 数值优先官方精确值（skill_buff_pct），中位数兜底
+      · 出手顺序按速度降序，速度相同用**回合内随机数**打散
+        （不能固定偏向 A，否则同队自对弈 100% 偏向 A）
+      · MAX_TURNS 回合上限，超时按剩余总血量判
     """
-    rnd = random.Random(seed)
 
-    def build(team, cfg):
+    def __init__(self, dex, team_a, team_b, cfg_a=None, cfg_b=None,
+                 seed=None):
+        self.dex = dex
+        self.rnd = random.Random(seed)
+        self.a = self._build(team_a, cfg_a)
+        self.b = self._build(team_b, cfg_b)
+        self.ia = self.ib = 0
+        self.turn = 0
+        self.done = None            # None / "a" / "b"
+        self.hp_a = self.hp_b = 0
+
+    # ---------------------------------------------------------- 构建
+    def _build(self, team, cfg):
         # cfg 可能比 team 短（UI 只给已填的槽位，手写测试也可能只给前几只），
         # 必须补齐，否则 `(cfg or ...)[i]` 直接 IndexError。
         # 实测 2026-11-22：/api/sim/run 传 3 只精灵 + 1 条 cfg 就崩在
@@ -550,14 +573,14 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
         pets = []
         for i, n in enumerate(team):
             c = cfg[i] or {}
-            p = Pet(dex, n, iv=c.get("iv", 60),
+            p = Pet(self.dex, n, iv=c.get("iv", 60),
                     nature=c.get("nature"),
                     invest=c.get("invest"))
             if c.get("moves"):
                 # 技能：接受**id 或名字**，顺序 = 卡槽顺序。
                 # 真实玩家阵容（lineup_lib）给的是名字，UI 给的是 id，
                 # 统一走 Dex.resolve_skill（含 power=0 的辅助技能）。
-                picked = [dex.resolve_skill(x) for x in c["moves"]]
+                picked = [self.dex.resolve_skill(x) for x in c["moves"]]
                 picked = [m for m in picked if m]
                 if picked:
                     p.moves = picked[:8]
@@ -567,58 +590,100 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
             pets.append(p)
         return pets
 
-    a = build(team_a, cfg_a)
-    b = build(team_b, cfg_b)
-    ia = ib = 0
+    # ---------------------------------------------------------- 查询
+    @property
+    def me(self):
+        return self.a[self.ia] if self.ia < len(self.a) else None
 
-    for turn in range(1, MAX_TURNS + 1):
+    @property
+    def foe(self):
+        return self.b[self.ib] if self.ib < len(self.b) else None
+
+    def bench(self, side="a"):
+        team = self.a if side == "a" else self.b
+        cur = self.ia if side == "a" else self.ib
+        return [i for i in range(len(team)) if i != cur and team[i].alive]
+
+    def result(self):
+        return (self.done, self.turn, self.hp_a, self.hp_b)
+
+    def _finish(self, winner, turn, hp_a, hp_b):
+        self.done = winner
+        self.turn = turn
+        self.hp_a = hp_a
+        self.hp_b = hp_b
+
+    # ---------------------------------------------------------- 单步
+    def begin_turn(self):
+        """进入下一回合。返回 False 表示对局已经结束。
+
+        顺序和原来的 `for turn in range(1, MAX_TURNS+1)` 完全一致：
+        先判「60 回合用完了」，再判「谁被打没了」——
+        反过来的话，第 60 回合刚好全灭时会多算一回合。
+        """
+        if self.done:
+            return False
+        if self.turn >= MAX_TURNS:
+            ha = sum(p.hp for p in self.a)
+            hb = sum(p.hp for p in self.b)
+            self._finish("a" if ha > hb else "b", MAX_TURNS, ha, hb)
+            return False
+        self.turn += 1
         # 先把倒下的换掉（双方都要处理，不能只处理一边）
-        while ia < len(a) and not a[ia].alive:
-            ia += 1
-        while ib < len(b) and not b[ib].alive:
-            ib += 1
-        if ia >= len(a):
-            return "b", turn, 0, sum(p.hp for p in b)
-        if ib >= len(b):
-            return "a", turn, sum(p.hp for p in a), 0
+        while self.ia < len(self.a) and not self.a[self.ia].alive:
+            self.ia += 1
+        while self.ib < len(self.b) and not self.b[self.ib].alive:
+            self.ib += 1
+        if self.ia >= len(self.a):
+            self._finish("b", self.turn, 0, sum(p.hp for p in self.b))
+            return False
+        if self.ib >= len(self.b):
+            self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
+            return False
+        return True
 
-        me, foe = a[ia], b[ib]
-        bench_a = [i for i in range(len(a)) if i != ia and a[i].alive]
-        bench_b = [i for i in range(len(b)) if i != ib and b[i].alive]
-        # 把队伍对象注入策略（SmartPolicy 需要看替补的属性/技能来评分）
-        for pol, team in ((pol_a, a), (pol_b, b)):
-            try:
-                pol._team = team
-            except Exception:
-                pass
+    def step(self, ka, pa, kb, pb):
+        """执行一个回合两边的动作，返回本回合的事件列表（给 UI 展示）。
 
-        ka, pa = pol_a.choose(me, foe, bench_a, turn)
-        kb, pb = pol_b.choose(foe, me, bench_b, turn)
+        动作格式同 Policy.choose 的返回值 (kind, payload)，
+        kind ∈ {"skill","energy","switch","buff"}。
+        """
+        events = []
+        me, foe = self.me, self.foe
+        if me is None or foe is None:
+            return events
+        bench_a, bench_b = self.bench("a"), self.bench("b")
 
-        # 取出双方本回合选的技能对象（buff 精确值要用它的名字，2026-11-22）
-        _skill_a = me.moves[pa] if (ka == "skill" and pa is not None
-                                    and pa < len(me.moves)) else None
-        _skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
-                                     and pb < len(foe.moves)) else None
+        # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
+        skill_a = me.moves[pa] if (ka == "skill" and pa is not None
+                                   and pa < len(me.moves)) else None
+        skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
+                                    and pb < len(foe.moves)) else None
 
         # 处理聚能
         if ka == "energy":
             me.energy = min(ENERGY_CAP, me.energy + ENERGY_GAIN)
+            events.append("我方聚能（能量 %d）" % me.energy)
         if kb == "energy":
             foe.energy = min(ENERGY_CAP, foe.energy + ENERGY_GAIN)
+            events.append("对方聚能（能量 %d）" % foe.energy)
 
         # 处理换人（换人回合不攻击，换上新精灵）
         switched_a = switched_b = False
         if ka == "switch" and bench_a:
-            ia = bench_a[min(pa or 0, len(bench_a) - 1)]
-            a[ia].energy = ENERGY_CAP
-            me = a[ia]
+            old = me.name
+            self.ia = bench_a[min(pa or 0, len(bench_a) - 1)]
+            self.a[self.ia].energy = ENERGY_CAP
+            me = self.a[self.ia]
             switched_a = True
+            events.append("我方换下 %s，换上 %s" % (old, me.name))
         if kb == "switch" and bench_b:
-            ib = bench_b[min(pb or 0, len(bench_b) - 1)]
-            b[ib].energy = ENERGY_CAP
-            foe = b[ib]
+            old = foe.name
+            self.ib = bench_b[min(pb or 0, len(bench_b) - 1)]
+            self.b[self.ib].energy = ENERGY_CAP
+            foe = self.b[self.ib]
             switched_b = True
+            events.append("对方换下 %s，换上 %s" % (old, foe.name))
 
         # 处理 buff：官方精确值优先（skill_buff_pct），中位数兜底
         #
@@ -626,50 +691,124 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
         # 但 roco-cal 的 607 个技能里**没有叠层机制**，且攻/防 buff
         # 是不同技能，一个技能不会同时加两者。
         if ka == "buff":
-            _p = skill_buff_pct((_skill_a or {}).get("name", "")) \
-                if _skill_a else None
+            _p = skill_buff_pct((skill_a or {}).get("name", "")) \
+                if skill_a else None
             me.atk_buff = max(me.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
             me.buffed = True
+            events.append("我方使用 %s（攻击 +%.0f%%）"
+                          % ((skill_a or {}).get("name", "蓄力"),
+                             100 * me.atk_buff))
         if kb == "buff":
-            _p = skill_buff_pct((_skill_b or {}).get("name", "")) \
-                if _skill_b else None
+            _p = skill_buff_pct((skill_b or {}).get("name", "")) \
+                if skill_b else None
             foe.atk_buff = max(foe.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
             foe.buffed = True
+            events.append("对方使用 %s（攻击 +%.0f%%）"
+                          % ((skill_b or {}).get("name", "蓄力"),
+                             100 * foe.atk_buff))
+
+        # 变化技能（power=0）：批量策略不会选（伤害最低 1 点），
+        # 但**手操窗口玩家会点**，所以必须正确处理。
+        #
+        # 真实游戏里 power=0 是「变化技能」：加攻/加防/回血/上印记。
+        # 本模拟器只建模了**攻击增益**（skill_buff_pct 的官方精确值）；
+        # 加防/回血/印记没建模，就按「无伤害」处理并明确说明，
+        # 而不是像原来那样让 calc_damage 的 max(1, ...) 假装打 1 点。
+        skip_act = {"a": False, "b": False}
+        for who, mv, owner, kind in (("a", skill_a, me, ka),
+                                     ("b", skill_b, foe, kb)):
+            if kind != "skill" or mv is None or mv["power"] > 0:
+                continue
+            skip_act[who] = True
+            if mv["cost"] <= owner.energy:
+                owner.energy -= mv["cost"]
+            pct = skill_buff_pct(mv["name"])
+            if pct:
+                owner.atk_buff = max(owner.atk_buff, pct)
+                owner.buffed = True
+                events.append("%s 使用 %s（攻击 +%.0f%%）"
+                              % ("我方" if who == "a" else "对方",
+                                 mv["name"], 100 * pct))
+            else:
+                events.append("%s 使用 %s（变化技能，本模拟器未建模）"
+                              % ("我方" if who == "a" else "对方",
+                                 mv["name"]))
 
         # 出手（速度快的先打）。换人方这回合不攻击。
         acts = []
-        if (not switched_a and ka == "skill" and pa is not None
-                and pa < len(me.moves)):
+        if (not switched_a and not skip_act["a"] and ka == "skill"
+                and pa is not None and pa < len(me.moves)):
             mv = me.moves[pa]
             if mv["cost"] <= me.energy:
                 me.energy -= mv["cost"]
                 acts.append((me.spe, "a", me, foe, mv))
-        if (not switched_b and kb == "skill" and pb is not None
-                and pb < len(foe.moves)):
+            else:
+                events.append("我方能量不足，%s 没放出来" % mv["name"])
+        if (not switched_b and not skip_act["b"] and kb == "skill"
+                and pb is not None and pb < len(foe.moves)):
             mv = foe.moves[pb]
             if mv["cost"] <= foe.energy:
                 foe.energy -= mv["cost"]
                 acts.append((foe.spe, "b", foe, me, mv))
+            else:
+                events.append("对方能量不足，%s 没放出来" % mv["name"])
         # 出手顺序：速度高的先打；速度相同则随机（不能固定偏向 A 方，
         # 否则同队自对弈会 100% 偏向 A —— 实测就是这样）。
-        acts.sort(key=lambda x: (-x[0], rnd.random()))
+        #
+        # ⚠ 这里的 rnd.random() 调用次数（= acts 的元素个数）是整个引擎
+        # 唯一的随机源。改排序写法会改变 data/fixtures/sim_baseline.json
+        # 的基线，动之前先想清楚。
+        acts.sort(key=lambda x: (-x[0], self.rnd.random()))
 
         for _spe, who, atk, dfn, mv in acts:
             if not atk.alive or not dfn.alive:
                 continue
             d = calc_damage(atk, dfn, mv)
             dfn.hp = max(0, dfn.hp - d)
+            events.append("%s %s → %s -%d（剩 %d/%d）"
+                          % ("我方" if who == "a" else "对方",
+                             mv["name"], dfn.name, d, dfn.hp, dfn.max_hp))
+            if not dfn.alive:
+                events.append("%s 倒下" % dfn.name)
 
-        if not any(p.alive for p in a):
-            return "b", turn, 0, sum(p.hp for p in b)
-        if not any(p.alive for p in b):
-            return "a", turn, sum(p.hp for p in a), 0
+        if not any(p.alive for p in self.a):
+            self._finish("b", self.turn, 0, sum(p.hp for p in self.b))
+        elif not any(p.alive for p in self.b):
+            self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
+        return events
 
-    # 超时按剩余血量判
-    ha = sum(p.hp for p in a)
-    hb = sum(p.hp for p in b)
-    return ("a" if ha > hb else "b"), MAX_TURNS, ha, hb
+    def auto_step(self, pol_a, pol_b):
+        """两边都交给策略（批量模拟用）。"""
+        me, foe = self.me, self.foe
+        if me is None or foe is None:
+            return []
+        bench_a, bench_b = self.bench("a"), self.bench("b")
+        # 把队伍对象注入策略（SmartPolicy 需要看替补的属性/技能来评分）
+        for pol, team in ((pol_a, self.a), (pol_b, self.b)):
+            try:
+                pol._team = team
+            except Exception:
+                pass
+        ka, pa = pol_a.choose(me, foe, bench_a, self.turn)
+        kb, pb = pol_b.choose(foe, me, bench_b, self.turn)
+        return self.step(ka, pa, kb, pb)
 
+
+def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
+              cfg_a=None, cfg_b=None):
+    """跑一局。返回 (winner, turns, hp_a, hp_b)。
+
+    cfg_a/cfg_b（2026-11-22，UI 模拟器）：
+        [{"name":..., "iv":60, "nature":"固执", "invest":["hp","atk","spe"],
+          "moves":[技能 id 或名字...], "max_hp":417(可选覆盖)}, ...]
+        与 team_a/team_b 按位置对应；None 的字段用默认值。
+
+    实现：两边都交给策略，循环推进 `Battle`。手操窗口走同一个 Battle。
+    """
+    bt = Battle(dex, team_a, team_b, cfg_a=cfg_a, cfg_b=cfg_b, seed=seed)
+    while bt.begin_turn():
+        bt.auto_step(pol_a, pol_b)
+    return bt.result()
 
 # ---------------------------------------------------------------- 入口
 

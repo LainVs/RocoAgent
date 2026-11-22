@@ -1,0 +1,293 @@
+{
+ "note": "模拟器引擎黄金基线。数据/技能表变动后需要重拍，用 scripts/snap_sim_baseline.py",
+ "rows": [
+  {
+   "case": "mirror",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "team_b": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "policy_a": "smart",
+   "policy_b": "smart",
+   "seed": 0,
+   "winner": "b",
+   "turns": 5,
+   "hp_a": 0,
+   "hp_b": 580
+  },
+  {
+   "case": "mirror",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "team_b": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "policy_a": "smart",
+   "policy_b": "smart",
+   "seed": 1,
+   "winner": "b",
+   "turns": 7,
+   "hp_a": 0,
+   "hp_b": 146
+  },
+  {
+   "case": "mirror",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "team_b": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重"
+   ],
+   "policy_a": "smart",
+   "policy_b": "smart",
+   "seed": 2,
+   "winner": "a",
+   "turns": 8,
+   "hp_a": 146,
+   "hp_b": 0
+  },
+  {
+   "case": "fire_vs_ice",
+   "team_a": [
+    "音速犬"
+   ],
+   "team_b": [
+    "冰钻布鲁斯"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 0,
+   "winner": "a",
+   "turns": 1,
+   "hp_a": 366,
+   "hp_b": 0
+  },
+  {
+   "case": "fire_vs_ice",
+   "team_a": [
+    "音速犬"
+   ],
+   "team_b": [
+    "冰钻布鲁斯"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 1,
+   "winner": "a",
+   "turns": 1,
+   "hp_a": 366,
+   "hp_b": 0
+  },
+  {
+   "case": "fire_vs_ice",
+   "team_a": [
+    "音速犬"
+   ],
+   "team_b": [
+    "冰钻布鲁斯"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 2,
+   "winner": "a",
+   "turns": 1,
+   "hp_a": 366,
+   "hp_b": 0
+  },
+  {
+   "case": "big_teams",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重",
+    "银月狼王",
+    "冰钻布鲁斯",
+    "火神"
+   ],
+   "team_b": [
+    "白发路路",
+    "寂灭骨龙",
+    "烈火战神",
+    "水灵",
+    "卡瓦重",
+    "炽心勇狮"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 0,
+   "winner": "a",
+   "turns": 13,
+   "hp_a": 1038,
+   "hp_b": 0
+  },
+  {
+   "case": "big_teams",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重",
+    "银月狼王",
+    "冰钻布鲁斯",
+    "火神"
+   ],
+   "team_b": [
+    "白发路路",
+    "寂灭骨龙",
+    "烈火战神",
+    "水灵",
+    "卡瓦重",
+    "炽心勇狮"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 1,
+   "winner": "a",
+   "turns": 13,
+   "hp_a": 1038,
+   "hp_b": 0
+  },
+  {
+   "case": "big_teams",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重",
+    "银月狼王",
+    "冰钻布鲁斯",
+    "火神"
+   ],
+   "team_b": [
+    "白发路路",
+    "寂灭骨龙",
+    "烈火战神",
+    "水灵",
+    "卡瓦重",
+    "炽心勇狮"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 2,
+   "winner": "a",
+   "turns": 14,
+   "hp_a": 765,
+   "hp_b": 0
+  },
+  {
+   "case": "greedy_pair",
+   "team_a": [
+    "音速犬",
+    "恶魔狼"
+   ],
+   "team_b": [
+    "卡瓦重",
+    "火神"
+   ],
+   "policy_a": "greedy",
+   "policy_b": "greedy",
+   "seed": 0,
+   "winner": "b",
+   "turns": 4,
+   "hp_a": 0,
+   "hp_b": 179
+  },
+  {
+   "case": "greedy_pair",
+   "team_a": [
+    "音速犬",
+    "恶魔狼"
+   ],
+   "team_b": [
+    "卡瓦重",
+    "火神"
+   ],
+   "policy_a": "greedy",
+   "policy_b": "greedy",
+   "seed": 1,
+   "winner": "b",
+   "turns": 4,
+   "hp_a": 0,
+   "hp_b": 179
+  },
+  {
+   "case": "greedy_pair",
+   "team_a": [
+    "音速犬",
+    "恶魔狼"
+   ],
+   "team_b": [
+    "卡瓦重",
+    "火神"
+   ],
+   "policy_a": "greedy",
+   "policy_b": "greedy",
+   "seed": 2,
+   "winner": "b",
+   "turns": 4,
+   "hp_a": 0,
+   "hp_b": 179
+  },
+  {
+   "case": "buff_policy",
+   "team_a": [
+    "卡瓦重"
+   ],
+   "team_b": [
+    "恶魔狼"
+   ],
+   "policy_a": "buff",
+   "policy_b": "smart",
+   "seed": 0,
+   "winner": "b",
+   "turns": 1,
+   "hp_a": 0,
+   "hp_b": 417
+  },
+  {
+   "case": "buff_policy",
+   "team_a": [
+    "卡瓦重"
+   ],
+   "team_b": [
+    "恶魔狼"
+   ],
+   "policy_a": "buff",
+   "policy_b": "smart",
+   "seed": 1,
+   "winner": "b",
+   "turns": 1,
+   "hp_a": 0,
+   "hp_b": 417
+  },
+  {
+   "case": "buff_policy",
+   "team_a": [
+    "卡瓦重"
+   ],
+   "team_b": [
+    "恶魔狼"
+   ],
+   "policy_a": "buff",
+   "policy_b": "smart",
+   "seed": 2,
+   "winner": "b",
+   "turns": 1,
+   "hp_a": 0,
+   "hp_b": 417
+  }
+ ]
+}

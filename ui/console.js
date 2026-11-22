@@ -1695,6 +1695,11 @@ function simNatureLabel(name) {
   return `${name} ↑${up.join('/') || '—'} ↓${down.join('/') || '—'}`;
 }
 
+function simMarkDirty(on) {
+  const el = $('simDirty');
+  if (el) el.textContent = on ? '● 有未保存的改动' : '';
+}
+
 function simRenderSlots() {
   const wrap = $('simSlots');
   wrap.innerHTML = simTeams[simSide].map((p, i) => {
@@ -1914,6 +1919,7 @@ function bindSimUI() {
       max_hp: parseInt($('simEdHp').value, 10) || null,
     };
     $('simEditor').hidden = true;
+    simMarkDirty(true);
     simRenderSlots();
   });
 }
@@ -2015,6 +2021,228 @@ async function loadSimPool() {
 
 
 /* ================================================================
+   手操对战（page-play）
+
+   战斗循环在服务端 `src/manual_battle.py`，它用的是和批量模拟同一个
+   `simulator.Battle`，所以手操看到的数值/胜负和「模拟器」页一致
+   （一致性由 src/test_sim_engine.py 的黄金基线守着）。
+   每局结束自动追加到 logs/sim_manual.jsonl，本页下半部分是它的汇总。
+   ================================================================ */
+const PLAY = { st: null, busy: false };
+
+function playHpClass(pct) {
+  return pct <= 20 ? 'crit' : pct <= 50 ? 'low' : '';
+}
+
+function playPetCard(p, mine) {
+  if (!p) return '<div class="pw-sub">—</div>';
+  const av = loadAvatarImg(p.name);
+  const types = (p.types || []).join('/') || '—';
+  const extra = p.nature ? ` · ${p.nature}` : '';
+  const energy = mine
+    ? `<div class="pw-energy">${Array.from({ length: 10 }, (_, i) =>
+        `<i class="${i < (p.energy || 0) ? 'on' : ''}"></i>`).join('')}</div>`
+    : '';
+  return `<div class="pw-head">
+      <div class="pw-av">${av
+        ? `<img src="${av}" onerror="this.remove()">`
+        : (p.name || '?').slice(0, 1)}</div>
+      <div style="min-width:0">
+        <div class="pw-name">${p.name}</div>
+        <div class="pw-sub">${types}${extra}</div>
+      </div>
+    </div>
+    <div class="pw-hp ${playHpClass(p.pct)}"><i style="width:${Math.max(0, Math.min(100, p.pct))}%"></i></div>
+    <div class="pw-hptxt">${p.hp} / ${p.max_hp}（${p.pct}%）${mine ? ' · 能量 ' + p.energy : ''}</div>
+    ${energy}`;
+}
+
+function playActsHtml(st) {
+  const me = st.me;
+  if (!me) return '';
+  let h = (me.moves || []).map((m, i) => `
+    <button class="act-btn ${m.power > 0 ? 'power' : 'buff'}"
+      data-kind="skill" data-i="${i}" ${m.usable ? '' : 'disabled'}
+      title="${m.type || ''}">
+      <div class="an">${m.name}</div>
+      <div class="am"><span>威力 ${m.power || '—'}</span><span>耗能 ${m.cost}</span></div>
+    </button>`).join('');
+  h += `<button class="act-btn" data-kind="energy">
+      <div class="an">聚能</div>
+      <div class="am"><span>能量 +2</span><span>当前 ${me.energy}/10</span></div>
+    </button>`;
+  (st.bench || []).forEach((b, k) => {
+    h += `<button class="act-btn" data-kind="switch" data-i="${k}"
+      ${b.alive ? '' : 'disabled'}>
+      <div class="an">换 ${b.name}</div>
+      <div class="am"><span>${b.hp}/${b.max_hp}</span><span>槽位 ${b.slot}</span></div>
+    </button>`;
+  });
+  return h;
+}
+
+function playLogHtml(log) {
+  return (log || []).slice(-60).map((line) => {
+    // 事件文案约定：以「我方」/「对方」开头表示谁在动，方便上色。
+    let cls = '';
+    if (line.indexOf('倒下') >= 0) cls = 'die';
+    else if (line.indexOf('我方') >= 0) cls = 'hit-a';
+    else if (line.indexOf('对方') >= 0) cls = 'hit-b';
+    return `<div class="${cls}">${line}</div>`;
+  }).join('');
+}
+
+function playRender(st) {
+  if (!st || st.error) {
+    if (st && st.error) $('playStatus').textContent = st.error;
+    if (st && st.state) playRender(st.state);
+    return;
+  }
+  PLAY.st = st;
+  $('playArena').hidden = false;
+  $('playActs').hidden = false;
+  $('playLog').hidden = false;
+  $('playMe').innerHTML = playPetCard(st.me, true);
+  $('playFoe').innerHTML = playPetCard(st.foe, false);
+  $('playTurn').textContent = st.done
+    ? `结束 · ${st.turn} 回合`
+    : `第 ${st.turn} / ${st.max_turn} 回合`;
+  const meta = st.meta || {};
+  $('playSrc').textContent = meta.opponent
+    ? `${meta.opponent}${meta.author ? ' / ' + meta.author : ''}`
+    : '';
+  $('playActs').innerHTML = st.done ? '' : playActsHtml(st);
+  const logEl = $('playLog');
+  logEl.innerHTML = playLogHtml(st.log);
+  logEl.scrollTop = logEl.scrollHeight;
+
+  if (st.done) {
+    $('playResultCard').hidden = false;
+    $('playResultSub').textContent =
+      st.result === 'win' ? '我方胜利' : '我方失败';
+    $('playResultBody').innerHTML = `<div class="pw-hptxt">
+      共 ${st.turn} 回合 · 我方剩余 ${(st.my_team || []).filter((x) => x.alive).length} 只 ·
+      对方剩余 ${(st.foe_team || []).filter((x) => x.alive).length} 只
+    </div>`;
+    $('playStatus').textContent = st.result === 'win' ? '胜利' : '失败';
+    loadPlayHistory();
+  }
+}
+
+async function playStart() {
+  const stEl = $('playStatus');
+  const myVal = $('playMyTeam').value;
+  let teamA = [];
+  let cfgA = null;
+  if (myVal === 'current') {
+    const arr = simTeams.a.filter(Boolean);
+    teamA = arr.map((p) => p.name);
+    cfgA = arr;
+  } else {
+    try {
+      const r = await fetch(API + '/api/sim/lineup?i=' +
+        encodeURIComponent(myVal), { cache: 'no-store' });
+      const o = await r.json();
+      if (!o.ok) { stEl.textContent = o.error || '阵容拉取失败'; return; }
+      teamA = o.team;
+      cfgA = o.cfg;
+    } catch (e) { stEl.textContent = '阵容拉取失败：' + e; return; }
+  }
+  if (!teamA.length) {
+    stEl.textContent = '先在「模拟器」页配好我方队伍，或选一套真实阵容';
+    return;
+  }
+  const foeSrc = $('playFoeSrc').value;
+  const body = {
+    team_a: teamA,
+    cfg_a: cfgA,
+    opponent_mode: foeSrc === 'current' ? 'fixed' : 'lineups',
+    team_b: simTeams.b.filter(Boolean).map((p) => p.name),
+    cfg_b: simTeams.b.filter(Boolean),
+    policy_b: $('playPolB').value,
+    seed: parseInt($('playSeed').value, 10) || 0,
+  };
+  stEl.textContent = '开局中…';
+  try {
+    const r = await fetch(API + '/api/sim/manual/new', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(body),
+    });
+    const o = await r.json();
+    $('playResultCard').hidden = true;
+    if (o.error) { stEl.textContent = '开局失败：' + o.error; return; }
+    stEl.textContent = '';
+    playRender(o);
+  } catch (e) {
+    stEl.textContent = '开局失败：' + e;
+  }
+}
+
+async function playAct(action) {
+  if (PLAY.busy) return;
+  PLAY.busy = true;
+  try {
+    const r = await fetch(API + '/api/sim/manual/act', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify({ action }),
+    });
+    const o = await r.json();
+    if (o.error && !o.state) { $('playStatus').textContent = o.error; return; }
+    playRender(o);
+    if (o.error) $('playStatus').textContent = o.error;
+  } catch (e) {
+    $('playStatus').textContent = '出招失败：' + e;
+  } finally {
+    PLAY.busy = false;
+  }
+}
+
+async function loadPlayTeams() {
+  const sel = $('playMyTeam');
+  const opts = ['<option value="current">模拟器页的我方队伍</option>'];
+  try {
+    const r = await fetch(API + '/api/sim/lineups', { cache: 'no-store' });
+    const o = await r.json();
+    (o.items || []).forEach((x) => {
+      opts.push(`<option value="${x.i}">${x.size}只 · ${x.title}</option>`);
+    });
+  } catch (e) { /* 拉不到就只留当前队伍 */ }
+  sel.innerHTML = opts.join('');
+}
+
+async function loadPlayHistory() {
+  try {
+    const r = await fetch(API + '/api/sim/manual/history',
+      { cache: 'no-store' });
+    const o = await r.json();
+    const sm = o.summary || {};
+    $('playHistSub').textContent =
+      `共 ${o.games || 0} 局 · 全量记录在 logs/sim_manual.jsonl`;
+    $('playHistMetrics').innerHTML =
+      metricHtml('手操胜率', `${sm.win_rate || 0}%`, '', '',
+        (sm.win_rate || 0) >= 55 ? 'win'
+          : (sm.win_rate || 0) >= 45 ? 'warn' : 'lose') +
+      metricHtml('胜 / 负', `${sm.wins || 0} / ${sm.losses || 0}`, '', '', '') +
+      metricHtml('平均回合', sm.avg_turns || 0, '', '', '');
+    $('playHistTbl').querySelector('tbody').innerHTML =
+      (o.rows || []).slice().reverse().map((x) => {
+        const acts = (x.actions || []).map((a) =>
+          a.skill || (a.kind === 'energy' ? '聚能' : '换人'));
+        const uniq = Array.from(new Set(acts)).slice(0, 4).join(' / ');
+        return `<tr>
+          <td>${(x.at || '').slice(5)}</td>
+          <td>${x.result === 'win' ? '胜' : '负'}</td>
+          <td>${(x.meta || {}).opponent || '—'}</td>
+          <td>${x.turns}</td>
+          <td>${uniq || '—'}</td>
+        </tr>`;
+      }).join('');
+  } catch (e) { /* 历史拉不到不影响对战 */ }
+}
+
+/* ================================================================
    事件绑定
    ================================================================ */
 document.querySelectorAll('.nav-item').forEach((b) => {
@@ -2038,6 +2266,7 @@ $('btnSimMine').addEventListener('click', async () => {
     simSide = 'a';
     $('simSide').querySelectorAll('button').forEach((x) =>
       x.classList.toggle('active', x.dataset.side === 'a'));
+    simMarkDirty(true);
     simRenderSlots();
     toast(`已载入 my_team ${slots.length} 只`);
   } catch (e) {
@@ -2070,6 +2299,7 @@ async function simLoadLineup(side) {
   }));
   while (simTeams[side].length < 6) simTeams[side].push(null);
   simSide = side;
+  simMarkDirty(true);
   $('simSide').querySelectorAll('button').forEach((x) =>
     x.classList.toggle('active', x.dataset.side === side));
   simRenderSlots();
@@ -2082,6 +2312,21 @@ async function simLoadLineup(side) {
 $('btnSimLineupA').addEventListener('click', () => simLoadLineup('a'));
 $('btnSimLineupB').addEventListener('click', () => simLoadLineup('b'));
 
+// ---- 手操对战 ----
+$('btnPlayNew').addEventListener('click', playStart);
+$('playActs').addEventListener('click', (ev) => {
+  const btn = ev.target.closest('.act-btn');
+  if (!btn || btn.disabled) return;
+  const kind = btn.dataset.kind;
+  if (kind === 'skill' || kind === 'switch') {
+    playAct({ kind, i: parseInt(btn.dataset.i, 10) });
+  } else {
+    playAct({ kind });
+  }
+});
+loadPlayTeams();
+loadPlayHistory();
+
 $('btnSimPresetSave').addEventListener('click', async () => {
   const name = $('simPresetName').value.trim();
   const team = simTeams[simSide].filter(Boolean);
@@ -2093,7 +2338,7 @@ $('btnSimPresetSave').addEventListener('click', async () => {
   });
   const o = await r.json();
   toast(o.ok ? `预设「${name}」已保存` : '保存失败：' + o.msg);
-  if (o.ok) loadSimPool();
+  if (o.ok) { simMarkDirty(false); loadSimPool(); }
 });
 $('btnSimPresetLoad').addEventListener('click', async () => {
   const name = $('simPresetSel').value;
@@ -2104,6 +2349,7 @@ $('btnSimPresetLoad').addEventListener('click', async () => {
   if (!p) { toast('预设不存在'); return; }
   simTeams[simSide] = p.team.slice(0, 6);
   while (simTeams[simSide].length < 6) simTeams[simSide].push(null);
+  simMarkDirty(false);
   simRenderSlots();
   toast(`预设「${name}」已载入${simSide === 'a' ? '我方' : '对方'}`);
 });

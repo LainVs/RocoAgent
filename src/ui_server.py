@@ -1285,6 +1285,43 @@ def sim_lineup_get(i):
             "unresolved": sorted(set(unresolved))}
 
 
+# ---- 手操对战（自己上场打，见 src/manual_battle.py）--------------------
+# 战斗循环和批量模拟共用 simulator.Battle，一致性由
+# src/test_sim_engine.py 的黄金基线保证。
+# 只开一个全局会话：单人 UI，多个标签页共用同一局反而更符合直觉
+# （刷新页面不会丢掉手上的对局）。
+_MANUAL = {"session": None}
+
+
+def _manual():
+    import manual_battle as MB
+    if _MANUAL["session"] is None:
+        _MANUAL["session"] = MB.Session()
+    return _MANUAL["session"]
+
+
+def sim_manual_new(body):
+    return _manual().new(
+        team_a=body.get("team_a"), cfg_a=body.get("cfg_a"),
+        opponent_mode=body.get("opponent_mode") or "lineups",
+        team_b=body.get("team_b"), cfg_b=body.get("cfg_b"),
+        policy_b=body.get("policy_b") or "smart",
+        seed=int(body.get("seed") or 0))
+
+
+def sim_manual_act(body):
+    return _manual().act(body.get("action") or {})
+
+
+def sim_manual_state():
+    return _manual().state()
+
+
+def sim_manual_history():
+    import manual_battle as MB
+    return MB.history()
+
+
 def sim_species_detail(name):
     """单只精灵的完整资料：种族值/特性/可学技能/性格表/三项60默认面板。"""
     import simulator as _SIM
@@ -2266,6 +2303,12 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/sim/lineup":
             return self._json(sim_lineup_get(q.get("i") or 0))
 
+        if path == "/api/sim/manual/state":
+            return self._json(sim_manual_state())
+
+        if path == "/api/sim/manual/history":
+            return self._json(sim_manual_history())
+
         if path == "/api/sim/run":
             # POST only；GET 到这里给个提示
             return self._json({"error": "use POST /api/sim/run"})
@@ -2330,6 +2373,12 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/preset/delete":
             return self._json(sim_preset_delete(body))
+
+        if path == "/api/sim/manual/new":
+            return self._json(sim_manual_new(body))
+
+        if path == "/api/sim/manual/act":
+            return self._json(sim_manual_act(body))
 
         if path == "/api/portrait/skip":
             return self._json(portrait_skip(
