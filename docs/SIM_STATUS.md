@@ -169,6 +169,11 @@
 - [x] Battle.step 回合末加 heal_pct 消费
 - [x] SUPPORTED 白名单加 (turn_end,always)/heal_pct + (ON_USE_SKILL,always)/stat_buff
 
+## 本轮（S7.4）
+
+- [x] **buff_fx_index.json**（177 条 buff 效果索引）：buff.json desc
+      正则抽取，任何 effect_id 都能查到具体效果数值
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
