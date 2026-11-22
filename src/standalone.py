@@ -204,6 +204,24 @@ def identify(now=None, foe_hp_pct=None):
         except Exception:
             pass
 
+    # ---- 我方兜底 1.5：pet_avatars 头像通道（639 类，高置信才采信）
+    #
+    # 和对面共用一套代码，只是 HUD 框不同（self 76x80）。必须命中 my_team，
+    # 理由同上面：我方不可能出现队伍外的精灵。
+    if _ident.get("self") is None:
+        try:
+            import avatar_ident as _AV
+            for r in _AV.identify_screen(_scr, side="self", topk=3):
+                if r.get("conf") != "high":
+                    continue
+                if _in_my_team(r["name"]):
+                    _ident["self"] = r["name"]
+                    _ident["self_conf"] = float(r["score"])
+                    _log("SELF -> %s (avatar %.2f)" % (r["name"], r["score"]))
+                    break
+        except Exception as e:
+            _log("SELF avatar failed: %s: %s" % (type(e).__name__, e))
+
     # ---- 我方兜底 2：头像模板（只有 4/5 有模板）
     if _ident.get("self") is None:
         try:
@@ -567,6 +585,13 @@ def warmup():
         t0 = time.perf_counter()
         _scr, perc = _get()
         perc.observe()
+        # 头像银行：首次构建 2.8s，必须挪到预热里，否则第一次 /api/state
+        # 会卡在 foe_ident 的 avatar 通道上。
+        try:
+            import avatar_ident as _av
+            _av.bank("foe")
+        except Exception:
+            pass
         # 再跑一次 identify（它内部有 1.5s 节流，这里强制重置）
         _ident["at"] = 0.0
         identify(now=time.time())

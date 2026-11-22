@@ -41,6 +41,7 @@
 | `ability_read.py` | 特性名 OCR |
 | `trait_db.py` | 特性 → 物种 → 属性 |
 | `foe_moves.py` | 对手招式推断 |
+| `avatar_ident.py` | `pet_avatars` 头像通道（639 类，高置信才投票） |
 
 ### 数据 / 记录
 | 文件 | 职责 |
@@ -75,6 +76,7 @@
 | `bench_skillbar.py` | 技能栏识别精度（396 帧） |
 | `verify_portraits.py` | 头像库体检（找错误标签） |
 | `verify_channels.py` | 多通道并行交叉验证 |
+| `bench_avatar_ident.py` | 头像通道精度评测（162 张已标注真值） |
 | `label_portraits.py` | 自动标注 `_unknown_*.png` |
 | `cleanup_portraits.py` | 清理头像库重复 |
 | `s5_import.py` | S5 赛季精灵入库 |
@@ -99,6 +101,7 @@
 | `test_pvp_meta.py` | 概率分布合法（和为 1 / 分位有序 / 未知物种返回空） |
 | `test_priority.py` | 先发制人：能反杀才用 / 打不死不硬用 / 不压过高伤害 |
 | `test_state_bus.py` | 状态总线 |
+| `test_avatar_ident.py` | 头像通道：银行 / 高置信不出错 / 候选池 / 融合链 |
 
 ## 四、队伍编辑（原管理面板的功能）
 

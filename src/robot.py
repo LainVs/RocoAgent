@@ -505,6 +505,13 @@ class Bot:
             _hud.warmup()
         except Exception:
             pass
+        # 头像银行：首次构建 2.8s（639 id × 12 视角）。必须在进主循环前做完，
+        # 否则会卡在 _check_foe 里吃掉一个回合。缓存命中时只需 0.19s。
+        try:
+            import avatar_ident as _av
+            _av.bank("foe")
+        except Exception:
+            pass
         # 板子可能比机器人晚就位（刚上电、刚重启、蓝牙射频掉线重连）。?
         # 以前这里直接 abort，现在就等它，最?30 分钟。?
         # 空转模式不发任何输入，连板子没有意义 —?直接跳过，免得板子睡着。?
@@ -1991,6 +1998,45 @@ class Bot:
             self._foe_sig_streak = 0
             if hud_name:
                 self._foe_name_seen = hud_name
+        # ---- 第三通道：pet_avatars 头像库（639 类，高精确）
+        #
+        # 与 HUD 模板库的区别：模板库只有 ~162 张已标注实机裁图，头像库覆盖
+        # 639 个图鉴 id，且高置信档实测精确率 95%（docs/PLAN_AVATAR_IDENT.md）。
+        # 只在两种情况下采纳：
+        #   · 现在还没有名字；或
+        #   · 现在的名字来自模板通道且置信度 < 0.90（模板 0.60 只有 ~76% 正确）
+        # ONNX 高置信（>=0.90）时不覆盖，交给下面已有的锁逻辑。
+        av = []
+        try:
+            import avatar_ident as _AV
+            av = _AV.identify(img, side="foe", margin=m)
+        except Exception as e:
+            log("FOE -> avatar failed: %s: %s" % (type(e).__name__, e))
+        if av:
+            self.foe_avatar_score = float(av[0]["score"])
+        if av and av[0]["conf"] == "high":
+            av_name = av[0]["name"]
+            cur_src = str(getattr(self, "foe_ident_source", "") or "")
+            cur_conf = float(getattr(self, "foe_conf", 0.0) or 0.0)
+            weak = (not self.foe_name) or (cur_src.startswith("portrait")
+                                           and cur_conf < 0.90)
+            if weak and av_name != self.foe_name:
+                log("FOE -> %s (%.2f, avatar)" % (av_name, av[0]["score"]))
+                self.foe_name = av_name
+                self.foe_bust = av_name
+                self.foe_ident_source = "avatar"
+                self.foe_conf = float(av[0]["score"])
+                try:
+                    import portrait_db as _pdb
+                    row = _pdb.connect().execute(
+                        "SELECT id FROM species WHERE name=? "
+                        "ORDER BY implemented DESC, total DESC LIMIT 1",
+                        (av_name,)).fetchone()
+                    if row:
+                        self.foe_species_id = row[0]
+                except Exception:
+                    pass
+
         # 模板通道兜底：只在"还没有可靠答案"时才采纳。
         #
         # 为什么必须加这个判断（2026-11-21 实盘）
@@ -2013,6 +2059,10 @@ class Bot:
                   and getattr(self, "foe_conf", 0.0) >= ONNX_LOCK)
         if name is not None and sc >= 0.60 \
                 and (margin if 'margin' in dir() else 1.0) >= 0.06:
+            # 头像通道已经用高置信结果定名：0.60~0.95 的模板不足以推翻它。
+            if (getattr(self, "foe_ident_source", "") == "avatar"
+                    and sc < 0.95):
+                return
             sp = self._portrait_species(name, "foe")
             if sp and sp != self.foe_name:
                 if locked and sc < 0.95:

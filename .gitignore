@@ -16,6 +16,9 @@ logs/digits/glyphs/
 *.jpg
 *.jpeg
 
+# 头像通道的评测证据（docs/PLAN_AVATAR_IDENT.md 引用，需要入库）
+!docs/img/*.png
+
 # 换人面板判据的回归样张：由 scripts/make_switch_fixtures.py 从真实整帧
 # 裁出「队伍列表 + 倒计时」两块区域拼成，约 0.5 MB/张，必须入库
 # （否则换机器后 test_switch_panel.py 没样张可跑）。
@@ -31,6 +34,8 @@ logs/digits/glyphs/
 # ------------------------------------------------------------------ 运行期产物
 *.log
 *.lock
+# 派生缓存（头像模板银行等，随时可重建）
+data/cache/
 # 手操对战的记录（自己打的每一局，供「手操战绩」分析用）。
 # 是个人游玩数据，不该进仓库：文件名固定，但内容每次都在长。
 logs/sim_manual.jsonl

@@ -27,6 +27,8 @@
     3. 名字 OCR -> nickname
          a. nickname_map 命中 -> 若在 cands 里，直接确定
          b. 名字恰好是种族名且属性一致 -> 确定
+    3.5 头像通道（`avatar_ident`，pet_avatars 639 类）
+         只在高置信（score>=0.60 且 margin>=0.03，实测精确率 95%）时定名
     4. 头像模板在 cands 内打分 -> 最高分且领先足够 -> 确定
     5. 立绘 ONNX Top-5 与 cands 取交集 -> 唯一 -> 确定
     6. 只剩 1 只 -> 确定
@@ -410,6 +412,26 @@ def identify(screen, prev=None, side="foe"):
     # ---- 3. 只剩一个候选，直接定
     if len(cands) == 1:
         out.update(name=cands[0], source="types", conf=1.0)
+        return out
+
+    # ---- 3.5 头像通道（pet_avatars）：高精确，只在高置信时定名
+    #
+    # 实测（162 张已标注 HUD 裁图，属性约束后）：普通配色 74.2% Top-1；
+    # 高置信档（score>=0.60 且 margin>=0.03）产出的 80 次投票里 95% 正确。
+    # 所以它可以排在模板/ONNX 之前 —— 那两条通道的精度都低于这个数。
+    #
+    # 银行首次构建约 2.8s（之后走 data/cache/avatar_bank_*.npz），
+    # 单次打分 ~20ms，远低于 OCR。构建失败不影响主链路。
+    try:
+        import avatar_ident as _AV
+        av = _AV.identify_screen(screen, side=side, candidates=cands)
+    except Exception:
+        av = []
+    if av:
+        out["detail"]["avatar_top"] = [(a["name"], a["score"]) for a in av[:3]]
+    if av and av[0]["conf"] == "high" and _accept(av[0]["name"]):
+        out.update(name=av[0]["name"], source="avatar",
+                   conf=float(av[0]["score"]))
         return out
 
     # ---- 4. 头像模板（只在候选集内挑）
