@@ -32,12 +32,13 @@ for name, cond in checks.items():
     print("%-40s %s" % (name, "OK" if cond else "FAIL"))
     ok &= cond
 
-# 语义检查：match_started 赋值前必须有 my_live and foe_live 判定为真
+# 语义检查：match_started 赋值前必须有"任一边 live"的真值判定
 src_run = ast.get_source_segment(src, run_fn)
 i = src_run.find("self.match_started = now")
 before = src_run[:i]
-ok &= "if not (my_live and foe_live):" in before
+guard = "if not (my_live or foe_live):"
+ok &= guard in before
 print("match_started guarded by live check:",
-      "OK" if "if not (my_live and foe_live):" in before else "FAIL")
+      "OK" if guard in before else "FAIL")
 print("SELFTEST", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)

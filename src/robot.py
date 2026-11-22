@@ -792,17 +792,25 @@ class Bot:
                         # A 类幻影局（16 场 0 秒 END）的共性：上一局残留的
                         # 0 血/换人面板帧让 battle=True，START 被误判，
                         # 之后 battle 立刻转 False → 0 秒 END 污染统计。
-                        # 防线：START 必须伴随"我方血量可读且 >0"或
-                        # "对面血量可读"——真对局的 HUD 一定画得出这两条，
-                        # 残留帧通常只画出一边或全 None。
+                        #
+                        # ★ 2026-11-23 修正：原来要求"my 和 foe 都 live"，
+                        # 但 4:3 分辨率 / 悬浮窗遮挡时我方血条读不出来
+                        # （实测 my=None 持续整局），于是**真对局也永远不开**：
+                        #     START suppressed: HUD not fully live (my=None foe=63.7)
+                        # 代价是整局不做 match 初始化 → turn 不递增、
+                        # 决策退化成 legacy、录像/复盘全断。
+                        #
+                        # 正确判据：**任一边 live 就是真对局**。幻影局的特征是
+                        # "两边都读不到"（残留帧画不出 HUD），一边能读就说明
+                        # HUD 真的在画。
                         my_live = (st.get("my_pct") is not None
                                    and st["my_pct"] > 0.5)
                         foe_live = (st.get("foe_pct") is not None
                                     and st["foe_pct"] > 0.5)
-                        if not (my_live and foe_live):
+                        if not (my_live or foe_live):
                             if now - getattr(self, "_phantom_log_at", 0.0) > 10.0:
                                 self._phantom_log_at = now
-                                log("START suppressed: HUD not fully live "
+                                log("START suppressed: HUD not live at all "
                                     "(my=%s foe=%s)"
                                     % (st.get("my_pct"), st.get("foe_pct")))
                             # 照常跑感知/识别（身份和录像不受影响），
