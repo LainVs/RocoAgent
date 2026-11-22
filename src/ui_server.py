@@ -1214,6 +1214,73 @@ def sim_preset_delete(body):
         return {"ok": False, "msg": str(e)}
 
 
+# ---- 真实玩家阵容（外部项目数据，解析见 src/lineup_lib.py）-------------
+# 158 套（去重后）/ 943 只，来自 rocom-data 的 169 套 PvP 阵容 +
+# rocoarena 的 15 套天梯快照。解析一次约 0.6 s，所以缓存 10 分钟。
+_LINEUP_CACHE = {"at": 0.0, "data": None, "stats": None}
+
+
+def _lineups():
+    import lineup_lib as _L
+    import simulator as _SIM
+    now = time.time()
+    if _LINEUP_CACHE["data"] is not None and now - _LINEUP_CACHE["at"] < 600:
+        return _LINEUP_CACHE["data"], _LINEUP_CACHE["stats"]
+    data, stats = _L.load(_SIM.Dex())
+    _LINEUP_CACHE.update(at=now, data=data, stats=stats)
+    return data, stats
+
+
+def sim_lineup_list():
+    """真实阵容清单。带 team 名（158 套共 943 个名字，约 30 KB）。"""
+    try:
+        data, stats = _lineups()
+    except Exception as e:
+        return {"error": str(e), "items": []}
+    items = []
+    for i, lu in enumerate(data):
+        items.append({"i": i, "title": lu["title"], "author": lu["author"],
+                      "blood_magic": lu["blood_magic"],
+                      "source": lu["source"], "size": len(lu["team"]),
+                      "team": lu["team"]})
+    flat = {k: v for k, v in stats.items() if not isinstance(v, dict)}
+    return {"items": items, "stats": flat}
+
+
+def sim_lineup_get(i):
+    """一套阵容的完整 cfg。
+
+    技能名在服务端解析成 **id**，前端因此可以沿用现有的 id 语义（编辑器
+    勾选框、槽位显示都不用改）；同时把原始名字放 skill_names 里，
+    编辑器和结果表用得上。
+    """
+    try:
+        data, _stats = _lineups()
+        lu = data[int(i)]
+    except Exception as e:
+        return {"error": "取阵容失败: %s" % e}
+    import simulator as _SIM
+    dex = _SIM.Dex()
+    cfg = []
+    unresolved = []
+    for c in lu["cfg"]:
+        ids = []
+        for nm in c.get("moves") or []:
+            m = dex.resolve_skill(nm)
+            if m:
+                ids.append(m["id"])
+            else:
+                unresolved.append(nm)
+        cfg.append({"name": c["name"], "nature": c.get("nature"),
+                    "invest": c.get("invest") or ["hp", "atk", "spe"],
+                    "moves": ids,
+                    "skill_names": c.get("moves") or []})
+    return {"ok": True, "title": lu["title"], "author": lu["author"],
+            "blood_magic": lu["blood_magic"], "source": lu["source"],
+            "team": lu["team"], "cfg": cfg,
+            "unresolved": sorted(set(unresolved))}
+
+
 def sim_species_detail(name):
     """单只精灵的完整资料：种族值/特性/可学技能/性格表/三项60默认面板。"""
     import simulator as _SIM
@@ -1238,6 +1305,9 @@ def sim_species_detail(name):
         "panel_default": p.panel(),
         "moves": dex.moves(s["id"]),
         "natures": sorted(k for k in _S.natures().keys() if k != "neutral"),
+        # 性格倍率表（前端面板预览要用，避免前端手抄一份 31 项表抄错）
+        "nature_table": {k: v for k, v in _S.natures().items()
+                         if k != "neutral"},
     }
 
 
@@ -2172,6 +2242,12 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/presets":
             return self._json(sim_preset_list())
+
+        if path == "/api/sim/lineups":
+            return self._json(sim_lineup_list())
+
+        if path == "/api/sim/lineup":
+            return self._json(sim_lineup_get(q.get("i") or 0))
 
         if path == "/api/sim/run":
             # POST only；GET 到这里给个提示

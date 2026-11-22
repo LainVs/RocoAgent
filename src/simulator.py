@@ -182,6 +182,46 @@ class Dex:
                         "type": r["type_name"]})
         return out
 
+    def resolve_skill(self, ref):
+        """按 **id 或名字** 取一个技能（含 power=0 的辅助技能）。
+
+        为什么单独要这一步（2026-11-22，接真实玩家阵容时发现）
+        ------------------------------------------------------
+        `moves(species_id)` 只返回「该精灵的学法表 ∩ power>0」，两个限制
+        对真实阵容都不成立：
+
+          · 真实阵容（rocom-data/lineups.json 169 套）的技能是**名字**，
+            不是 id；
+          · 里面大量是力量增效 / 防御 / 有效预防这类 power=0 的辅助技能。
+
+        原来按学法表过滤，169 套里的技能只有 26% 能解析；改成直接查
+        skills 表后是 **4042/4056 = 99.7%**（缺的 14 条是活动技能）。
+
+        返回 {"id","name","power","cost","type"} 或 None。
+        """
+        if ref is None:
+            return None
+        row = None
+        try:
+            sid = int(ref)
+        except (TypeError, ValueError):
+            sid = None
+        if sid is not None:
+            row = self.db.execute(
+                "SELECT id,name,power,cost,type_name FROM skills WHERE id=?",
+                (sid,)).fetchone()
+        if row is None:
+            row = self.db.execute(
+                "SELECT id,name,power,cost,type_name FROM skills "
+                "WHERE name=? ORDER BY id LIMIT 1", (str(ref).strip(),)
+            ).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "name": row["name"],
+                "power": int(row["power"] or 0),
+                "cost": int(row["cost"] or 0),
+                "type": row["type_name"]}
+
 
 # ---------------------------------------------------------------- 战斗单位
 
@@ -449,9 +489,13 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
                     nature=c.get("nature"),
                     invest=c.get("invest"))
             if c.get("moves"):
-                # UI 指定的技能：按 id 从 Dex 学法表里挑（保持顺序）
-                want = [int(x) for x in c["moves"]]
-                p.moves = [m for m in p.moves if m["id"] in want] or p.moves
+                # 技能：接受**id 或名字**，顺序 = 卡槽顺序。
+                # 真实玩家阵容（lineup_lib）给的是名字，UI 给的是 id，
+                # 统一走 Dex.resolve_skill（含 power=0 的辅助技能）。
+                picked = [dex.resolve_skill(x) for x in c["moves"]]
+                picked = [m for m in picked if m]
+                if picked:
+                    p.moves = picked[:8]
             if c.get("max_hp"):
                 p.max_hp = int(c["max_hp"])
                 p.hp = p.max_hp

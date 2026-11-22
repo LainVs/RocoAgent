@@ -1216,6 +1216,11 @@ input:focus-visible,
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 90px;
 }
 .sim-slot .ss-meta { font-size: 10px; color: var(--ink-3); line-height: 1.5; }
+.sim-slot .ss-meta2 {
+  font-size: 10px; color: #884027; line-height: 1.5;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .sim-slot .ss-hp { margin-top: 5px; }
 .sim-slot .ss-hp .bar {
   height: 5px; border-radius: 3px; background: var(--soft-1); overflow: hidden;
@@ -1317,6 +1322,12 @@ input:focus-visible,
   font-size: 12px; cursor: pointer;
 }
 .sim-ed-moves label:hover { border-color: var(--accent-soft); }
+/* 真实阵容带来的"外部技能"（不在该精灵学法表里）：标出来，别让人误以为是
+   图鉴里的技能；不标的话用户会以为是数据错了 */
+.sim-ed-moves label.mv-extra {
+  background: #FBF4EC; border-color: rgba(136,64,39,.28);
+}
+.sim-ed-moves label.mv-extra .mv-pow { color: #884027; }
 .sim-ed-moves .mv-pow {
   margin-left: auto; font-size: 10px; color: #8A877F;
   font-variant-numeric: tabular-nums;

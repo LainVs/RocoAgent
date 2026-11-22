@@ -306,6 +306,14 @@
             <button class="btn" id="btnSimPresetDel" style="padding:4px 9px;font-size:11px">删除</button>
             <input id="simPresetName" placeholder="预设名" style="width:110px;font-size:11px">
           </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <select id="simLineupSel" style="max-width:320px;font-size:11px">
+              <option value="">— 真实玩家阵容 —</option>
+            </select>
+            <button class="btn" id="btnSimLineupA" style="padding:4px 9px;font-size:11px">作为我方</button>
+            <button class="btn" id="btnSimLineupB" style="padding:4px 9px;font-size:11px">作为对方</button>
+            <span id="simLineupInfo" style="font-size:11px;color:var(--ink-3)"></span>
+          </div>
           <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ink-2);margin-bottom:8px">
             <span>我方策略</span>
             <select id="simPolA">

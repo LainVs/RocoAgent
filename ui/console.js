@@ -1669,6 +1669,10 @@ let simSide = 'a';
 let simDexPool = [];
 let simEditorSlot = -1;
 
+/* 三项投资的显示名（PvP 建模：每只精灵只投三项，其余为 0） */
+const SIM_STAT_CN = { hp: '精力', atk: '物攻', spa: '魔攻',
+                      def: '物防', spd: '魔防', spe: '速度' };
+
 function simRenderSlots() {
   const wrap = $('simSlots');
   wrap.innerHTML = simTeams[simSide].map((p, i) => {
@@ -1676,12 +1680,15 @@ function simRenderSlots() {
       return `<div class="sim-slot empty" data-i="${i}">＋ 槽位 ${i + 1}</div>`;
     }
     const av = loadAvatarImg(p.name);
+    const inv = (p.invest && p.invest.length ? p.invest
+      : ['hp', 'atk', 'spe']).map((k) => SIM_STAT_CN[k] || k).join('/');
     return `<div class="sim-slot" data-i="${i}">
       <div class="ss-head">
         <div class="ss-av">${av ? `<img src="${av}">` : (p.name || '?').slice(0, 1)}</div>
         <span class="ss-name">${p.name}</span>
       </div>
       <div class="ss-meta">IV${p.iv ?? 60} · ${p.nature || '无性格'} · 技能 ${(p.moves || []).length}</div>
+      <div class="ss-meta2">${inv} × 60 · 其余 0</div>
       <div class="ss-hp"><div class="bar"><i style="width:100%"></i></div></div>
     </div>`;
   }).join('');
@@ -1727,6 +1734,7 @@ async function openSimEditor(slot) {
     $('simEdNature').innerHTML =
       '<option value="">— 无性格 —</option>' +
       nats.map((n) => `<option>${n}</option>`).join('');
+    if (o.nature_table) simNatureTable = o.nature_table;
     $('simDexList').innerHTML = (simDexPool || []).map((n) =>
       `<option value="${n}">`).join('');
     // 三项投资 checkbox（PvP 规则：只选三项投满，其余 0）
@@ -1745,45 +1753,23 @@ async function openSimEditor(slot) {
   $('simEditor').hidden = false;
   const cur = simTeams[simSide][slot];
   if (cur && cur.name) {
-    await simLoadMoves(cur.name, cur.moves || []);
+    // 三项投资要按这只精灵自己的配置回填（真实阵容里可能是 hp/atk/def）
+    simSetInvest(cur.invest);
+    await simLoadMoves(cur.name, cur.moves || [], cur.skill_names);
     simUpdatePanel();
+  } else {
+    simSetInvest(['hp', 'atk', 'spe']);
   }
 }
 
-/* 三项60 + 性格 -> 六项面板（前端镜像 simulator.Pet 公式，实时预览） */
+/* 三项60 + 性格 -> 六项面板（前端镜像 simulator.Pet 公式，实时预览）。
+   性格倍率**不在这里手写**：由 /api/sim/species 的 nature_table 下发
+   （直接来自 statmodel.natures()，31 项）。手抄 31 项一定会和官方表
+   漂移，之前那张硬编码表就少了 2 个性格。 */
+let simNatureTable = {};
+
 function simCalcPanel(base, iv, invest, nature) {
-  const NAT = {
-    专注: { patk: 1.0, matk: 1.2, pdef: 0.9, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    偏执: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 0.9, spd: 1.0, hp: 1.0 },
-    冷静: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.0 },
-    勇敢: { patk: 1.2, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.0 },
-    固执: { patk: 1.2, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    坦率: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 0.9 },
-    大胆: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    天真: { patk: 1.0, matk: 0.9, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    害羞: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    平和: { patk: 1.0, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.2 },
-    开朗: { patk: 1.0, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
-    忧郁: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.0, spd: 1.0, hp: 1.2 },
-    急躁: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.0, spd: 1.2, hp: 1.0 },
-    胆小: { patk: 0.9, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
-    莽撞: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
-    热情: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 0.9 },
-    沉默: { patk: 0.9, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.2 },
-    慎重: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.2, spd: 0.9, hp: 1.0 },
-    懒散: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 0.9, spd: 1.0, hp: 1.0 },
-    温顺: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.2, spd: 1.0, hp: 1.0 },
-    焦虑: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.2, spd: 1.0, hp: 0.9 },
-    理性: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 0.9 },
-    稳重: { patk: 0.9, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    粗心: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 0.9, spd: 1.0, hp: 1.2 },
-    聪明: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    警惕: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
-    调皮: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 0.9, spd: 1.0, hp: 1.0 },
-    踏实: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.2 },
-    逞强: { patk: 1.2, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 0.9 },
-  };
-  const m = (nature && NAT[nature]) ||
+  const m = (nature && simNatureTable[nature]) ||
     { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 };
   const inv = new Set(invest || []);
   const rh = (x) => Math.floor(x + 0.5);
@@ -1823,8 +1809,16 @@ function simUpdatePanel() {
     <div class="pp-item"><em>${k}</em><b>${v}</b></div>`).join('');
 }
 
-async function simLoadMoves(name, checked) {
+function simSetInvest(list) {
+  const want = new Set(list || []);
+  $('simEdInvest').querySelectorAll('input').forEach((c) => {
+    c.checked = want.has(c.dataset.stat);
+  });
+}
+
+async function simLoadMoves(name, checked, names) {
   const mvWrap = $('simEdMoves');
+  checked = checked || [];
   try {
     const r = await fetch(API + '/api/sim/species?name=' +
       encodeURIComponent(name), { cache: 'no-store' });
@@ -1836,22 +1830,28 @@ async function simLoadMoves(name, checked) {
       return;
     }
     simEdBase = o.base;
+    if (o.nature_table) simNatureTable = o.nature_table;
     $('simEdInfo').innerHTML =
       `属性 <b>${o.types.join('/')}</b> · 特性 <b>${o.trait}</b> · ` +
       `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
       `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
     const want = new Set(checked);
-    mvWrap.innerHTML = (o.moves || []).map((m) => `
+    let html = (o.moves || []).map((m) => `
       <label><input type="checkbox" data-mid="${m.id}"
         ${want.has(m.id) ? 'checked' : ''}>
         ${m.name}<span class="mv-pow">${m.power || 0}/${m.cost}</span>
       </label>`).join('');
-    // 默认三项投资：攻/速/体（天梯最常见），已配置的优先
-    if (!$('simEdInvest').querySelectorAll('input:checked').length) {
-      $('simEdInvest').querySelectorAll('input').forEach((c) => {
-        c.checked = ['hp', 'atk', 'spe'].includes(c.dataset.stat);
-      });
-    }
+    // 真实玩家阵容里的技能不一定在这只精灵的学法表里（外部数据的技能名
+    // 是玩家实际配的）。这些必须**照样列出来并保持勾选**，否则打开编辑器
+    // 再保存就会把它们悄悄丢掉。
+    const known = new Set((o.moves || []).map((m) => m.id));
+    checked.forEach((id, k) => {
+      if (known.has(id)) return;
+      const nm = (names || [])[k] || ('技能#' + id);
+      html += `<label class="mv-extra"><input type="checkbox" data-mid="${id}" checked>
+        ${nm}<span class="mv-pow">外部</span></label>`;
+    });
+    mvWrap.innerHTML = html;
     simUpdatePanel();
   } catch (e) {
     mvWrap.innerHTML = '拉取失败：' + e;
@@ -1961,6 +1961,21 @@ async function loadSimPool() {
     sel.innerHTML = '<option value="">— 预设队伍 —</option>' +
       (o.presets || []).map((p) => `<option>${p.name}</option>`).join('');
   } catch (e) { /* 同上 */ }
+  // 真实玩家阵容（外部项目 158 套，含性格/三项/四技能）
+  try {
+    const r = await fetch(API + '/api/sim/lineups', { cache: 'no-store' });
+    const o = await r.json();
+    const sel = $('simLineupSel');
+    sel.innerHTML = '<option value="">— 真实玩家阵容 —</option>' +
+      (o.items || []).map((x) =>
+        `<option value="${x.i}">${x.size}只 · ${x.title}` +
+        `${x.author ? ' / ' + x.author : ''}</option>`).join('');
+    const st = o.stats || {};
+    if (st.teams) {
+      $('simLineupInfo').textContent =
+        `${st.teams} 套 · ${st.members} 只`;
+    }
+  } catch (e) { /* 阵容库拉不到不影响手配 */ }
   bindSimUI();
   simRenderSlots();
 }
@@ -1996,6 +2011,44 @@ $('btnSimMine').addEventListener('click', async () => {
     toast('my_team 拉取失败：' + e);
   }
 });
+
+/* 真实玩家阵容：把某套阵容整队载入一侧（性格/三项/四技能都带过来） */
+async function simLoadLineup(side) {
+  const i = $('simLineupSel').value;
+  if (i === '') { toast('先选一套真实阵容'); return; }
+  let o;
+  try {
+    const r = await fetch(API + '/api/sim/lineup?i=' + encodeURIComponent(i),
+      { cache: 'no-store' });
+    o = await r.json();
+  } catch (e) {
+    toast('阵容拉取失败：' + e);
+    return;
+  }
+  if (!o.ok) { toast(o.error || '载入失败'); return; }
+  simTeams[side] = (o.cfg || []).slice(0, 6).map((c) => ({
+    name: c.name,
+    iv: 60,
+    nature: c.nature || null,
+    invest: c.invest || ['hp', 'atk', 'spe'],
+    moves: c.moves || [],
+    skill_names: c.skill_names || [],
+    max_hp: null,
+  }));
+  while (simTeams[side].length < 6) simTeams[side].push(null);
+  simSide = side;
+  $('simSide').querySelectorAll('button').forEach((x) =>
+    x.classList.toggle('active', x.dataset.side === side));
+  simRenderSlots();
+  const un = (o.unresolved || []).length;
+  $('simLineupInfo').textContent =
+    `${o.title}${o.author ? ' / ' + o.author : ''}` +
+    (un ? ` · 未解析技能 ${un}` : '');
+  toast(`已把「${o.title}」载入${side === 'a' ? '我方' : '对方'}`);
+}
+$('btnSimLineupA').addEventListener('click', () => simLoadLineup('a'));
+$('btnSimLineupB').addEventListener('click', () => simLoadLineup('b'));
+
 $('btnSimPresetSave').addEventListener('click', async () => {
   const name = $('simPresetName').value.trim();
   const team = simTeams[simSide].filter(Boolean);
