@@ -419,6 +419,20 @@ def decide(state):
                   "charge F (streak %d, +5 energy)" % streak))
 
     # ---- switches --------------------------------------------------------
+    # ★ 2026-11-22：换人的 KO 判定打折（见循环内注释）。
+    # 旧版还给换人设 margin 门槛，但那挡不住 KO 奖励级别的落差（+0.30），
+    # 根因是 KO 奖励本身不该建立在"池 max"上。margin 留在权重表里备用。
+    margin = w.get("switch_margin", 0.04)
+    # 换人的 KO 加成基于 best_damage_from（整池取 max）—— 那是**池子幻想**：
+    # 替补的 4 个技能还没揭晓，池 max 只是"它可能带的最强一击"。
+    # 实测（音速犬 vs 白发路路）：池 max 339 >= 300 触发 w_ko=+0.30，
+    # 把换人抬到 0.37，而最佳攻击只有 0.11 —— 健康满能量也换人，
+    # 每 2~3 回合白丢一次输出节奏。
+    #
+    # 修法：只有池 max **打六折后**仍 >= 对面当前血量，才认 KO
+    # （即"连平凡发挥都能杀"）。339*0.6=203 < 300 -> 不给 KO 加成；
+    # 而真正的必杀（比如池 max 500+）依然能触发。
+    SWITCH_KO_DISCOUNT = w.get("switch_ko_discount", 0.6)
     for slot, pet in enumerate(bench or [], start=1):
         if not pet.get("name") or pet.get("hp", 0) <= 0:
             continue
@@ -426,7 +440,9 @@ def decide(state):
         inc_new, _src = _incoming(foe_name, pet["name"], pet.get("hp_max") or 1)
         # The switch itself eats the turn, so the incoming hit lands unopposed.
         survives = inc_new < pet.get("hp", 0)
-        score = _outcome(dmg / max(1, foe_max), dmg >= foe_hp,
+        # 池 max 的 KO 判定打折：连 60% 发挥都能杀才算"换上去能秒"
+        switch_kills = dmg >= foe_hp and (dmg * SWITCH_KO_DISCOUNT) >= foe_hp
+        score = _outcome(dmg / max(1, foe_max), switch_kills,
                          inc_new / max(1, pet.get("hp_max", 1)), not survives,
                          pet.get("hp", 0) - inc_new, pet.get("hp", 1),
                          pet.get("energy", 10), 0,
