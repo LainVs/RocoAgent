@@ -65,11 +65,17 @@ STATUS_RULES = {
     # 但「化茧」的免疫致命、「自由自在」连击+2 可精确判定）
     "moe": {"pct": 0.0, "immune": None, "halve": False, "leech": False,
             "note": "层数作为标记；每层-10%全属性为近似（见 test 断言）"},
+    # 引电（authority 权威）：累计2层后，受25%最大生命值的电系伤害
+    "yindian": {"pct": 0.25, "immune": "电", "halve": False,
+               "leech": False, "at_layers": 2},
+    # 禁足（authority 权威）：精灵无法离场，且无法获得新的禁足状态
+    "jinzhu": {"pct": 0.0, "immune": None, "halve": False, "leech": False},
 }
 
 # 状态中文名（统一播报）
 STATUS_CN = {"poison": "中毒", "burn": "灼烧", "freeze": "冻结",
-             "parasite": "寄生", "moe": "萌化", "moisture": "湿润"}
+             "parasite": "寄生", "moe": "萌化", "moisture": "湿润",
+             "yindian": "引电", "jinzhu": "禁足"}
 
 # 兼容旧名
 STATUS_DOT = {k: v["pct"] for k, v in STATUS_RULES.items()}

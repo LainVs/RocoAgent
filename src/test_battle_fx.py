@@ -36,7 +36,7 @@ pos = [m for m in table if m["kind"] == "positive"]
 neg = [m for m in table if m["kind"] == "negative"]
 print("     正面 %d：%s" % (len(pos), "、".join(m["label"] for m in pos)))
 print("     负面 %d：%s" % (len(neg), "、".join(m["label"] for m in neg)))
-check(len(table) == 13, "共 13 种印记（实际 %d）" % len(table))
+check(len(table) == 14, "共 14 种印记（含星陨，实际 %d）" % len(table))
 
 print()
 print("--- 2. 同类最多一个（新顶旧）---")
@@ -107,8 +107,8 @@ check(battle_fx.mark_switch_in(bt7.marks["b"])["energy"] == -1,
 
 bt8 = SIM.Battle(dex, ["音速犬"], ["冰钻布鲁斯"], seed=0)
 bt8.add_mark("a", "dragon_mark")
-check(abs(battle_fx.mark_on_skill(bt8.marks["a"], 3) - 0.30) < 1e-9,
-      "龙噬印记：3 能耗技能后双攻 +30%")
+check(abs(battle_fx.mark_on_skill(bt8.marks["a"], 3) - 0.40) < 1e-9,
+      "龙噬印记：3 能耗技能后双攻 +40%（authority 权威值）")
 check(battle_fx.mark_on_skill(bt8.marks["a"], 2) == 0,
       "龙噬印记：2 能耗技能不触发")
 
