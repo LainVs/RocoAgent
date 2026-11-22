@@ -2197,9 +2197,19 @@ function playRender(st) {
   const markBits = Object.entries(fx.marks || {})
     .filter(([k, v]) => k.indexOf('_stacks') >= 0 && v)
     .map(([k, v]) => `${k.replace('_stacks', '')} ${v}`);
+  const me2 = st.me || {};
+  const buffBits = [];
+  if (me2.tmp_atk) buffBits.push(`本回合物攻 +${Math.round(100 * me2.tmp_atk)}%`);
+  if (me2.tmp_def) buffBits.push(`本回合双防 +${Math.round(100 * me2.tmp_def)}%`);
+  if (me2.atk_buff) buffBits.push(`物攻 +${Math.round(100 * me2.atk_buff)}%`);
+  if (me2.def_buff) buffBits.push(`双防 +${Math.round(100 * me2.def_buff)}%`);
+  if (me2.taken_mult && me2.taken_mult < 1) {
+    buffBits.push(`减伤 ${Math.round(100 * (1 - me2.taken_mult))}%`);
+  }
   $('playFx').textContent = [
     fx.weather && fx.weather !== 'none' ? fx.weather_label : '',
     markBits.length ? '印记 ' + markBits.join(' / ') : '',
+    buffBits.join(' · '),
   ].filter(Boolean).join(' · ');
   $('playActs').innerHTML = st.done ? '' : playActsHtml(st);
   const logEl = $('playLog');

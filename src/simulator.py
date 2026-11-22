@@ -54,7 +54,8 @@ def _s5_pets():
 
 MAX_TURNS = 60          # 单局上限，防死循环
 ENERGY_CAP = 10
-ENERGY_GAIN = 2         # 聚能一次 +2（实测值）
+# 聚能一次的回能（2026-11-22 用户实测纠正：游戏里是 **+5**，原来写的 2）
+ENERGY_GAIN = 5
 
 # 一次 buff 技能的攻击增益。
 #
@@ -764,6 +765,15 @@ class Battle:
         me, foe = self.me, self.foe
         if me is None or foe is None:
             return events
+        # 把「本回合生效的特性增益」写进战报：`专注力` 这类只在入场首回合
+        # 有效的东西，如果界面上只有一个忽高忽低的伤害数字，很容易被
+        # 误认为"一直有加倍 buff"（2026-11-22 用户就是这样报的）。
+        for who, p in (("我方", me), ("对方", foe)):
+            ta = getattr(p, "trait_tmp_atk", 0.0)
+            td = getattr(p, "trait_tmp_def", 0.0)
+            if ta or td:
+                events.append("%s 特性生效：物攻 +%.0f%% 双防 +%.0f%%（仅本回合）"
+                              % (who, 100 * ta, 100 * td))
         bench_a, bench_b = self.bench("a"), self.bench("b")
 
         # 取出双方本回合选的技能对象（buff 精确值要用它的名字）

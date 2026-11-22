@@ -53,6 +53,8 @@ def _pet_json(p, with_moves=False, foe=None):
         "alive": bool(p.alive),
         "atk_buff": round(getattr(p, "atk_buff", 0.0), 3),
         "def_buff": round(getattr(p, "def_buff", 0.0), 3),
+        "tmp_atk": round(getattr(p, "trait_tmp_atk", 0.0), 3),
+        "tmp_def": round(getattr(p, "trait_tmp_def", 0.0), 3),
         "taken_mult": round(getattr(p, "taken_mult", 1.0), 3),
     }
     if with_moves:
