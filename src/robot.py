@@ -4638,6 +4638,16 @@ class Bot:
                         "plate": s.get("plate")} if s else None
                        for s in st["skills"]],
         }
+        # 技能来源（session_moves 三层链的命中率统计）
+        # session=播报确认 / band=卡面直读 / team_db=表配置 / 无=未知
+        try:
+            import perceive as _P
+            meta = _P._skill_meta(getattr(self, "my_name", None))
+            if meta:
+                rec["skill_source"] = [
+                    meta["sources"].get(i) for i in range(4)]
+        except Exception:
+            rec["skill_source"] = None
         # 有认不全的数字就留一张技能栏截图：事后能核对"为什么选这张卡"。?
         # 只写日志的话，看?"23?" 根本没法判断它到底是 230 还是 23。?
         try:
