@@ -3153,8 +3153,11 @@ class Bot:
         # nothing for the rest of the turn.
         #
         # The panel itself is the reliable signal: find_switch_rows returns >= 3
-        # rows only when the party list is drawn, and requires the skill bar to
-        # be absent, so it cannot fire during a normal decision window.
+        # rows only when the forced-replacement list is drawn. Two things have
+        # to be ruled out first, because the plain party list looks similar:
+        #   · the skill bar (a normal decision window has it)
+        #   · the turn countdown (a normal turn keeps it on screen even while
+        #     the party list is shown — measured live5.png/live7.png)
         fainted = (st["my_pct"] is not None and st["my_pct"] <= 0.5
                    and (st.get("my_ui") or self.faint_at is not None))
         # 血量读成 0 但**底板不在场**（my_ui=False）时，大概率是读取失败
@@ -3173,7 +3176,14 @@ class Bot:
         if not fainted and not st["bar"]:
             # The skill bar is already known to be absent, so pass that in and
             # skip a second ~50 ms detection pass.
-            forced_panel = len(find_switch_rows(self.screen, bar_visible=False)) >= 3
+            #
+            # 还要带上 countdown：正常回合也会画队伍列表（底部是
+            # 「逃跑/背包/替换/技能」操作条），只有**没有回合倒计时**时
+            # 那份列表才是"强制换人面板"。实测 live5.png 就被判成过强制换人，
+            # 结果是反复点卡片丢回合。st 里已经有这个值，零额外成本。
+            forced_panel = len(find_switch_rows(
+                self.screen, bar_visible=False,
+                countdown=st.get("countdown"))) >= 3
         if fainted or forced_panel:
             if self.faint_at is None:
                 self.faint_at = now
@@ -3521,7 +3531,8 @@ class Bot:
                 # because the foreground is stolen between commands and
                 # send_key refuses to fire without it; a hardware click always
                 # gets the foreground and also confirms the choice.
-                rows = find_switch_rows(self.screen, bar_visible=False)
+                rows = find_switch_rows(self.screen, bar_visible=False,
+                                        countdown=False)
                 idx = action[1] - 1
                 if rows and 0 <= idx < len(rows):
                     tx, ty = rows[idx]

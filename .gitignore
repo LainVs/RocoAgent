@@ -16,6 +16,11 @@ logs/digits/glyphs/
 *.jpg
 *.jpeg
 
+# 换人面板判据的回归样张：由 scripts/make_switch_fixtures.py 从真实整帧
+# 裁出「队伍列表 + 倒计时」两块区域拼成，约 0.5 MB/张，必须入库
+# （否则换机器后 test_switch_panel.py 没样张可跑）。
+!data/fixtures/switch/*.png
+
 # ------------------------------------------------------------------ 运行期产物
 *.log
 *.lock

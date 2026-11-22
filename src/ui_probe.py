@@ -13,7 +13,7 @@ from config import (  # noqa: F401
     RESULT_BAND, RESULT_LIST_BAND, SKILL_BOX, log,
 )
 from winio import Screen
-from perceive import _is_skillbar
+from perceive import _is_skillbar, countdown_visible_crop, CNT_ROI
 
 
 def has_start_button(screen):
@@ -243,76 +243,107 @@ def is_result_screen(screen):
     return float((mx < 100).mean()) > 0.35
 
 
-SWITCH_BOXES = (
-    # 基准布局：实测 2560x1600 下换人面板就在这里
-    (300, 400, 620, 950),
-    # 宽版兜底：其它分辨率 / 宽高比下，游戏 UI 会整体缩放+偏移，
-    # 固定框可能把最上面/最下面那张卡切掉，导致 plates<3 直接返回 []。
-    # 实测"换个分辨率死了不换人"最可能就是这条。
-    (180, 260, 980, 1280),
-)
+# -------------------------------------------------------------- switch panel
+# 强制换人面板（队伍列表）：5 张卡纵向斜列在屏幕左侧。
+#
+# ★ 判据演化（2026-11-22，逐帧标定后的最终方案）
+# ------------------------------------------------------------
+# 之前五代判据全部失败，每次失败都留了证据，按顺序是：
+#   1. 「浅色矩形板」：卡片是「头像 + 名牌」的组合，没有一块大浅色矩形
+#   2. 「高饱和头像」：背景的红色城堡 / 旗帜同样高饱和，误检横向分散点
+#   3. 「编号数字 1~5」：白字太细，连通域只有 380px，不稳定
+#   4. 「暗色名牌 + 血条」：背景本身很暗，连通域粘成 480x230 的大块
+#   5. 「奶白编号药丸」：能稳定给出 5 个，但药丸和血条是**斜向错开**的，
+#      由药丸反推血条位置误差 ±20px，会把活着的卡读成 0%（选错精灵的根源）
+#
+# 现在锚在名牌里的**金星（★N）**上。用两帧不同状态的真实截图标定
+# （switch_now.png 与 battle_now.png，两帧的队伍列表整体上下相差 40px，
+#  说明这个判据不依赖固定 y）：
+#
+#     金星 15x12、面积 ~110、颜色 R>200 G>148 B<115 且 R-B>105
+#     同一张卡内金星与血条的相对位置固定：
+#         血条 y 带 ≈ 金星 y - 16 .. y + 14
+#         血条 x   ≈ 金星 x + 29 .. x + 119
+#
+# 所以行目标取 (金星x - 16, 金星y)：
+#   · 这是名牌左边缘，点它就是点这张卡（实测高亮框覆盖整个「头像+名牌」）
+#   · robot._living_rows 的读数带 (tx+6, ty-16, 175, 30) 正好落在血条上，
+#     不需要改 robot 侧的任何一个偏移量
+#
+# 实测读数（switch_now.png，客户区坐标；血条带内「高对比亮像素」占比）：
+#     card1 金星(384, 603) 空血  0.03
+#     card2 金星(338, 729) 空血  0.03
+#     card3 金星(343, 863) 有血  0.18
+#     card4 金星(397, 990) 有血  0.14
+#     card5 金星(496,1097) 有血  0.43
+# 与截图上「前两张黑条、后三张绿条」完全一致；robot 侧的 0.06 阈值
+# 正好落在 0.03 与 0.14 之间，不需要动。
+#
+# 为什么不用「药丸」当锚点：药丸在卡片的左外侧，选中卡（会放大右移）
+# 时相对位移达 +30px；金星长在名牌上，跟着名牌走，没有这个问题。
+PARTY_BOX = (250, 540, 660, 780)   # 窗口坐标（= 客户区 + BASE_OFF 13,58）
+
+# 金星的形状约束（实测 14~16 x 12~13，面积 102~140；放宽一倍留余量，
+# 但必须窄到能把「选中卡的橙色高光」（154x37、2000+ px）排除掉）
+STAR_W = (12, 20)
+STAR_H = (8, 18)
+STAR_AREA = (70, 300)
+STAR_FILL = 0.35
+# 相邻两张卡的最小 y 间距（实测 111~150）。小于它的两个"星"视为
+# 同一张卡的重复检出（描边、高光），只保留先出现的那个。
+ROW_MIN_PITCH = 70
 
 
-def _rows_in_box(screen, box):
-    """在指定窗口区域里找换人面板的卡片行。"""
-    X0, Y0, W, H = box
-    crop = screen.grab_s((X0, Y0, W, H))
-    if crop is None:
-        return []
-    mx = crop.max(axis=2).astype(np.int16)
-    mn = crop.min(axis=2).astype(np.int16)
-    # 实测换人面板的卡片是"半透明深底 + 白字 + 白色描边"，
-    # 不是纯白块。原来的 (mx-mn)<30 & mx>200 会把整张卡判掉，
-    # 结果面板明明开着 find_switch_rows 却返回 0（机器人卡在面板上）。
-    # 改成"有足够多偏亮像素"就算一张卡。
-    light = ((mn > 150) & ((mx - mn) < 90)).astype(np.uint8)
-    if int(light.sum()) < 800:
-        # 再退一步：只要这块区域里有明显的白色文字就认
-        light = (mx > 205).astype(np.uint8)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(light, 8)
-    plates = []
+def _star_points(crop):
+    """找名牌里的金星，返回 [(x_center, y_center), ...]（crop 局部，y 升序）。
+
+    crop 是 grab_s 的返回值，**RGB** 通道序（GrabRect._fit 之后仍是 RGB）。
+    """
+    r = crop[:, :, 0].astype(np.int16)
+    g = crop[:, :, 1].astype(np.int16)
+    b = crop[:, :, 2].astype(np.int16)
+    gold = ((r > 200) & (g > 148) & (b < 115) & (r - b > 105)).astype(np.uint8)
+    gold = cv2.morphologyEx(gold, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    n, _lab, stats, _c = cv2.connectedComponentsWithStats(gold, 8)
+    pts = []
     for i in range(1, n):
-        x, y, w, h, area = stats[i]
-        # 宽度上限从 200 放宽到 340（实测卡片更宽），高度也放宽
-        if area < 1500 or not (110 <= w <= 340) or not (30 <= h <= 140):
+        x, y, w, h, area = (int(v) for v in stats[i])
+        if not (STAR_W[0] <= w <= STAR_W[1]):
             continue
-        plates.append((y + h // 2, x + w // 2))
-    if len(plates) < 3:
-        return []
-    plates.sort()
-    gaps = sorted(b - a for (a, _), (b, _) in zip(plates, plates[1:]) if b - a > 60)
-    if not gaps:
-        return []
-    pitch = gaps[len(gaps) // 2]
-    if not (80 <= pitch <= 240):
-        return []
-    # keep 5 rows; the top card is the one usually clipped, so extend upward
-    rows = list(plates)
-    while len(rows) < 5:
-        y0, x0 = rows[0]
-        ny, nx = y0 - pitch, max(60, x0 - 45)
-        if Y0 + ny < 450:
-            break
-        rows.insert(0, (ny, nx))
-    rows = rows[:5]
-    return [(int(X0 + x0), int(Y0 + y0)) for y0, x0 in rows]
+        if not (STAR_H[0] <= h <= STAR_H[1]):
+            continue
+        if not (STAR_AREA[0] <= area <= STAR_AREA[1]):
+            continue
+        if area / float(w * h) < STAR_FILL:
+            continue
+        pts.append((x + w // 2, y + h // 2))
+    pts.sort(key=lambda p: p[1])
+    return pts
 
 
-def find_switch_rows(screen, bar_visible=None):
-    """Detect the forced-switch party list (5 staggered cards down the left).
+def find_switch_rows(screen, bar_visible=None, countdown=None):
+    """Detect the forced-switch party list (cards down the left edge).
 
-    Each row is a light rounded plate (~155x70) with the pet icon on top. The
-    death animation has none of these, so this cleanly separates "pet just died"
-    from "the game is actually waiting for me to pick a replacement".
+    Returns a list of window-coordinate (x, y) click targets, top row first;
+    each target is the row's name-plate left edge, centred on the HP bar, so
+    `robot.Bot._living_rows` can read the bar straight out of it.
 
     `bar_visible` lets the caller pass in an already-computed skill-bar result;
     recomputing it costs ~50 ms and _battle_tick already knows the answer.
 
-    Returns a list of window-relative (x, y) click targets, top row first.
+    `countdown` is the real discriminator, and it is **not** optional in
+    practice — see the long note above PARTY_BOX for how it was found:
+
+        None  = 自己检测（约 1 ms）。可见倒计时 -> 这不是强制换人面板。
+        False = 调用方已知"没有倒计时"，跳过检测。
+                （主动换人：按 E 打开列表时回合倒计时还在，不能因此否决）
+
+    为什么必须区分：正常回合也会把队伍列表画出来（实测 live5.png：
+    底部是「逃跑/背包/替换/技能」操作条，左边队伍列表带技能名和伤害数），
+    如果只判"列表在"，就会把正常回合当成强制换人，反复点卡片白白丢回合。
     """
-    # The skill cards' white name plates live in the same area and match the
-    # same "light rounded rect" test. If the skill bar is on screen this is a
-    # normal battle, not the switch panel.
+    # The skill cards' white name plates live in the same area. If the skill bar
+    # is on screen this is a normal battle decision window, not the panel.
     if bar_visible is None:
         x0, y0, x1, y1 = SKILL_BOX
         bar = screen.grab_s((x0, y0, x1 - x0, y1 - y0))
@@ -322,12 +353,29 @@ def find_switch_rows(screen, bar_visible=None):
             bar_visible = False
     if bar_visible:
         return []
-    for box in SWITCH_BOXES:
-        rows = _rows_in_box(screen, box)
-        if len(rows) >= 3:
-            return rows
-    return []
-
+    # A visible turn countdown means the game is still taking our decision, so
+    # the list below is the plain party list, not the forced-replacement panel.
+    # Measured: forced panel -> no countdown (switch_now / battle_now),
+    # normal turn with the same list on screen -> countdown (live5 / live7).
+    if countdown is None:
+        cnt = screen.grab_s(CNT_ROI)
+        countdown = bool(cnt is not None and countdown_visible_crop(cnt))
+    if countdown:
+        return []
+    crop = screen.grab_s(PARTY_BOX)
+    if crop is None or crop.size == 0:
+        return []
+    pts = _star_points(crop)
+    if len(pts) < 3:
+        return []
+    rows = []
+    last_y = None
+    for cx, cy in pts:
+        if last_y is not None and cy - last_y < ROW_MIN_PITCH:
+            continue
+        rows.append((int(PARTY_BOX[0] + cx - 16), int(PARTY_BOX[1] + cy)))
+        last_y = cy
+    return rows[:6]
 
 # ------------------------------------------------------------------ decision
 HEAL_HINTS = ("休息回复", "回复", "治疗")
