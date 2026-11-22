@@ -3,6 +3,22 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S13 槽位锁/自动脱离/应对变身（2026-11-23，commit 8a078b7）
+
+- [x] **SKILL_SLOT_LOCK**：正位宝剑 [0] / 宝剑王牌 [0,2]——锁外槽
+      回落第一个允许槽（🟡 假设：游戏内不可选）
+- [x] **AUTO_SWITCH**：警惕（能量0脱离）/防过载保护（每回合脱离）/
+      奔波鬃（用防御技后脱离）/星地善良（替补 holder 替换能量耗尽者）
+      ——复用 S6.10 脱离路径，turn-end 每侧一次
+- [x] **COUNTER_ACCUMULATE_TRANSFORM**：保卫（防御技应对×2）/
+      腾挪（攻击技应对×1）/好象坏象（状态技应对×1）→ 回满状态 +
+      变身棋绮后（白/黑子按载体名），复用 Pet.rebuild_as
+- [x] 语义澄清：category_filter 匹配**我方应对技**类别（ctx["my_category"]），
+      与被应对方类别（ctx["category"]）分开
+- [x] HANDLERS 35 个；ON_BE_KILLED 时机注册（S12 遗留补齐）
+- 测试：`src/test_s13_slots.py`（13 断言）；基线 15/15 零变化
+- 计划：docs/PLAN_S13_SWITCH.md
+
 ## S12 ABILITY_COMPUTE 开场技能改写（2026-11-23）
 
 - [x] 6 特性：溶解扩散（毒系计数→水系附加中毒）、不移（纯攻击+30%）、
