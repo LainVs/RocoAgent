@@ -3,6 +3,17 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S12 ABILITY_COMPUTE 开场技能改写（2026-11-23）
+
+- [x] 6 特性：溶解扩散（毒系计数→水系附加中毒）、不移（纯攻击+30%）、
+      快锤（能耗<3 迅捷）、暴食（龙系迅捷）、冻土（冰系计数→地系威力）、
+      飓风（翼系共享迅捷 + 被击败魔力-1）
+- [x] 幂等设计：begin_turn 重触发三时机，`_ability_done` 指纹去重
+- [x] ON_BE_KILLED 时机新增；ENEMY_LOSE_ENERGY 支持 target=self_mp
+- [x] HANDLERS 32 个
+- [x] 计划：docs/PLAN_S12_COMPUTE.md
+- 测试：`src/test_s12_compute.py`（12 断言）；基线 15/15 零变化
+
 ## S11 nrc 原语扩展第二批（2026-11-23）
 
 - [x] 7 新原语 / 10 特性：向心力（威力+30）、坠星/观星（星陨印记
