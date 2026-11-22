@@ -896,13 +896,25 @@ def _skill_meta(my_name):
         try:
             for i, sid in enumerate(meta["moves"][:4]):
                 row = db.execute(
-                    "SELECT power, name, priority FROM skills WHERE id=?",
+                    "SELECT power, name, priority, desc FROM skills WHERE id=?",
                     (int(sid),)).fetchone()
                 if row:
                     meta["powers"][i] = row[0] or 0
                     meta["names"][i] = row[1]
                     # 先发制人/守住这类技能 priority > 0，出手顺序在速度之前。
-                    meta["priorities"][i] = row[2] or 0
+                    #
+                    # ⚠ 2026-11-22 实测：`priority` 列**大面积是脏数据** ——
+                    # 918 个技能是 5（含「火云车」「诋毁」这种普通攻击），
+                    # 只有 9 个是 0。真实带先手的只有「先发制人」
+                    # （priority=6，描述写「先手+1」）。
+                    #
+                    # 判据：priority 必须 > 1 **且** 描述明确提到先手/优先。
+                    # 这样既排除 918 个脏的 5，也能覆盖将来补充的真数据。
+                    _pri = row[2] or 0
+                    _desc = row[3] or ""
+                    _real = (_pri > 1
+                             and ("先手" in _desc or "优先" in _desc))
+                    meta["priorities"][i] = _pri if _real else 0
             if not meta["moves"]:
                 # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
                 row = db.execute(
