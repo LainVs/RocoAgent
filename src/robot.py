@@ -1490,10 +1490,13 @@ class Bot:
             # 于是 660 被当成"必杀"。所以再加两条**不依赖对面物种数据**
             # 的兜底：
             #   · 绝对上限 900（PvP 最强单体技能 power 900，打完减伤更小）
-            #   · 对面当前血量的 2.5 倍（卡面是打完减伤的实际值，
-            #     可以远超当前血，只要量级不离谱）
+            #   · 对面最大血量 1.2 倍（`foe_max` 会用 foe_now/foe_pct 反推，
+            #     物种不在库时也有效）
+            #
+            # ⚠ 不要再加"相对当前血量"的判据：卡面伤害是"这一击会打掉
+            # 多少"，本来就该远大于对面剩余血量。实测对面剩 19 血时，
+            # 2.5 倍把 50~200 的卡全挡了，导致**四张卡全部不可读、无法出招**。
             _ABS_MAX_DMG = 900
-            _foe_now = self._foe_now_hp(st)
             if dmg is not None and dmg > _ABS_MAX_DMG:
                 log("SKILL %d damage %d > absolute max %d -> unreadable"
                     % (s["index"], dmg, _ABS_MAX_DMG))
@@ -1501,10 +1504,6 @@ class Bot:
             elif dmg is not None and foe_max and dmg > foe_max * 1.2:
                 log("SKILL %d damage %d > foe max %d * 1.2 -> unreadable"
                     % (s["index"], dmg, foe_max))
-                dmg = None
-            elif dmg is not None and _foe_now and dmg > _foe_now * 2.5:
-                log("SKILL %d damage %d > foe current hp %d * 2.5 "
-                    "-> unreadable" % (s["index"], dmg, _foe_now))
                 dmg = None
             # 耗能必须从**我方技能表**查（my_card_costs），不能用技能名查。
             #
