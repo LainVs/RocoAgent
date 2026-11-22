@@ -44,7 +44,7 @@
 | S3 | 印记 13 种全集、正/负面各 1 条约束、印记触发时机 | ✅ 完成（test_battle_fx） |
 | S4 | 吸血 ✅ / 先手 ✅；迸发/蓄力/打断/传动/过载/巧变/选择 | 需要"跨回合状态机"（蓄力）、技能槽位模型（传动） |
 | S5 | 4 格生命制胜负 ✅、场地亲和【强】±50 ✅（【弱】档无公开数据，未硬造） | 剩【弱】档 + 「无畏」已实现 |
-| S6 | 特性全量（243 条依赖状态机） | 🔄 进行中：本轮新增 6 个 handler（ON_KILL_BUFF/FAINTED_ALLIES_BUFF/ENEMY_LOSE_ENERGY/FREEZE/PARASITE/COUNTER_SUCCESS_DOUBLE_DAMAGE）+ 名字模糊匹配 |
+| S6 | 特性全量 | 🔄 17 个原语 handler；roco 18 条 + nrc 悲悯/晚宴/小偷小摸/圣火骑士等约 40 条特性已生效 |
 | S7 | 解包数据接驳 | 需要跑 rocom-parse（dotnet + CUE4Parse 分支） |
 
 ## 数据源速查
