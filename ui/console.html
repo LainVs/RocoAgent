@@ -339,40 +339,7 @@
           </div>
         </div>
 
-        <!-- 精灵编辑弹层（选性格/个体/技能/HP） -->
-        <div id="simEditor" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center">
-          <div style="background:#fff;border-radius:10px;padding:16px;min-width:520px;max-width:640px;max-height:82vh;overflow:auto;color:#222">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-              <b id="simEdTitle">编辑精灵</b>
-              <button class="btn" id="simEdClose" style="padding:3px 9px">关闭</button>
-            </div>
-            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px">
-              <div>
-                <label style="font-size:10px;color:#888">精灵名</label>
-                <input id="simEdName" list="simDexList" placeholder="输入/选择" style="width:150px">
-                <datalist id="simDexList"></datalist>
-              </div>
-              <div>
-                <label style="font-size:10px;color:#888">性格</label>
-                <select id="simEdNature"></select>
-              </div>
-              <div>
-                <label style="font-size:10px;color:#888">个体值 (0-100)</label>
-                <input id="simEdIv" type="number" value="60" min="0" max="100" style="width:70px">
-              </div>
-              <div>
-                <label style="font-size:10px;color:#888">最大HP覆盖</label>
-                <input id="simEdHp" type="number" placeholder="留空=按公式" style="width:100px">
-              </div>
-            </div>
-            <div id="simEdInfo" style="font-size:11px;color:#555;margin-bottom:8px">—</div>
-            <label style="font-size:10px;color:#888">技能（勾选 4 个，顺序=卡槽顺序）</label>
-            <div id="simEdMoves" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:6px 0 12px;max-height:220px;overflow:auto"></div>
-            <button class="btn primary" id="simEdOk" style="padding:5px 14px">确定</button>
-            <span style="font-size:11px;color:#888;margin-left:8px" id="simEdMsg"></span>
-          </div>
-        </div>
-      </section>
+       </section>
 
       <!-- ══════════ 回合明细 ══════════ -->
       <section class="page" id="page-turns">
@@ -394,6 +361,35 @@
           </div>
         </div>
       </section>
+
+      <!-- 精灵编辑弹层：悬浮窗卡片风 -->
+      <aside class="sim-ed" id="simEditor" hidden>
+        <div class="sim-ed-card">
+          <header class="sim-ed-head">
+            <span class="sim-ed-title" id="simEdTitle">编辑精灵</span>
+            <button class="btn" id="simEdClose">关闭</button>
+          </header>
+          <div class="sim-ed-pet">
+            <div class="sim-ed-avatar" id="simEdAvatar">?</div>
+            <div class="sim-ed-petmain">
+              <input id="simEdName" list="simDexList" placeholder="输入/选择精灵" autocomplete="off">
+              <datalist id="simDexList"></datalist>
+              <div class="sim-ed-meta" id="simEdInfo">先填精灵名</div>
+            </div>
+          </div>
+          <div class="sim-ed-grid">
+            <label>性格<select id="simEdNature"></select></label>
+            <label>个体值<input id="simEdIv" type="number" value="60" min="0" max="100"></label>
+            <label>最大HP<input id="simEdHp" type="number" placeholder="按公式" min="1"></label>
+          </div>
+          <div class="sim-ed-seclab">技能（勾 4 个 · 顺序=卡槽顺序）</div>
+          <div class="sim-ed-moves" id="simEdMoves"></div>
+          <footer class="sim-ed-foot">
+            <button class="btn primary" id="simEdOk">确定</button>
+            <span class="sim-ed-msg" id="simEdMsg"></span>
+          </footer>
+        </div>
+      </aside>
 
     </main>
   </div>

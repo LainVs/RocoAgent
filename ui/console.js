@@ -1673,15 +1673,16 @@ function simRenderSlots() {
   const wrap = $('simSlots');
   wrap.innerHTML = simTeams[simSide].map((p, i) => {
     if (!p) {
-      return `<div class="sim-slot empty" data-i="${i}"
-        style="border:1px dashed var(--line-soft);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:11px;color:var(--ink-3)">
-        + 槽位 ${i + 1}</div>`;
+      return `<div class="sim-slot empty" data-i="${i}">＋ 槽位 ${i + 1}</div>`;
     }
-    return `<div class="sim-slot" data-i="${i}"
-      style="border:1px solid var(--line-soft);border-radius:8px;padding:8px;cursor:pointer;font-size:11px">
-      <b>${p.name}</b><br>
-      <span style="color:var(--ink-3)">IV${p.iv ?? 60} ${p.nature || '无性格'}</span><br>
-      <span style="color:var(--ink-3)">技能 ${(p.moves || []).length} 项${p.max_hp ? ' · HP' + p.max_hp : ''}</span>
+    const av = loadAvatarImg(p.name);
+    return `<div class="sim-slot" data-i="${i}">
+      <div class="ss-head">
+        <div class="ss-av">${av ? `<img src="${av}">` : (p.name || '?').slice(0, 1)}</div>
+        <span class="ss-name">${p.name}</span>
+      </div>
+      <div class="ss-meta">IV${p.iv ?? 60} · ${p.nature || '无性格'} · 技能 ${(p.moves || []).length}</div>
+      <div class="ss-hp"><div class="bar"><i style="width:100%"></i></div></div>
     </div>`;
   }).join('');
   wrap.querySelectorAll('.sim-slot').forEach((el) => {
@@ -1689,15 +1690,36 @@ function simRenderSlots() {
   });
 }
 
-async function openSimEditor(slot) {
-  simEditorSlot = slot;
-  const cur = simTeams[simSide][slot] || {};
-  $('simEdTitle').textContent = `编辑 ${simSide === 'a' ? '我方' : '对方'} 槽位 ${slot + 1}`;
+/* 头像 URL：控制台根下 /portraits/<名>.png（404 时 onerror 兜底首字） */
+function loadAvatarImg(name) {
+  return name ? `${API}/portraits/${encodeURIComponent(name)}.png` : '';
+}
+
+function simRenderEditor() {
+  const cur = simTeams[simSide][simEditorSlot] || {};
+  $('simEdTitle').textContent =
+    `编辑 ${simSide === 'a' ? '我方' : '对方'} 槽位 ${simEditorSlot + 1}`;
   $('simEdName').value = cur.name || '';
   $('simEdIv').value = cur.iv ?? 60;
   $('simEdHp').value = cur.max_hp || '';
+  $('simEdNature').value = cur.nature || '';
+  $('simEdMsg').textContent = '';
+  const av = $('simEdAvatar');
+  const url = loadAvatarImg(cur.name);
+  if (url) {
+    av.innerHTML = `<img src="${url}" onerror="this.remove()">`;
+    av.insertAdjacentHTML('beforeend', (cur.name || '?').slice(0, 1));
+    const img = av.querySelector('img');
+    if (img) img.onerror = () => { img.remove(); };
+    av.firstChild ? av.dataset.fallback = '1' : null;
+  } else {
+    av.textContent = (cur.name || '?').slice(0, 1);
+  }
+}
+
+async function openSimEditor(slot) {
+  simEditorSlot = slot;
   if (!$('simEdNature').options.length) {
-    // 性格表首次拉一次（从任意精灵详情里拿，缓存后不再请求）
     const r = await fetch(API + '/api/sim/species?name=' +
       encodeURIComponent('音速犬'), { cache: 'no-store' });
     const o = await r.json();
@@ -1708,13 +1730,10 @@ async function openSimEditor(slot) {
     $('simDexList').innerHTML = (simDexPool || []).map((n) =>
       `<option value="${n}">`).join('');
   }
-  $('simEdNature').value = cur.nature || '';
-  $('simEdMsg').textContent = '';
+  simRenderEditor();
   $('simEditor').hidden = false;
-  // 技能列表：名字非空才拉
-  const mvWrap = $('simEdMoves');
-  mvWrap.innerHTML = '<span style="color:var(--ink-3);font-size:11px">先填精灵名</span>';
-  if (cur.name) await simLoadMoves(cur.name, cur.moves || []);
+  const cur = simTeams[simSide][slot];
+  if (cur && cur.name) await simLoadMoves(cur.name, cur.moves || []);
 }
 
 async function simLoadMoves(name, checked) {
@@ -1724,20 +1743,19 @@ async function simLoadMoves(name, checked) {
       encodeURIComponent(name), { cache: 'no-store' });
     const o = await r.json();
     if (o.error) {
-      mvWrap.innerHTML = `<span style="color:var(--ink-3)">${o.error}</span>`;
+      mvWrap.innerHTML = `<span style="font-size:11px;color:#B04A3A">${o.error}</span>`;
       $('simEdInfo').textContent = '—';
       return;
     }
     $('simEdInfo').innerHTML =
-      `属性 ${o.types.join('/')} · 特性 ${o.trait} · ` +
+      `属性 <b>${o.types.join('/')}</b> · 特性 <b>${o.trait}</b> · ` +
       `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
       `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
     const want = new Set(checked);
     mvWrap.innerHTML = (o.moves || []).map((m) => `
-      <label style="display:flex;gap:6px;align-items:center;font-size:11px">
-        <input type="checkbox" data-mid="${m.id}"
-          ${want.has(m.id) ? 'checked' : ''}>
-        ${m.name} <span style="color:var(--ink-3)">威力${m.power || 0} 耗${m.cost}</span>
+      <label><input type="checkbox" data-mid="${m.id}"
+        ${want.has(m.id) ? 'checked' : ''}>
+        ${m.name}<span class="mv-pow">${m.power || 0}/${m.cost}</span>
       </label>`).join('');
   } catch (e) {
     mvWrap.innerHTML = '拉取失败：' + e;
