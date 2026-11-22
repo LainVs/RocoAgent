@@ -112,10 +112,10 @@ def _bump_status(pet, key, stacks):
 # ---------------------------------------------------------------- 效果处理
 def _h_self_buff(pet, foe, params, ctx):
     atk, dfn = _norm_stat(params)
-    if atk > 0:
-        pet.atk_buff = max(pet.atk_buff, pet.atk_buff + atk)
-    if dfn > 0:
-        pet.def_buff = max(pet.def_buff, pet.def_buff + dfn)
+    if atk > 0 or dfn > 0:
+        # 走统一入口：**线性叠加 + 封顶 +100%**（力量增效 10 层 = 翻倍）
+        import simulator as _S
+        _S.add_buff(pet, atk, dfn)
     bits = []
     if atk:
         bits.append("物攻 +%d%%" % round(100 * atk))

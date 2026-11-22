@@ -127,6 +127,27 @@ def skill_buff_pct(skill_name):
     return v.get("atk") if v else None
 
 
+# 增益上限 +100%（2026-11-22 用户实测：力量增效叠 10 层 = 物理攻击翻倍，
+# 即每层 +10%、线性叠加）。这是「层数」这个概念的数值边界，
+# 不是随手拍的常数 —— 10 × 10% = 100%。
+BUFF_CAP = 1.0
+
+
+def add_buff(pet, atk=0.0, dfn=0.0):
+    """给精灵叠增益：**线性叠加**并封顶 BUFF_CAP。
+
+    为什么不是 max()：原来的写法是「同名 buff 不叠」，但游戏里
+    `力量增效` 是可以一层层叠到 10 层（= +100%）的。用户实测指出来了。
+    """
+    a = max(0.0, float(atk or 0.0))
+    d = max(0.0, float(dfn or 0.0))
+    if a:
+        pet.atk_buff = min(BUFF_CAP, pet.atk_buff + a)
+    if d:
+        pet.def_buff = min(BUFF_CAP, pet.def_buff + d)
+    return pet.atk_buff, pet.def_buff
+
+
 # ---------------------------------------------------------------- 数据
 
 class Dex:
@@ -880,15 +901,14 @@ class Battle:
         if ka == "buff":
             _v = skill_buff((skill_a or {}).get("name", "")) if skill_a else None
             if _v:
-                # 有官方数值就按官方的来：只加它真的给的那几项
-                me.atk_buff = max(me.atk_buff, _v.get("atk") or 0.0)
-                me.def_buff = max(me.def_buff, _v.get("def") or 0.0)
+                if _v.get("atk") or _v.get("def"):
+                    add_buff(me, _v.get("atk"), _v.get("def"))
                 if _v.get("taken"):
                     me.taken_mult = min(me.taken_mult, 1.0 - _v["taken"])
             else:
                 # 查不到才用中位数兜底（原来 0.0 也会掉进兜底，是错的：
                 # 「防御」这种纯防御技能会被当成 +70% 攻击）
-                me.atk_buff = max(me.atk_buff, ATK_BUFF_MEDIAN)
+                add_buff(me, ATK_BUFF_MEDIAN)
             me.buffed = True
             events.append("我方使用 %s（攻击 +%.0f%% 防御 +%.0f%%）"
                           % ((skill_a or {}).get("name", "蓄力"),
@@ -896,12 +916,12 @@ class Battle:
         if kb == "buff":
             _v = skill_buff((skill_b or {}).get("name", "")) if skill_b else None
             if _v:
-                foe.atk_buff = max(foe.atk_buff, _v.get("atk") or 0.0)
-                foe.def_buff = max(foe.def_buff, _v.get("def") or 0.0)
+                if _v.get("atk") or _v.get("def"):
+                    add_buff(foe, _v.get("atk"), _v.get("def"))
                 if _v.get("taken"):
                     foe.taken_mult = min(foe.taken_mult, 1.0 - _v["taken"])
             else:
-                foe.atk_buff = max(foe.atk_buff, ATK_BUFF_MEDIAN)
+                add_buff(foe, ATK_BUFF_MEDIAN)
             foe.buffed = True
             events.append("对方使用 %s（攻击 +%.0f%% 防御 +%.0f%%）"
                           % ((skill_b or {}).get("name", "蓄力"),
@@ -924,12 +944,14 @@ class Battle:
             v = skill_buff(mv["name"])
             if v and (v.get("atk") or v.get("def") or v.get("taken")):
                 bits = []
-                if v.get("atk"):
-                    owner.atk_buff = max(owner.atk_buff, v["atk"])
-                    bits.append("攻击 +%d%%" % round(100 * v["atk"]))
-                if v.get("def"):
-                    owner.def_buff = max(owner.def_buff, v["def"])
-                    bits.append("防御 +%d%%" % round(100 * v["def"]))
+                if v.get("atk") or v.get("def"):
+                    a, d = add_buff(owner, v.get("atk"), v.get("def"))
+                    if v.get("atk"):
+                        bits.append("攻击 +%d%%（累计 %d%%）"
+                                    % (round(100 * v["atk"]), round(100 * a)))
+                    if v.get("def"):
+                        bits.append("防御 +%d%%（累计 %d%%）"
+                                    % (round(100 * v["def"]), round(100 * d)))
                 if v.get("taken"):
                     owner.taken_mult = min(owner.taken_mult,
                                            1.0 - v["taken"])

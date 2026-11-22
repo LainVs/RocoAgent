@@ -102,18 +102,45 @@ if os.path.exists(str(p2)):
     check(d.get("count", 0) > 30, "含 %d 个变化技能的增益" % d.get("count", 0))
 
 print()
-print("--- 6. 强化等级 / 属性克制（官方口径）---")
-check(abs(S.level_mult(1) - 1.5) < 1e-9,
-      "强化 +1 级 = 1.5 倍（实际 %.2f）" % S.level_mult(1))
-check(abs(S.level_mult(2) - 2.0) < 1e-9,
-      "强化 +2 级 = 2.0 倍（实际 %.2f）" % S.level_mult(2))
-check(abs(S.level_mult(-1) - 2.0 / 3) < 1e-9,
-      "弱化 -1 级 = 2/3（实际 %.3f）" % S.level_mult(-1))
+print("--- 6. 强化等级 / 属性克制（以用户实测为准）---")
+# 用户实测：力量增效叠 10 层 = 物理攻击翻倍 -> 每层 +10%，线性叠加
+check(abs(S.level_mult(1) - 1.1) < 1e-9,
+      "强化 +1 级 = 1.10 倍（实际 %.2f）" % S.level_mult(1))
+check(abs(S.level_mult(10) - 2.0) < 1e-9,
+      "强化 +10 级 = 2.00 倍（实际 %.2f）" % S.level_mult(10))
+check(abs(S.level_mult(-1) - 1 / 1.1) < 1e-9,
+      "弱化 -1 级 = 1/1.1（实际 %.3f）" % S.level_mult(-1))
 check(abs(S.type_effect("火", ["草", "虫"]) - 3.0) < 1e-9,
       "双克制是**加算** 1+1+1 = 3（实际 %.2f）" % S.type_effect("火", ["草", "虫"]))
 check(abs(S.type_effect("火", ["水", "龙"]) - 0.25) < 1e-9,
       "双抵抗是乘算 0.5*0.5 = 0.25（实际 %.2f）"
       % S.type_effect("火", ["水", "龙"]))
+
+print()
+print("--- 7. 增益线性叠加（力量增效 10 层 = 翻倍）---")
+pp = SIM.Pet(dex, "音速犬", iv=60, nature="开朗", invest=["hp", "atk", "spe"])
+qq = SIM.Pet(dex, "冰钻布鲁斯", iv=60, nature="固执",
+             invest=["hp", "atk", "spe"])
+mvx = max(pp.moves, key=lambda m: m["power"])
+d0 = SIM.calc_damage(pp, qq, mvx)
+SIM.add_buff(pp, 0.1)
+d1 = SIM.calc_damage(pp, qq, mvx)
+check(abs(d1 / float(d0) - 1.10) < 0.02,
+      "1 层：x%.2f（应 1.10）" % (d1 / float(d0)))
+for _ in range(4):
+    SIM.add_buff(pp, 0.1)
+d5 = SIM.calc_damage(pp, qq, mvx)
+check(abs(d5 / float(d0) - 1.50) < 0.02,
+      "5 层：x%.2f（应 1.50）" % (d5 / float(d0)))
+for _ in range(5):
+    SIM.add_buff(pp, 0.1)
+d10 = SIM.calc_damage(pp, qq, mvx)
+check(abs(d10 / float(d0) - 2.00) < 0.02,
+      "10 层：x%.2f（应 2.00，用户实测就是翻倍）" % (d10 / float(d0)))
+SIM.add_buff(pp, 0.1)
+check(abs(pp.atk_buff - SIM.BUFF_CAP) < 1e-9,
+      "超过 10 层封顶在 +%.0f%%（实际 %.2f）"
+      % (100 * SIM.BUFF_CAP, pp.atk_buff))
 
 print()
 if bad:
