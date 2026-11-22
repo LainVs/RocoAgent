@@ -184,6 +184,18 @@ def attack_mods(pet, move, first=False, foe_total_cost=None):
             out["power_mult"] *= 1.0 + float(r.get("value") or 0)
         elif kind == "power_bonus":
             out["power_bonus"] += int(r.get("value") or 0)
+    # ★ 灵魂灼伤是**特性**（尖嘴狐仙家族），不是技能 —— skills 表里
+    #   id=200150 是混入行（2026-11-22 用户指出，已移除并备份到
+    #   data/skills_misimported.json）。
+    #   nrc 语义正确：ON_USE_SKILL + element filter —— 冰系技能触发
+    #   灼烧4层 / 火系技能触发冻结2层。_mode_match 不认识 element filter，
+    #   所以这里特判；Battle.step 消费 __apply_status。
+    if trait == "灵魂灼伤" and move:
+        elem = move.get("type") or ""
+        if elem == "冰":
+            out["__apply_status"] = {"burn": 4}
+        elif elem == "火":
+            out["__apply_status"] = {"freeze": 2}
     # 光度换算特判：原文「携带的火系技能获得选择：使用后失去15%生命，
     # 光系技能威力永久+30」。roco-cal 把 mode 写成 fire_skill（数值挂错了
     # 面向），按原文修正：光系威力 +30（flat）；火系使用后自伤 15%

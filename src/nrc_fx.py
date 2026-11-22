@@ -190,7 +190,9 @@ def _bump_status(pet, key, stacks):
     if st is None:
         st = pet.status = {}
     st[key] = st.get(key, 0) + int(stacks)
-    return "%s 获得 %s %d 层" % (pet.name, key, stacks)
+    status_cn = {"poison": "中毒", "burn": "灼烧", "freeze": "冻结",
+                 "parasite": "寄生", "moe": "萌化", "moisture": "湿润"}
+    return "%s 获得%s %d 层" % (pet.name, status_cn.get(key, key), stacks)
 
 
 # ---------------------------------------------------------------- 效果处理
@@ -530,8 +532,11 @@ def status_tick(pet, foe=None):
         if cap:
             dmg = min(dmg, cap * min(n, 5))
         pet.hp = max(0, pet.hp - dmg)
-        out.append("%s 受到 %s 伤害 -%d（剩 %d/%d）"
-                   % (pet.name, key, dmg, pet.hp, pet.max_hp))
+        status_cn = {"poison": "中毒", "burn": "灼烧", "freeze": "冻结",
+                     "parasite": "寄生", "moe": "萌化"}
+        out.append("%s 受到%s伤害 -%d（剩 %d/%d）"
+                   % (pet.name, status_cn.get(key, key), dmg,
+                      pet.hp, pet.max_hp))
         if rule["leech"] and foe is not None and foe.alive:
             before = foe.hp
             foe.hp = min(foe.max_hp, foe.hp + dmg)
@@ -551,6 +556,11 @@ def clear_buffs(pet):
 
     游戏内原文：「增益和减益状态在更换精灵之后会被清除」「精灵下场后
     印记不会消失」。异常状态按同一份原文属于「减益」，一并清掉。
+
+    ★ 同时清掉入场标记（2026-11-22 用户实测纠正）：专注力这类
+      「入场首回合」特性的「入场」是**可轮转的** —— 换下再换上，
+      第一回合攻击照样翻倍。所以换下时重置 _trait_first_done，
+      换上时重新触发。
     """
     pet.atk_buff = 0.0
     pet.def_buff = 0.0
@@ -559,3 +569,4 @@ def clear_buffs(pet):
     pet.taken_mult = 1.0
     pet.status = {}
     pet.buffed = False
+    pet._trait_first_done = False       # 入场标记重置（可轮转）

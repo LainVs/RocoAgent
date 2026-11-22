@@ -1,0 +1,1452 @@
+{
+ "note": "从 skills 表移除的混入行（features 的 id 出现在 skills）",
+ "removed_at": "2026-11-22 17:18:11",
+ "rows": [
+  {
+   "id": 200002,
+   "name": "GM不死",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200000,
+   "name": "GM被动",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280004,
+   "name": "“国王”的威严",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280020,
+   "name": "三鼓作气",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200265,
+   "name": "上古战龙",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200156,
+   "name": "下黑手",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200099,
+   "name": "不移",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200149,
+   "name": "专注力",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200128,
+   "name": "乘风连击",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200152,
+   "name": "仁心",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200141,
+   "name": "付给恶魔的赎价",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280025,
+   "name": "伙伴的力量",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280026,
+   "name": "伙伴的力量",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280027,
+   "name": "伙伴的力量",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280028,
+   "name": "伙伴的力量",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200204,
+   "name": "侵蚀",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200237,
+   "name": "保卫",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200282,
+   "name": "保卫",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200094,
+   "name": "保守派",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800190,
+   "name": "倦怠",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200112,
+   "name": "倾轧",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200074,
+   "name": "偏振",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200161,
+   "name": "做噩梦",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200176,
+   "name": "傲慢",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280021,
+   "name": "先知",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200127,
+   "name": "先锋",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200001,
+   "name": "光之精灵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280014,
+   "name": "全神贯注",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200098,
+   "name": "共鸣",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280013,
+   "name": "养分内循环",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200080,
+   "name": "养分重吸收",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200279,
+   "name": "冥古龙",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200123,
+   "name": "冰封",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200117,
+   "name": "冰钻",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200280,
+   "name": "冲浪",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200120,
+   "name": "冻土",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200103,
+   "name": "刺肤",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200122,
+   "name": "加个雪球",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200146,
+   "name": "助燃",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200077,
+   "name": "勇敢",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200195,
+   "name": "化茧",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200264,
+   "name": "半朽蜜果灵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200134,
+   "name": "双刃",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200095,
+   "name": "双向光速",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200199,
+   "name": "受身",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200243,
+   "name": "变形活画",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200261,
+   "name": "古齿帝牙",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200270,
+   "name": "可烤汪",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200253,
+   "name": "吉利丁片",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200228,
+   "name": "向心力",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200225,
+   "name": "吟游之弦",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200233,
+   "name": "吸灵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200189,
+   "name": "吸积盘",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200125,
+   "name": "咔咔冲刺",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200272,
+   "name": "咕德帽帽",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200262,
+   "name": "哨兵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200162,
+   "name": "噼啪！",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200229,
+   "name": "四轴机床",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200130,
+   "name": "回声定位",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200091,
+   "name": "囤积",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000280,
+   "name": "圣光",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200247,
+   "name": "圣火骑士",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200102,
+   "name": "地脉",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280007,
+   "name": "地脉馈赠",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200138,
+   "name": "坚韧铠甲",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280011,
+   "name": "坠星",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200090,
+   "name": "壮胆",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200186,
+   "name": "复方汤剂",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200215,
+   "name": "多人宿舍",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200260,
+   "name": "夜回犀牛",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280015,
+   "name": "大捞一笔",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200285,
+   "name": "天通地明",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200137,
+   "name": "契约的形状",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200105,
+   "name": "奔波命",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200238,
+   "name": "好象坏象",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200283,
+   "name": "好象坏象",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200180,
+   "name": "威慑",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200143,
+   "name": "嫁祸",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200174,
+   "name": "嫉妒",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200231,
+   "name": "孤傲",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200109,
+   "name": "守护者",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200210,
+   "name": "守望星",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280010,
+   "name": "完全偏振",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200172,
+   "name": "定向精炼",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280017,
+   "name": "宝剑王牌",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200113,
+   "name": "对流",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000336,
+   "name": "将军",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200155,
+   "name": "小偷小摸",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200276,
+   "name": "小光",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200275,
+   "name": "巨鼓象",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200269,
+   "name": "张弛有度",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200213,
+   "name": "得寸进尺",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280019,
+   "name": "御驾亲征",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200163,
+   "name": "快充",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200129,
+   "name": "快锤",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200248,
+   "name": "思维之盾",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200151,
+   "name": "急性子",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000353,
+   "name": "怨恨",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000354,
+   "name": "怨恨",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800506,
+   "name": "恶魔叮",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200257,
+   "name": "恶魔的晚宴",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200145,
+   "name": "悬一线",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200140,
+   "name": "悲悯",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280024,
+   "name": "悼亡",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200157,
+   "name": "惊吓",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200263,
+   "name": "慈母鼠",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200177,
+   "name": "慢热型",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200118,
+   "name": "打雪仗",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200115,
+   "name": "扩散侵蚀",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200255,
+   "name": "扫拖一体",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280012,
+   "name": "抓到你了",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200181,
+   "name": "拨浪鼓",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200218,
+   "name": "指挥家",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200133,
+   "name": "振奋虫心",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200088,
+   "name": "挺起胸脯",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200116,
+   "name": "捉迷藏",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200160,
+   "name": "搜刮",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200201,
+   "name": "擒拿",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200147,
+   "name": "散热",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200246,
+   "name": "整点报时",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200148,
+   "name": "斗技",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200209,
+   "name": "无差别过滤",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200182,
+   "name": "无忧无虑",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200166,
+   "name": "星地善良",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200142,
+   "name": "暗流",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200173,
+   "name": "暴食",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 270001,
+   "name": "暴食",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200191,
+   "name": "最好的伙伴",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200193,
+   "name": "月光审判",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200205,
+   "name": "月牙雪糕",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200082,
+   "name": "木桶戏法",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200197,
+   "name": "机械变式",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200245,
+   "name": "构装契约者",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200239,
+   "name": "栗子壳",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200274,
+   "name": "格斗小八",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200208,
+   "name": "正位宝剑",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200068,
+   "name": "毒尾",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200131,
+   "name": "毒腺",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200158,
+   "name": "毒蘑菇",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200076,
+   "name": "氧循环",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200110,
+   "name": "水翼推进",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280005,
+   "name": "水翼飞升",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200227,
+   "name": "泛音列",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200126,
+   "name": "洁癖",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200114,
+   "name": "洄游",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280001,
+   "name": "浪潮",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200119,
+   "name": "海象冰屋",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200226,
+   "name": "海马头琴",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200107,
+   "name": "浸润",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200267,
+   "name": "涂鸦",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200224,
+   "name": "消波块",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280002,
+   "name": "深层氧循环",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200212,
+   "name": "渗透",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200139,
+   "name": "渴求",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280018,
+   "name": "游弋",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200111,
+   "name": "溶解扩散",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280022,
+   "name": "溶解腐蚀",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200242,
+   "name": "灰色肖像",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200066,
+   "name": "灵力号角",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200150,
+   "name": "灵魂灼伤",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200273,
+   "name": "烟花伯爵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200203,
+   "name": "煤渣草",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200154,
+   "name": "燃烧效率变更",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280003,
+   "name": "爆燃",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200256,
+   "name": "特殊清洁场景",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200284,
+   "name": "玳龟",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200216,
+   "name": "珊瑚骨",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200065,
+   "name": "生命戏法",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200167,
+   "name": "生物电",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200078,
+   "name": "生物碱",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200087,
+   "name": "生长",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200164,
+   "name": "电流刺激",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200252,
+   "name": "留学生",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000335,
+   "name": "癫狂",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200188,
+   "name": "盲从",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200170,
+   "name": "盲拧",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200104,
+   "name": "石天平",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200100,
+   "name": "石头大餐",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280023,
+   "name": "破空",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200089,
+   "name": "碰瓷",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200184,
+   "name": "磁力",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800496,
+   "name": "神秘仪式",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200220,
+   "name": "稀兽花宝",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200217,
+   "name": "穹顶之下",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200271,
+   "name": "空灵斗士",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200085,
+   "name": "系统发育",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200192,
+   "name": "绒粉星光",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200190,
+   "name": "绝对客观",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200268,
+   "name": "绝对秩序",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200108,
+   "name": "缩壳",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000358,
+   "name": "羁绊的力量",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200254,
+   "name": "美拉德反应",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200234,
+   "name": "翼轴",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200240,
+   "name": "耐活王",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200010,
+   "name": "聚魔",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800030,
+   "name": "能量衰退",
+   "power": 0,
+   "type_name": "普通"
+  },
+  {
+   "id": 200236,
+   "name": "腾挪",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200281,
+   "name": "腾挪",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200168,
+   "name": "自发电",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200183,
+   "name": "自由飘",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200136,
+   "name": "花精灵",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200202,
+   "name": "茶多酚",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7000337,
+   "name": "药炉",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200084,
+   "name": "营养液泡",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200153,
+   "name": "蒸汽膨胀",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200235,
+   "name": "虚假宝箱",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280006,
+   "name": "虫群突袭",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200132,
+   "name": "虫群鼓舞",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200187,
+   "name": "蚀刻",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200086,
+   "name": "蛰伏",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200251,
+   "name": "血型吸引",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200106,
+   "name": "观星",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200092,
+   "name": "警惕",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200081,
+   "name": "诈死",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200101,
+   "name": "质朴",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200171,
+   "name": "贪心算法",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200093,
+   "name": "起飞加速",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200214,
+   "name": "超聚能",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200278,
+   "name": "超负荷",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200178,
+   "name": "身经百练",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200219,
+   "name": "连续负荷",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200121,
+   "name": "迟滞",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200232,
+   "name": "逐魂鸟",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200249,
+   "name": "野性感官",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200223,
+   "name": "铃兰晚钟",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200179,
+   "name": "间歇式训练",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200165,
+   "name": "防过载保护",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200241,
+   "name": "陨落",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200144,
+   "name": "障眼交易",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200124,
+   "name": "顺风",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200222,
+   "name": "预警",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200211,
+   "name": "飓风",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800240,
+   "name": "首领免疫",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 7800241,
+   "name": "首领免疫",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200016,
+   "name": "驱能",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 280008,
+   "name": "高浓生物碱",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200266,
+   "name": "麦香驼",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200159,
+   "name": "黑洞",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200096,
+   "name": "鼓气",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 200277,
+   "name": "？",
+   "power": 0,
+   "type_name": null
+  },
+  {
+   "id": 299002,
+   "name": "？？？",
+   "power": 0,
+   "type_name": null
+  }
+ ]
+}

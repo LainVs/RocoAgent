@@ -90,6 +90,8 @@ class Session:
         self.meta = {}
         self.actions = []
         self.seed = 0
+        self.forced_switch = False   # 我方力竭，等待玩家手动选换人
+        self.pick_starter = False    # 开局等待玩家选首发
 
     # ---------------------------------------------------------- 开局
     def new(self, team_a, cfg_a=None, opponent_mode="lineups",
@@ -145,7 +147,14 @@ class Session:
 
     # ---------------------------------------------------------- 操作
     def act(self, action):
-        """执行我方一个动作，敌方由策略自动出招。"""
+        """执行我方一个动作，敌方由策略自动出招。
+
+        ★ 2026-11-22 用户纠正：我方精灵倒下时**不要自动换人**，要让玩家
+        手动选换谁上场（包括开局选首发）。实现：
+          · step 后若我方出战精灵倒下 → 本回合正常结束（敌方照常行动），
+            下回合 begin_turn 前置一个 forced_switch 状态，等玩家选。
+          · 玩家没选之前，任何 skill/energy 动作被拒绝。
+        """
         with self.lock:
             if self.bt is None:
                 return {"error": "还没有开始对局"}
@@ -156,10 +165,33 @@ class Session:
                 return {"error": "状态异常（没有出战精灵）"}
 
             kind = (action or {}).get("kind") or "skill"
-            payload = action.get("i")
-            if kind == "skill":
+
+            # 我方倒下等待玩家选换人
+            if getattr(self, "forced_switch", False):
+                if kind != "switch":
+                    return {"error": "我方精灵已力竭，请先选择上场的精灵",
+                            "state": self.state(forced_switch=True)}
+                payload = action.get("i")
                 try:
                     payload = int(payload)
+                except (TypeError, ValueError):
+                    return {"error": "换人下标非法"}
+                bench = self.bt.bench("a")
+                if not (0 <= payload < len(bench)):
+                    return {"error": "换人下标越界"}
+                self.forced_switch = False
+                # 换上（不走 step：倒下的先换掉已经由 begin_turn 处理，
+                # 这里直接定位 ia 并补满能量）
+                self.bt.ia = bench[payload]
+                self.bt.a[self.bt.ia].energy = SIM.ENERGY_CAP
+                self.actions.append({"turn": self.bt.turn, "kind": "switch",
+                                     "to": self.bt.me.name})
+                self._say("T%d 我方换上 %s" % (self.bt.turn, self.bt.me.name))
+                return self.state(events=["我方换上 " + self.bt.me.name])
+
+            if kind == "skill":
+                try:
+                    payload = int(action.get("i"))
                 except (TypeError, ValueError):
                     return {"error": "技能下标非法"}
                 if not (0 <= payload < len(me.moves)):
@@ -205,21 +237,30 @@ class Session:
             for e in ev:
                 self._say("  " + e)
             if not self.bt.done:
-                self.bt.begin_turn()
+                # 我方出战精灵若已倒下 → 等玩家手动选换人（不自动换）
+                if not self.bt.me.alive:
+                    self.forced_switch = True
+                    self._say("T%d 我方 %s 力竭，请选择上场的精灵"
+                              % (self.bt.turn, self.bt.me.name))
+                else:
+                    self.bt.begin_turn()
             if self.bt.done:
                 self._finish_log()
             return self.state(events=ev)
 
     # ---------------------------------------------------------- 查询
-    def state(self, events=None):
+    def state(self, events=None, forced_switch=None):
         with self.lock:
             if self.bt is None:
                 return {"error": "还没有开始对局"}
             bt = self.bt
+            if forced_switch is None:
+                forced_switch = getattr(self, "forced_switch", False)
             return {
                 "turn": bt.turn,
                 "max_turn": SIM.MAX_TURNS,
                 "energy_gain": SIM.ENERGY_GAIN,
+                "forced_switch": bool(forced_switch),
                 "done": bt.done,
                 "result": ("win" if bt.done == "a"
                            else "lose" if bt.done == "b" else None),
