@@ -1032,7 +1032,9 @@ class Battle:
         for owner, other, mv in ((me, foe, skill_a), (foe, me, skill_b)):
             if mv is None:
                 continue
-            ctx = {"_from_desc": False}
+            ctx = {"_from_desc": False,
+                   "mv_type": mv.get("type") or "",
+                   "mv_cost": mv.get("cost") or 0}
             if not trait_lib.supported_rules(getattr(owner, "trait", None)):
                 events.extend(nrc_fx.trait_fire(owner, other, "ON_USE_SKILL",
                                                 ctx))

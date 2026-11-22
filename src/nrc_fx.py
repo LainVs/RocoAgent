@@ -374,6 +374,26 @@ def _h_fainted_allies_buff(pet, foe, params, ctx):
         pet.name, dead, 100 * a)
 
 
+def _h_steal_all_energy(pet, foe, params, ctx):
+    """STEAL_ALL_ENEMY_ENERGY：回合末偷取敌方能量。
+
+    nrc 数据 params: {"amount": N} —— 每次偷 N 点（毒蘑菇 amount=1，
+    1493 行；另一载体 amount=2，1745 行）。偷光敌队能量的语义是
+    「amount = 对方能量数」的特例，这里按数据实现。
+    """
+    from simulator import ENERGY_CAP
+    if not foe.alive:
+        return None
+    amount = int(params.get("amount") or 1)
+    stolen = min(amount, foe.energy)
+    if stolen <= 0:
+        return None
+    foe.energy -= stolen
+    pet.energy = min(ENERGY_CAP, pet.energy + stolen)
+    return "%s 偷取对方能量 %d（当前 %d，对方剩 %d）" % (
+        pet.name, stolen, pet.energy, foe.energy)
+
+
 def _h_entry_per_skill(pet, foe, params, ctx):
     """入场时按「携带的技能里满足条件的个数」叠加。"""
     per = params.get("per_count") or {}
@@ -403,6 +423,52 @@ def _h_on_kill_buff(pet, foe, params, ctx):
     return "%s 击杀获得双攻 +%.0f%%" % (pet.name, 100 * atk)
 
 
+def _h_on_skill_element_buff(pet, foe, params, ctx):
+    """ON_SKILL_ELEMENT_BUFF（助燃/爆燃）：使用特定系别技能后获得属性增益。
+
+    params: {"element": "火", "buff": {"atk": 0.2, "spatk": 0.3}}
+    ctx["mv_type"] = 当前使用的技能系别（由 Battle.step 传入）。
+    """
+    want = params.get("element") or ""
+    mv_type = (ctx or {}).get("mv_type") or ""
+    if not mv_type or mv_type != want:
+        return None
+    return _apply_buff_pair(
+        pet, params.get("buff") or {},
+        "%s " + want + "\u7cfb\u6280\u80fd\u540e\u83b7\u5f97\u53cc\u653b +%d%%")
+
+
+def _h_energy_cost_condition_buff(pet, foe, params, ctx):
+    """ENERGY_COST_CONDITION_BUFF（鼓气/三鼓作气）：使用能耗 N 的技能后获得增益。
+
+    params: {"cost": 3, "buff": {"atk": 0.2, "def": 0.2}}
+    三鼓作气 permanent=True → 永久（模拟器 buff 本就不衰减，无需区分）。
+    ctx["mv_cost"] = 当前技能能耗（由 Battle.step 传入）。
+    """
+    want = int(params.get("cost") or 0)
+    mv_cost = int((ctx or {}).get("mv_cost") or 0)
+    if want and mv_cost != want:
+        return None
+    return _apply_buff_pair(
+        pet, params.get("buff") or {},
+        "%s \u80fd\u8017" + str(want) + "\u6280\u80fd\u540e\u83b7\u5f97\u53cc\u653b\u53cc\u9632 +%d%%")
+
+
+def _apply_buff_pair(pet, buff, label):
+    """把 {"atk": x, "spatk": y, "def": z} 加到 pet，返回事件文本或 None。
+
+    label 是完整模板（含 %s/%d 槽位），例如：
+      "%s 火系技能后获得双攻 +%d%%"
+    """
+    atk = float(buff.get("atk") or 0) + float(buff.get("spatk") or 0)
+    dfn = float(buff.get("def") or 0)
+    if not (atk or dfn):
+        return None
+    import simulator as _S
+    _S.add_buff(pet, atk, dfn)
+    return label % (pet.name, round(100 * max(atk, dfn)))
+
+
 HANDLERS = {
     "SELF_BUFF": _h_self_buff,
     "ENEMY_DEBUFF": _h_enemy_debuff,
@@ -424,6 +490,16 @@ HANDLERS = {
     # `ON_KILL_BUFF`：击杀后获得增益（恶魔的晚餐：双攻 +50%）。
     # 由 Battle.step 在对手倒下时触发。
     "ON_KILL_BUFF": _h_on_kill_buff,
+    # `ON_SKILL_ELEMENT_BUFF`（助燃/爆燃）：使用特定系别技能后获得属性增益
+    # params: {"element": "火", "buff": {"atk": 0.2, "spatk": 0.2}}
+    # ctx["mv_type"] 必须由 Battle.step 传入，否则不触发（避免误加 buff）
+    "ON_SKILL_ELEMENT_BUFF": _h_on_skill_element_buff,
+    # `ENERGY_COST_CONDITION_BUFF`（三鼓作气/鼓气）：使用能耗3的技能后加增益
+    # params: {"cost": 3, "buff": {"atk": 0.2, "def": 0.2}, "permanent": true}
+    # ctx["mv_cost"] 必须由 Battle.step 传入
+    "ENERGY_COST_CONDITION_BUFF": _h_energy_cost_condition_buff,
+    # `STEAL_ALL_ENEMY_ENERGY`（毒蘑菇/大捞一把）：偷取对方全部能量
+    "STEAL_ALL_ENEMY_ENERGY": _h_steal_all_energy,
     # `ENEMY_LOSE_ENERGY`（飓风/小偷小摸/做噩梦）：对手换上时被吸能量。
     # 由 Battle 换人分支触发。
     "ENEMY_LOSE_ENERGY": _h_enemy_lose_energy,
