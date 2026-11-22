@@ -1397,6 +1397,34 @@ class Battle:
                 foe.charging = 0
                 charge_release["b"] = True
                 events.append("对方 %s 蓄力完成，释放！" % mv_b["name"])
+        # 听桥威力镜像（S6.13）+ 奉献威力加成（S6.13）—— 在 acts 出手前
+        for _side, _my, _foe in (("a", me, foe), ("b", foe, me)):
+            if not counter_first.get(_side):
+                continue
+            _mv = skill_a if _side == "a" else skill_b
+            if _mv and _mv.get("name") == "听桥":
+                _omv = skill_b if _side == "a" else skill_a
+                if _omv and (_omv.get("power") or 0) > 0:
+                    _mv["power"] = _omv["power"]
+                    _mv["type"] = _omv.get("type") or _mv.get("type")
+                    skip_act[_side] = False
+                    events.append("%s 听桥镜像 %s（威力 %d）"
+                                  % ("我方" if _side == "a" else "对方",
+                                     _omv["name"], _omv["power"]))
+        for _side, _pet in (("a", me), ("b", foe)):
+            _cnt = self.devotion.get(_side, 0)
+            if _cnt <= 0:
+                continue
+            _mv = skill_a if _side == "a" else skill_b
+            if _mv and _mv.get("power", 0) > 0:
+                _mv_desc = (_skill_desc(_mv.get("id")) if _mv.get("id")
+                            else "") or ""
+                if "受奉献影响" in _mv_desc:
+                    _bonus = _cnt * 20
+                    _mv["power"] = _mv.get("power", 0) + _bonus
+                    events.append("奉献威力 +%d（累计 %d 次）"
+                                  % (_bonus, _cnt))
+        # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
         if (not switched_a and not skip_act["a"] and ka == "skill"
                 and pa is not None and pa < len(me.moves)):
             # 蓄力中的回合：只有正在释放蓄力完成技的才出手，其他技不上
@@ -1426,22 +1454,8 @@ class Battle:
                 else:
                     events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"
                                   % (enemy_cost_up.get("b", 0), mv["name"]))
-        # 听桥威力镜像（S6.13）：应对攻击成功 → 威力=对方技能威力
-        for _side, _my, _foe in (("a", me, foe), ("b", foe, me)):
-            if not counter_first.get(_side):
-                continue
-            _mv = skill_a if _side == "a" else skill_b
-            if _mv and _mv.get("name") == "听桥":
-                _omv = skill_b if _side == "a" else skill_a
-                if _omv and (_omv.get("power") or 0) > 0:
-                    _mv["power"] = _omv["power"]     # 威力镜像
-                    _mv["type"] = _omv.get("type") or _mv.get("type")
-                    events.append("%s 听桥镜像 %s（威力 %d）"
-                                  % ("我方" if _side == "a" else "对方",
-                                     _omv["name"], _omv["power"]))
         # 迅捷技追加到 acts（优先于所有普通出手 —— 原文：入场立即使用）
         acts.extend(swift_acts)
-        # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
         # （原文：先手度更高的技能忽略速度差异优先释放，可叠加），
         # 再按速度；速度相同则随机（不能固定偏向 A，否则自对弈 100% 偏 A）。
         #
