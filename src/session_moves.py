@@ -244,12 +244,30 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     db = sqlite3.connect(DB)
     try:
-        vocab = [r[0] for r in db.execute(
+        # ★ 2026-11-23：候选词优先限定**这只精灵自己的技能池**。
+        #
+        # 为什么（实机实测）
+        # ----------------
+        # 全库 1269 个技能词表里匹配，实机 4:3 缩放后字更小，实测；
+        #     正确技能读成"岩脉崩段" -> 0.750（被 0.90 门槛拒绝）
+        #     单个字"月" -> 拉去"月蚀" 0.830（可能误配）
+        # 而 my_team 里这只精灵只有 4 个技能，词表缩到 4 个后：
+        #     任何 1 字偏差都更容易识别（分母小），且**不可能配到别的精灵的技能**。
+        #
+        # 策略：先用"这只精灵可学技能"当词表（几十个），匹配不到再退全库。
+        own = [r[0] for r in db.execute(
+            """SELECT DISTINCT s.name FROM species_skills ss
+               JOIN species sp ON sp.id = ss.species_id
+               JOIN skills s ON s.id = ss.skill_id
+               WHERE sp.name = ? AND s.name IS NOT NULL""", (pet,))]
+        vocab = own or [r[0] for r in db.execute(
             "SELECT DISTINCT name FROM skills WHERE name IS NOT NULL")]
     finally:
         db.close()
     name, sc = ocr_cn.Ocr.match(raw, vocab)
-    if name and sc >= BAND_MIN_CONF:
+    # 词表小时门槛可以放宽（分母小，1 字偏差对应的分数更高也更可信）
+    thr = 0.80 if len(vocab) < 60 else BAND_MIN_CONF
+    if name and sc >= thr:
         with _LOCK:
             confirm(pet, slot, name, src="band")
         _BAND_LAST[key] = (name, sc, now)
