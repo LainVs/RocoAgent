@@ -36,6 +36,22 @@ sys.path.insert(0, os.path.join(ROOT, "src"))
 
 import paths  # noqa: E402
 
+# S5 全量技能表（roco-cal）。懒加载，一次性读进内存。
+_S5 = {"path": os.path.join(ROOT, "data", "s5_skills.json"),
+       "pets": None}
+
+
+def _s5_pets():
+    """{"冰钻布鲁斯": {"id","skills":[{"name","unlock"}]}, ...}，读不到就给空 dict。"""
+    if _S5["pets"] is None:
+        try:
+            with io.open(_S5["path"], encoding="utf-8") as fh:
+                _S5["pets"] = json.load(fh).get("pets") or {}
+        except Exception:
+            _S5["pets"] = {}
+    return _S5["pets"]
+
+
 MAX_TURNS = 60          # 单局上限，防死循环
 ENERGY_CAP = 10
 ENERGY_GAIN = 2         # 聚能一次 +2（实测值）
@@ -184,7 +200,6 @@ class Dex:
 
     def resolve_skill(self, ref):
         """按 **id 或名字** 取一个技能（含 power=0 的辅助技能）。
-
         为什么单独要这一步（2026-11-22，接真实玩家阵容时发现）
         ------------------------------------------------------
         `moves(species_id)` 只返回「该精灵的学法表 ∩ power>0」，两个限制
@@ -222,6 +237,46 @@ class Dex:
                 "cost": int(row["cost"] or 0),
                 "type": row["type_name"]}
 
+    def skills_for(self, name, with_meta=False):
+        """某只精灵的**完整**可学技能表（S5 优先）。
+
+        为什么不用 moves()（2026-11-22，用户指出两件事）
+        ------------------------------------------------
+        `moves()` = 「species_skills ∩ power>0 ∩ LIMIT 8」，两个后果：
+
+          · "可选的技能组似乎不太全"：冰钻布鲁斯库里 45 个技能，
+            编辑器只给 8 个；
+          · 力量增效 / 防御 / 有效预防这些 power=0 的辅助技能，
+            **一个都点不到**（被 power>0 过滤掉了）。
+
+        而且 `species_skills` 是旧赛季的：冰钻布鲁斯有「跺地」没有「扬沙」，
+        而 S5（roco-cal 权威源，`254冰钻布鲁斯.json`）正好相反 ——
+        用户点名了这个错。
+
+        所以这里优先读 `data/s5_skills.json`
+        （scripts/build_s5_skills.py 从 roco-cal 生成，659 只 / 29163 条），
+        查不到再退回 moves()。返回按威力降序，power=0 的排最后，
+        和游戏里的技能面板顺序一致。
+        """
+        out = []
+        seen = set()
+        s5 = _s5_pets().get(name)
+        if s5:
+            for s in s5.get("skills") or []:
+                mv = self.resolve_skill(s.get("name"))
+                if not mv or mv["id"] in seen:
+                    continue
+                seen.add(mv["id"])
+                if with_meta:
+                    mv = dict(mv, unlock=s.get("unlock") or "")
+                out.append(mv)
+        if not out:
+            sp = self.species(name)
+            if sp:
+                out = self.moves(sp["id"], limit=64)
+        out.sort(key=lambda m: (-int(m.get("power") or 0), m["name"]))
+        return out
+
 
 # ---------------------------------------------------------------- 战斗单位
 
@@ -241,7 +296,10 @@ class Pet:
             恶魔狼   hp/atk/speed=60, spa/def/spd=0, 开朗 -> 6/6 命中
 
         官方 800 只使用率数据同样印证：每只精灵只有 2~3 项有投资
-        （音速犬：物攻 82.8% / 速度 81.7% / 精力 62.5%，后三项都 <32%）。
+        （音速犬：物攻 82.8% / 速度 81.7% / 生命 62.5%，后三项都 <32%）。
+        ⚠ 那份官方文件把这一项写成「精力」，但它是 HP 属性；
+        游戏内天分面板和阵容数据（rocom-data 1014 只）都叫「生命」，
+        所以界面显示统一用生命，解析两种写法都认。
 
         invest：[项名...] 要投 60 的项（"hp"/"atk"/"spa"/"def"/"spd"/"spe"），
                 缺省 ["hp","atk","spe"]（天梯最常见的攻速体三投资）。

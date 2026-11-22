@@ -1669,9 +1669,31 @@ let simSide = 'a';
 let simDexPool = [];
 let simEditorSlot = -1;
 
-/* 三项投资的显示名（PvP 建模：每只精灵只投三项，其余为 0） */
-const SIM_STAT_CN = { hp: '精力', atk: '物攻', spa: '魔攻',
+/* 六项能力的显示名（PvP 建模：每只精灵只投三项，其余为 0）。
+   ★ 2026-11-22 用户指出：HP 在这游戏里叫「生命」，不是「精力」。
+   精力是我们从官方使用率数据里抄来的旧写法；游戏内天分面板用的是
+   生命，rocom-data 的阵容数据（从游戏阵容码导出）也是 100% 用「生命」
+   （1014 只里 904 只带这一项，0 只写精力）。所以显示统一用生命，
+   解析时两种写法都认（见 lineup_lib.TALENT）。 */
+const SIM_STAT_CN = { hp: '生命', atk: '物攻', spa: '魔攻',
                       def: '物防', spd: '魔防', spe: '速度' };
+/* statmodel.natures() 的键 -> 中文（用于性格「↑什么 ↓什么」） */
+const SIM_NAT_CN = { hp: '生命', patk: '物攻', matk: '魔攻',
+                     pdef: '物防', mdef: '魔防', spd: '速度' };
+
+/* 性格名后面标出提升/降低什么：开朗 ↑速度 ↓魔攻
+   倍率表来自服务端（statmodel.natures() 的 31 项），不手写。 */
+function simNatureLabel(name) {
+  const m = simNatureTable[name];
+  if (!m) return name;
+  const up = [], down = [];
+  Object.keys(m).forEach((k) => {
+    if (m[k] > 1.001) up.push(SIM_NAT_CN[k] || k);
+    else if (m[k] < 0.999) down.push(SIM_NAT_CN[k] || k);
+  });
+  if (!up.length && !down.length) return `${name}（六项无变化）`;
+  return `${name} ↑${up.join('/') || '—'} ↓${down.join('/') || '—'}`;
+}
 
 function simRenderSlots() {
   const wrap = $('simSlots');
@@ -1730,19 +1752,19 @@ async function openSimEditor(slot) {
     const r = await fetch(API + '/api/sim/species?name=' +
       encodeURIComponent('音速犬'), { cache: 'no-store' });
     const o = await r.json();
+    if (o.nature_table) simNatureTable = o.nature_table;
     const nats = o.natures || [];
     $('simEdNature').innerHTML =
       '<option value="">— 无性格 —</option>' +
-      nats.map((n) => `<option>${n}</option>`).join('');
-    if (o.nature_table) simNatureTable = o.nature_table;
+      nats.map((n) => `<option value="${n}">${simNatureLabel(n)}</option>`)
+        .join('');
     $('simDexList').innerHTML = (simDexPool || []).map((n) =>
       `<option value="${n}">`).join('');
     // 三项投资 checkbox（PvP 规则：只选三项投满，其余 0）
     $('simEdInvest').innerHTML =
       ['hp', 'atk', 'spa', 'def', 'spd', 'spe'].map((k) => `
         <label class="iv-chip"><input type="checkbox" data-stat="${k}">
-          ${({ hp: '精力', atk: '物攻', spa: '魔攻',
-              def: '物防', spd: '魔防', spe: '速度' })[k]}</label>`).join('');
+          ${SIM_STAT_CN[k]}</label>`).join('');
     $('simEdInvest').querySelectorAll('input').forEach((c) =>
       c.addEventListener('change', () => { simEnforceThree(); simUpdatePanel(); }));
     ['simEdIv', 'simEdHp'].forEach((id) =>
@@ -1836,8 +1858,10 @@ async function simLoadMoves(name, checked, names) {
       `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
       `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
     const want = new Set(checked);
+    $('simEdMoveLab').textContent =
+      `技能（可学 ${(o.moves || []).length} 个 · 勾 4 个 · 顺序=卡槽顺序）`;
     let html = (o.moves || []).map((m) => `
-      <label><input type="checkbox" data-mid="${m.id}"
+      <label title="${(m.type || '')}${m.unlock ? ' · ' + m.unlock : ''}"><input type="checkbox" data-mid="${m.id}"
         ${want.has(m.id) ? 'checked' : ''}>
         ${m.name}<span class="mv-pow">${m.power || 0}/${m.cost}</span>
       </label>`).join('');

@@ -61,6 +61,27 @@ button, input, select {
   color: inherit;
 }
 
+/* ★ 表单控件必须显式给底色/文字色（2026-11-22 用户截图：整条工具条
+   "什么都看不到"，只剩几根白条）。
+   原因：我们在上面写了 `color: inherit`（= 浅色 --ink-1），但 <select>
+   和 <input> 的背景仍是 **UA 默认的白**，于是白底浅字 = 隐形。
+   深色主题下所有下拉/输入框都要有明确的 bg + color；
+   浅色弹窗（.sim-ed-card）自己在 .sim-ed-grid select 里覆盖了，
+   选择器权重更高，不受影响。 */
+select,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]) {
+  background: var(--bg-3);
+  color: var(--ink-0);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+select:focus,
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus {
+  outline: none;
+  border-color: var(--accent-soft);
+}
+select option { background: var(--bg-3); color: var(--ink-0); }
+
 /* ── 布局骨架 ───────────────────────────────────────── */
 .app {
   display: grid;
@@ -1314,6 +1335,9 @@ input:focus-visible,
 .sim-ed-moves {
   display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
   margin-bottom: 16px;
+  /* 冰钻布鲁斯 S5 有 47 个可学技能，两列就是 24 行 —— 必须限高可滚，
+     否则编辑器的保存按钮被顶到看不见的地方 */
+  max-height: 280px; overflow-y: auto; padding-right: 4px;
 }
 .sim-ed-moves label {
   display: flex; gap: 7px; align-items: center;

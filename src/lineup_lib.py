@@ -37,6 +37,11 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import paths  # noqa: E402
 
 # 三项天赋：中文字段 -> simulator.Pet 的 invest 键
+#
+# ⚠ 「生命」是游戏内的正式叫法（天分面板 + 阵容码导出都用它，
+# rocom-data 1014 只里 904 只写「生命」，0 只写「精力」）。
+# 「精力」只在 rkpp-official 的使用率统计文件里出现，指的是同一个
+# HP 属性，所以两种都收；界面显示统一用「生命」。
 TALENT = {
     "生命": "hp", "精力": "hp", "体力": "hp",
     "物攻": "atk", "攻击": "atk",

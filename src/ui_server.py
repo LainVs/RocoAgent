@@ -1264,17 +1264,21 @@ def sim_lineup_get(i):
     cfg = []
     unresolved = []
     for c in lu["cfg"]:
-        ids = []
+        ids, names = [], []
         for nm in c.get("moves") or []:
             m = dex.resolve_skill(nm)
-            if m:
-                ids.append(m["id"])
-            else:
+            if not m:
                 unresolved.append(nm)
+                continue
+            ids.append(m["id"])
+            # 名字必须与 id **一一对应**：之前只收 id、名字却整份返回，
+            # 一旦有技能解析失败两边就错位，编辑器里就会出现
+            # 「技能#7030480」（前端拿 names[k] 拿到 undefined）。
+            names.append(nm)
         cfg.append({"name": c["name"], "nature": c.get("nature"),
                     "invest": c.get("invest") or ["hp", "atk", "spe"],
                     "moves": ids,
-                    "skill_names": c.get("moves") or []})
+                    "skill_names": names})
     return {"ok": True, "title": lu["title"], "author": lu["author"],
             "blood_magic": lu["blood_magic"], "source": lu["source"],
             "team": lu["team"], "cfg": cfg,
@@ -1303,7 +1307,8 @@ def sim_species_detail(name):
                  "pdef": base[3], "mdef": base[4], "spd": base[5]},
         "panel_iv60": panel_std,
         "panel_default": p.panel(),
-        "moves": dex.moves(s["id"]),
+        # 完整技能表（S5，47 个也照样给全，含 power=0 的辅助技能）
+        "moves": dex.skills_for(s["name"], with_meta=True),
         "natures": sorted(k for k in _S.natures().keys() if k != "neutral"),
         # 性格倍率表（前端面板预览要用，避免前端手抄一份 31 项表抄错）
         "nature_table": {k: v for k, v in _S.natures().items()
