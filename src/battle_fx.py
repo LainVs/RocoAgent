@@ -399,3 +399,31 @@ def set_mark(side_marks, mark_id):
     side_marks[mark_id] = int(side_marks.get(mark_id, 0) or 0) + 1
     return mark_id, gone
 
+
+
+# ------------------------------------------------------------- 脱离
+# 原文：「精灵离场，并选择队伍里一只其他精灵替换入场。本回合入场的
+# 精灵免疫此效果。」—— 使用后走换人路径（消耗该技能回合）。
+#
+# ⚠ 名字不做字面量匹配：「潜水遁」是 4 字名（尾字 U+9003），
+# 手写字面量容易漏字导致 resolve 失败 —— 统一按 desc 特征构建：
+# 「自己/随后/行动一次后 … 脱离」或以「脱离」开头，排除「敌方脱离」。
+_LEAVE_SET = None
+
+
+def leave_skills(dex):
+    """主动脱离技名集合（懒加载；13 个）。"""
+    global _LEAVE_SET
+    if _LEAVE_SET is None:
+        rows = dex.db.execute(
+            "SELECT name, desc FROM skills WHERE desc LIKE '%脱离%' "
+            "AND power=0").fetchall()
+        out = set()
+        for r in rows:
+            desc = r["desc"] or ""
+            if "敌方脱离" in desc:
+                continue
+            if re.search(r"(自己|随后|行动一次后).*脱离", desc) or                     desc.strip().startswith("脱离"):
+                out.add(r["name"])
+        _LEAVE_SET = out
+    return _LEAVE_SET

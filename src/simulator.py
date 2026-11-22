@@ -994,7 +994,36 @@ class Battle:
             events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
                                             "ON_USE", ctx))
             import cond_fx
-            dv = nrc_fx.desc_effects(mv.get("name") or "")
+            # 脱离（S6.10）：power=0 且在 leave_skills 集合 → 走换人路径
+            # （自己离场，替补入场，本回合入场的精灵免疫离场效果——
+            # mark_switch_in 由 step("switch") 处理）
+            # ⚠ tag 必须在 owner 替换之前记（脱离后 owner 指向新精灵）
+            import battle_fx as _bfx
+            if mv.get("name") in _bfx.leave_skills(self.dex):
+                _tag = "我方" if owner is me else "对方"
+                side_lv = "a" if owner is me else "b"
+                bench_lv = self.bench(side_lv)
+                if bench_lv:
+                    old_lv = owner.name
+                    if owner is me:
+                        nrc_fx.clear_buffs(me)
+                        self.ia = bench_lv[0]
+                        self.a[self.ia].energy = ENERGY_CAP
+                        me = self.a[self.ia]
+                        switched_a = True
+                    else:
+                        nrc_fx.clear_buffs(foe)
+                        self.ib = bench_lv[0]
+                        self.b[self.ib].energy = ENERGY_CAP
+                        foe = self.b[self.ib]
+                        switched_b = True
+                    events.append("%s 使用 %s 脱离，%s 换上 %s"
+                                  % (_tag, mv["name"], old_lv, owner.name))
+                    continue
+                else:
+                    events.append("%s 没有可换的替补，%s 脱离失败"
+                                  % (_tag, mv["name"]))
+                    continue
             target_of = foe if owner is me else me
 
             # 蓄力：选了蓄力技 → 本回合蓄力（不攻击），下回合才能释放
@@ -1009,6 +1038,7 @@ class Battle:
             # 条件型状态施加（灵魂灼伤/溶解扩散/溶解腐蚀）：
             # 按本次技能系别选状态，优先于无条件 status
             import cond_fx
+            dv = nrc_fx.desc_effects(mv.get("name") or "")
             cond = cond_fx.cond_status_apply(mv.get("name") or "",
                                              mv.get("type") or "")
             st = dict(dv.get("status") or {})
