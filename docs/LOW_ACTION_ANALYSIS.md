@@ -81,3 +81,17 @@ selfcheck 报 robot.lock 空闲、但文件里写着 PID 360800 —— 查证后
 文件锁的设计本来就防了这一手。（自检工具的 PID 检测走了三次弯路：
 OpenProcess 对已回收 PID 误报存活、tasklist 的本地化"无任务"输出
 破坏字符串匹配——最终 EnumProcesses 才是权威。）
+
+---
+
+## 附：板子离线排查（2026-11-22 21:30）
+
+实盘首局后 BOARD OFFLINE 持续 1080s。查串口：
+
+    COM5 / COM6  vid=0x0000 pid=0x0000  desc='标准串口'
+    （板子的 ESP32-S3 CDC 应为 vid=0x303A pid=0x1001）
+    usb_link.find_port() -> None
+
+结论：板子物理断开/断电（或 Windows 没枚举出 USB 身份）。**不是代码
+问题**——usb_link 的 VID/PID 匹配逻辑正常，等板子重新插好/上电即可
+自动重连。历史参考：正常时板子在 COM8，vid=0x303A。
