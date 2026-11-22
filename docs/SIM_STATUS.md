@@ -3,6 +3,17 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S20 校准表接进预测链路（2026-11-23）
+
+- [x] `src/foe_calib.py`：k(foe_name) 加载 S19 校准表，未知对手 1.0
+- [x] policy_v2.decide：skills dmg × k(foe)——kill/trade 阈值收紧
+      （寂灭骨龙 300 伤害 ×0.34=102 不再误判必杀）
+- [x] policy_v2.best_damage_from 同步缩放（换人路径估算）
+- [x] 验证：decide why 字符串可见缩放（"102 dmg" = 300×0.34）；
+      未知对手行为完全不变
+- 测试：`src/test_s20_calib.py`（8 断言）；基线 15/15 零变化
+- 测试坑备忘：`"kill" in why` 会命中 "s**kill**"——用 "kills"
+
 ## S19 实战伤害校准表（2026-11-23，commit e9a9242）
 
 - [x] per-foe 承伤系数：40 观测（卡牌预览 V × foe_pct 差分）→
