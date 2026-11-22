@@ -836,8 +836,21 @@ class Battle:
                 # 技能：接受**id 或名字**，顺序 = 卡槽顺序。
                 # 真实玩家阵容（lineup_lib）给的是名字，UI 给的是 id，
                 # 统一走 Dex.resolve_skill（含 power=0 的辅助技能）。
-                picked = [self.dex.resolve_skill(x) for x in c["moves"]]
-                picked = [m for m in picked if m]
+                # ★ resolve 失败时用 desc_fx/authority_fx 的效果构造
+                #   虚拟技能条目（power=0），确保 heal/buff 等不丢——
+                #   氧循环 heal 回复 0 就是这条路径漏了。
+                picked = []
+                import nrc_fx as _nfx
+                for x in c["moves"]:
+                    mv = self.dex.resolve_skill(x)
+                    if mv:
+                        picked.append(mv)
+                    else:
+                        fx = _nfx.desc_effects(str(x))
+                        if fx:
+                            picked.append({"id": 0, "name": str(x),
+                                           "power": 0, "cost": 0,
+                                           "type": None})
                 if picked:
                     p.moves = picked[:8]
             if c.get("max_hp"):
@@ -1070,6 +1083,33 @@ class Battle:
                     continue
             target_of = foe if owner is me else me
 
+            dv = nrc_fx.desc_effects(mv.get("name") or "")
+            # authority heal_pct/buff_atk/buff_def（S7.3）：
+            # power>0 的攻击技也可能带这些效果（氧循环=魔伤+回复10%）
+            # 放在蓄力检查之前，所有技能统一消费
+            _heal = dv.get("heal_pct")
+            if _heal and owner.alive:
+                _before = owner.hp
+                owner.hp = min(owner.max_hp,
+                               owner.hp + max(1, int(owner.max_hp * _heal)))
+                if owner.hp > _before:
+                    events.append("%s 回复 %d（剩 %d/%d）"
+                                  % ("我方" if owner is me else "对方",
+                                     owner.hp - _before,
+                                     owner.hp, owner.max_hp))
+            _ba = dv.get("buff_atk")
+            _bd = dv.get("buff_def")
+            if _ba or _bd:
+                add_buff(owner, _ba or 0, _bd or 0)
+                owner.buffed = True
+                _bits = []
+                if _ba:
+                    _bits.append("攻击 +%.0f%%" % (100 * _ba))
+                if _bd:
+                    _bits.append("防御 +%.0f%%" % (100 * _bd))
+                events.append("%s %s 属性提升（%s）"
+                              % ("我方" if owner is me else "对方",
+                                 mv["name"], "、".join(_bits)))
             # 蓄力：选了蓄力技 → 本回合蓄力（不攻击），下回合才能释放
             is_charge = mv.get("name") in cond_fx.charge_skills(self.dex)
             if is_charge and getattr(owner, "charging", 0) == 0:
@@ -1079,10 +1119,10 @@ class Battle:
                               % ("我方" if owner is me else "对方",
                                  mv["name"]))
                 continue            # 蓄力回合不攻击
+
             # 条件型状态施加（灵魂灼伤/溶解扩散/溶解腐蚀）：
             # 按本次技能系别选状态，优先于无条件 status
             import cond_fx
-            dv = nrc_fx.desc_effects(mv.get("name") or "")
             cond = cond_fx.cond_status_apply(mv.get("name") or "",
                                              mv.get("type") or "")
             st = dict(dv.get("status") or {})
