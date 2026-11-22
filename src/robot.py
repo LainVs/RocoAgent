@@ -772,6 +772,39 @@ class Bot:
                 self._lobby_since = None
                 if self.match_started is None:
                     if live:
+                        # ★ 2026-11-22：幻影局防线（docs/LOW_ACTION_ANALYSIS.md）
+                        #
+                        # A 类幻影局（16 场 0 秒 END）的共性：上一局残留的
+                        # 0 血/换人面板帧让 battle=True，START 被误判，
+                        # 之后 battle 立刻转 False → 0 秒 END 污染统计。
+                        # 防线：START 必须伴随"我方血量可读且 >0"或
+                        # "对面血量可读"——真对局的 HUD 一定画得出这两条，
+                        # 残留帧通常只画出一边或全 None。
+                        my_live = (st.get("my_pct") is not None
+                                   and st["my_pct"] > 0.5)
+                        foe_live = (st.get("foe_pct") is not None
+                                    and st["foe_pct"] > 0.5)
+                        if not (my_live and foe_live):
+                            if now - getattr(self, "_phantom_log_at", 0.0) > 10.0:
+                                self._phantom_log_at = now
+                                log("START suppressed: HUD not fully live "
+                                    "(my=%s foe=%s)"
+                                    % (st.get("my_pct"), st.get("foe_pct")))
+                            # 照常跑感知/识别（身份和录像不受影响），
+                            # 只是不开新对局计数。
+                            self._battle_tick(st, now)
+                            self._check_active_pet(st, now)
+                            self._check_foe(st, now)
+                            self._maybe_scan_foe(st, now)
+                            self._maybe_band_scan(st, now)
+                            self._cast_banner(st)
+                            self._cast_ocr(st)
+                            if self.cur_slot and \
+                                    st.get("my_pct") is not None:
+                                self.slot_hp[self.cur_slot] = \
+                                    st["my_pct"]
+                            self._check_leader_confirmed()
+                            continue
                         self.match_started = now
                         self.match_count += 1
                         self.match_mid = _matches.new_mid(now)
