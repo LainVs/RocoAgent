@@ -150,7 +150,7 @@ def section_opponent(lines):
 
 # ---------------------------------------------------------------- 4. 动作率
 def section_actions(lines):
-    lines.append("## 四、动作率健康度（turns.jsonl 去重）")
+    lines.append("## 四、动作率健康度（turns.jsonl 去重，剔除幻影局）")
     p = os.path.join(LOGS, "turns.jsonl")
     rows = []
     try:
@@ -169,10 +169,10 @@ def section_actions(lines):
         lines.append("- 无回合记录")
         lines.append("")
         return
-    # 按 (match, turn) 去重（轮询日志同回合重复多行）
+    # 按 (mid, turn) 去重（轮询日志同回合重复多行）
     seen = set()
     actions_by_match = collections.Counter()
-    matches = set()
+    real_matches = set()          # 有真实动作的对局
     for r in rows:
         act_list = r.get("action")
         act0 = act_list[0] if isinstance(act_list, list) and act_list else None
@@ -182,19 +182,22 @@ def section_actions(lines):
             continue
         seen.add(key)
         mid = r.get("mid")
-        if mid:
-            matches.add(mid)
         if act0 in ("skill", "energy", "switch"):
             actions_by_match[mid] += 1
+            real_matches.add(mid)
+    # 幻影局 = 有 mid 但 0 动作（重启残留/误判 START），从分母剔除
+    phantom = 0
     if actions_by_match:
         vals = sorted(actions_by_match.values())
         med = vals[len(vals) // 2]
         low = sum(1 for v in vals if v <= 2)
-        lines.append("- 对局 %d 场（有动作记录 %d 场）：每局动作中位数 **%d**"
-                     % (len(matches), len(actions_by_match), med))
-        lines.append("- 动作数 <=2 的对局 %d 场（卡局/弃权嫌疑）" % low)
+        lines.append("- 有真实动作的对局 **%d** 场：每局动作中位数 **%d**"
+                     % (len(actions_by_match), med))
+        lines.append("- 动作数 <=2 的对局 %d 场（短局/对面快投为主，"
+                     "见 docs/LOW_ACTION_ANALYSIS.md）" % low)
     else:
-        lines.append("- 有回合记录但无动作")
+        lines.append("- 有回合记录但无动作（全是幻影局）")
+        phantom = 1
     lines.append("")
 
 
