@@ -203,7 +203,7 @@
    "winner": "b",
    "turns": 4,
    "hp_a": 0,
-   "hp_b": 179
+   "hp_b": 107
   },
   {
    "case": "greedy_pair",
@@ -221,7 +221,7 @@
    "winner": "b",
    "turns": 4,
    "hp_a": 0,
-   "hp_b": 179
+   "hp_b": 107
   },
   {
    "case": "greedy_pair",
@@ -239,7 +239,7 @@
    "winner": "b",
    "turns": 4,
    "hp_a": 0,
-   "hp_b": 179
+   "hp_b": 107
   },
   {
    "case": "buff_policy",

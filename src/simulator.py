@@ -425,6 +425,15 @@ class Pet:
         a, d = trait_lib.carrier_buffs(self)
         self.trait_atk_buff += a
         self.trait_def_buff += d
+        # 按当前倒下数动态计算的增益（悲悯/悼亡）走 recalc_dead_buffs()，
+        # 每次出手前重算 —— 原文 timing=current，是持续状态。
+        # _dead_trait 标记这条特性属于 timing=current:pets_dead_count，
+        # 战斗中每回合重算 trait_atk_buff = base + dead_buffs()
+        self._dead_trait = any(
+            r.get("mode") == "pets_dead_count"
+            for r in trait_lib.supported_rules(self.trait or ""))
+        self._dead_base_atk = self.trait_atk_buff
+        self._dead_base_def = self.trait_def_buff
         self._trait_first_done = False
         # nrc-ai 手写效果表用到的状态（异常状态 + 本回合威力修正）
         self.status = {}
@@ -699,6 +708,7 @@ class Battle:
         self.weather = "none"
         self.marks = {"a": {}, "b": {}}
         self.pending = []          # begin_turn 里产生的待播报事件
+        self._nrc_entered = set()  # (side, id(pet)) 已触发过入场效果的
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -824,30 +834,45 @@ class Battle:
         if self.ib >= len(self.b):
             self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
             return False
-        # 特性：入场首回合的临时增益（`专注力` 这类）
+        # 特性：入场首回合的临时增益（`专注力` 这类）+ 倒下数动态增益
+        # （悲悯/悼亡，timing=current，每次出手前重算）
         import trait_lib
         for p in (self.me, self.foe):
-            if p is None or getattr(p, "_trait_first_done", True):
+            if p is None:
                 continue
-            a, d = trait_lib.first_turn_buffs(p)
-            p.trait_tmp_atk += a
-            p.trait_tmp_def += d
-            p._trait_first_done = True
-        # nrc-ai 手写效果（ON_ENTER / ON_BATTLE_START / PASSIVE），
-        # 每只精灵只触发一次。roco-cal 有可用规则的特性不重复应用。
+            if not getattr(p, "_trait_first_done", True):
+                a, d = trait_lib.first_turn_buffs(p)
+                p.trait_tmp_atk += a
+                p.trait_tmp_def += d
+                p._trait_first_done = True
+            # 倒下数增益：基础值 carrier_buffs + 当前 dead_buffs 动态覆盖
+            if p._dead_trait:
+                da, dd = trait_lib.dead_buffs(p)
+                p.trait_atk_buff = p._dead_base_atk + da
+                p.trait_def_buff = p._dead_base_def + dd
+        # nrc-ai 手写效果（ON_ENTER / ON_BATTLE_START / PASSIVE）只在
+        # **开局**或**换人入场**时触发一次；站场期间不重复。
+        # 触发记录挂在 Battle 上（per side + pet id），换人入场时那只
+        # 精灵是新出现的 id，天然会再触发一次 —— 这正是原文语义
+        # 「入场时……」。
         import nrc_fx
-        other = {"a": self.b, "b": self.a}
-        for p in (self.me, self.foe):
-            if p is None or getattr(p, "_nrc_entered", False):
+        for p, other in ((self.me, self.foe), (self.foe, self.me)):
+            if p is None:
                 continue
-            p._nrc_entered = True
             if trait_lib.supported_rules(getattr(p, "trait", None)):
                 continue
-            foe = (self.foe if p is self.me else self.me)
+            key = (getattr(p, "_side", "?"), id(p))
+            if key in self._nrc_entered:
+                continue
+            # roco-cal 已覆盖的（含悲悯/悼亡这类 current 特性）不重复应用
+            if trait_lib.supported_rules(getattr(p, "trait", None)):
+                self._nrc_entered.add(key)      # 标记过，但不应用 nrc
+                continue
+            self._nrc_entered.add(key)
             ctx = {}
-            evs = (nrc_fx.trait_fire(p, foe, "ON_ENTER", ctx)
-                   + nrc_fx.trait_fire(p, foe, "ON_BATTLE_START", ctx)
-                   + nrc_fx.trait_fire(p, foe, "PASSIVE", ctx))
+            evs = (nrc_fx.trait_fire(p, other, "ON_ENTER", ctx)
+                   + nrc_fx.trait_fire(p, other, "ON_BATTLE_START", ctx)
+                   + nrc_fx.trait_fire(p, other, "PASSIVE", ctx))
             p.nrc_power_mult *= ctx.get("power_mult", 1.0)
             p.nrc_power_bonus += ctx.get("power_bonus", 0)
             for e in evs:
@@ -1099,6 +1124,22 @@ class Battle:
             events.append("%s %s → %s -%d（剩 %d/%d）"
                           % ("我方" if who == "a" else "对方",
                              mv["name"], dfn.name, d, dfn.hp, dfn.max_hp))
+            # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
+            gain = battle_fx.mark_on_skill(
+                self.marks.get(who) or {}, self.eff_cost(who, mv))
+            if gain > 0 and atk.alive:
+                add_buff(atk, gain, gain)
+                events.append("%s 龙噬印记生效（双攻 +%d%%）"
+                              % ("我方" if who == "a" else "对方",
+                                 round(100 * gain)))
+            # 特性 ON_KILL（恶魔的晚餐：击杀后双攻 +50%）+
+            # ON_FAINT（诈死等，被击杀方的入场时机）
+            if not dfn.alive:
+                other = me if who == "a" else foe
+                if not trait_lib.supported_rules(
+                        getattr(atk, "trait", None)):
+                    for e in nrc_fx.trait_fire(atk, other, "ON_KILL"):
+                        events.append(e)
             # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
             gain = battle_fx.mark_on_skill(
                 self.marks.get(who) or {}, self.eff_cost(who, mv))
