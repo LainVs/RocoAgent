@@ -1030,7 +1030,17 @@ class Battle:
             # （自己离场，替补入场，本回合入场的精灵免疫离场效果——
             # mark_switch_in 由 step("switch") 处理）
             # ⚠ tag 必须在 owner 替换之前记（脱离后 owner 指向新精灵）
+            # 返场（S6.12）：「使敌方精灵返场」→ 敌方增益清空 + 重置入场
+            # 标记（与换人同一份原文：增益/减益状态在更换精灵之后会被清除）
             import battle_fx as _bfx
+            _target_of = foe if owner is me else me
+            if "使敌方精灵返场" in (mv.get("desc") or
+                                   _skill_desc(mv.get("id")) or ""):
+                _tag_r = "我方" if owner is me else "对方"
+                nrc_fx.clear_buffs(_target_of)
+                events.append("%s 使用 %s：敌方返场（增益/减益清除）"
+                              % (_tag_r, mv["name"]))
+                continue
             if mv.get("name") in _bfx.leave_skills(self.dex):
                 _tag = "我方" if owner is me else "对方"
                 side_lv = "a" if owner is me else "b"
