@@ -140,7 +140,8 @@ def foe_block(name=None, types=None, hp_pct=None,
 
 def skill_block(i, name=None, element=None, cost=None,
                 dmg=None, pct=None, usable=True, note=None,
-                pct_lo=None, pct_mid=None, pct_hi=None, pct_kill=None):
+                pct_lo=None, pct_mid=None, pct_hi=None, pct_kill=None,
+                icon=None):
     return {
         "i": i,
         "name": name,
@@ -150,6 +151,9 @@ def skill_block(i, name=None, element=None, cost=None,
         "pct": _pct(pct),
         "usable": bool(usable),
         "note": note,
+        # 技能图标 URL（/skill_icons/<技能id>.png）。没有图标就是 None，
+        # 前端显示序号占位 —— 绝不编造。
+        "icon": icon,
         # 伤害占比的概率分布（对面 HP 不确定 -> 占比不确定）
         "pct_lo": _pct(pct_lo),
         "pct_mid": _pct(pct_mid),

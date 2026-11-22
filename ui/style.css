@@ -947,12 +947,23 @@ input[type="range"]::-webkit-slider-thumb {
 .skill {
   position: relative;
   display: grid;
-  grid-template-columns: 13px minmax(0, 1fr) auto auto;
+  grid-template-columns: 13px 22px minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 8px;
   padding: 6px 0 6px 7px;
 }
 .skill + .skill { border-top: 1px solid var(--line-soft); }
+
+/* 技能图标（assets/skill_icons/<技能id>.png）。
+   没有图标时不渲染这个元素，序号列照旧显示 —— 不编造。 */
+.sk-icon {
+  width: 22px; height: 22px;
+  border-radius: 5px;
+  object-fit: cover;
+  background: rgba(255, 255, 255, .08);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .10);
+}
+.skill.na .sk-icon { opacity: .45; filter: grayscale(.5); }
 
 .sk-idx {
   font-family: var(--font-num);

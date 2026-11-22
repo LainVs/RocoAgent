@@ -18,6 +18,8 @@ logs/digits/glyphs/
 
 # 头像通道的评测证据（docs/PLAN_AVATAR_IDENT.md 引用，需要入库）
 !docs/img/*.png
+# 技能图标（第三方，见 assets/skill_icons/VERSION.md）
+!assets/skill_icons/*.png
 
 # 换人面板判据的回归样张：由 scripts/make_switch_fixtures.py 从真实整帧
 # 裁出「队伍列表 + 倒计时」两块区域拼成，约 0.5 MB/张，必须入库

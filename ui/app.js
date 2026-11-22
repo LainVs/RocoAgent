@@ -562,6 +562,8 @@ function renderBody(st) {
       // 保留它比清空成"技能栏未识别"有用得多，但要标出来，不能冒充实时。
       row.innerHTML = `
         <span class="sk-idx">${idx}</span>
+        ${s.icon ? `<img class="sk-icon" src="${s.icon}" alt="" loading="lazy">`
+                 : '<span class="sk-icon"></span>'}
         <span class="sk-name${s.name ? '' : ' unnamed'}">${label}${
           s.stale ? '<span class="sk-stale">上回合</span>' : ''}${
           meta ? `<span class="sk-meta">${meta}</span>` : ''}</span>

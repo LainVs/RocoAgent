@@ -2362,6 +2362,7 @@ class Handler(SimpleHTTPRequestHandler):
         "/pet_avatars/": "pet_avatars",
         "/pet_art/": "pet_art",
         "/battle/": "battle",
+        "/skill_icons/": "skill_icons",
     }
 
     def translate_path(self, path):

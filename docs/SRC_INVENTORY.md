@@ -42,6 +42,7 @@
 | `trait_db.py` | 特性 → 物种 → 属性 |
 | `foe_moves.py` | 对手招式推断 |
 | `avatar_ident.py` | `pet_avatars` 头像通道（639 类，高置信才投票） |
+| `skill_icons.py` | 技能名 → 图标 URL（954/1269 覆盖，缓存） |
 
 ### 数据 / 记录
 | 文件 | 职责 |
@@ -107,6 +108,7 @@
 | `test_policy_switch.py` | 换人/攻击决策矩阵（KO 幻想 + 安全换人语义锁） |
 | `test_session_moves.py` | 我方技能动态解析：确认/撤销/落盘/stale/ROI |
 | `test_cast_route.py` | 播报敌我分流：名字编辑距离 + 槽位归因 |
+| `test_skill_icons.py` | 技能图标解析 + 前端契约（含文件可解码） |
 
 ## 四、队伍编辑（原管理面板的功能）
 

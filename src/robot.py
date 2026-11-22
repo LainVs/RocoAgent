@@ -123,6 +123,21 @@ from policy_legacy import (  # noqa: F401
 
 
 # ------------------------------------------------------------------ main loop
+def _icon_url(skill_name):
+    """技能名 -> /skill_icons/<id>.png（没有图标返回 None）。
+
+    薄包装：真正的解析在 `skill_icons.py`（名字->id->文件存在性，带缓存）。
+    这里吞掉异常，前端数据不能拖垮主循环。
+    """
+    if not skill_name:
+        return None
+    try:
+        import skill_icons
+        return skill_icons.icon_url(skill_name)
+    except Exception:
+        return None
+
+
 def _name_close(a, b, tol=1):
     """播报 OCR 的名字与已知名字是否接近（容忍错 1 个字）。
 
@@ -1294,9 +1309,13 @@ class Bot:
                 except Exception:
                     pass
 
-            # 四张卡：机器人只读卡面伤害数字，**不读技能名**
-            # （digitread.read_skill 返回的 text 是 "245" 这种数字，不是名字）
-            # 所以这里绝不编造技能名，名字留 None，前端显示序号
+            # 四张卡：伤害数字来自卡面，**技能名来自配置/观测**
+            #
+            # 2026-11-23 修正：以前这里把 name 恒置 None，理由是"机器人
+            # 不读技能名"。但技能名其实一直有（team_db 配置或
+            # session_moves 观测），只是不来自卡面 OCR。名字传给前端
+            # 才能显示技能图标、也才能看出"槽 3 到底是哪招"。
+            # 名字缺失时仍然是 None（前端显示序号），绝不编造。
             skills = []
             for s in (st.get("skills") or []):
                 if not s:
@@ -1349,7 +1368,8 @@ class Bot:
 
                 skills.append(LS.skill_block(
                     s.get("index") or 0,
-                    name=None,               # 机器人不读名字，不编造
+                    # 名字来自 team_db / session_moves（不是卡面 OCR）
+                    name=s.get("skill_name"),
                     element=None,
                     cost=None,
                     dmg=dmg,
@@ -1358,6 +1378,8 @@ class Bot:
                     note=note,
                     pct_lo=pct_lo, pct_mid=pct_mid, pct_hi=pct_hi,
                     pct_kill=pct_kill,
+                    # 技能图标按名字查 id（skill_icons 模块，带缓存）
+                    icon=_icon_url(s.get("skill_name")),
                 ))
 
             # 技能卡只在**我方回合**画出来（对面出招/动画期间技能栏是空的）。
