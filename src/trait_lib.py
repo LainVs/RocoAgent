@@ -65,11 +65,25 @@ _CACHE = {"data": None, "at": 0.0}
 def _load():
     if _CACHE["data"] is not None:
         return _CACHE["data"]
+    out = {}
+    # 主表：data/traits.json（roco-cal 结构化 + 文本推导补充）
     try:
         with io.open(PATH, encoding="utf-8") as fh:
-            _CACHE["data"] = (json.load(fh).get("traits") or {})
+            out.update(json.load(fh).get("traits") or {})
     except Exception:
-        _CACHE["data"] = {}
+        pass
+    # 补充表：data/traits_text_derived.json（S6.15 authority 特性分类后
+    # 生成的 49 条补充规则——氧循环/腐植循环/深层氧循环等）
+    try:
+        _p2 = os.path.join(os.path.dirname(PATH),
+                           "traits_text_derived.json")
+        with io.open(_p2, encoding="utf-8") as fh:
+            for k, v in (json.load(fh) or {}).items():
+                if k not in out:
+                    out[k] = v
+    except Exception:
+        pass
+    _CACHE["data"] = out
     return _CACHE["data"]
 
 
