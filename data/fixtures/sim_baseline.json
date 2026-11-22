@@ -19,7 +19,7 @@
    "winner": "b",
    "turns": 5,
    "hp_a": 0,
-   "hp_b": 580
+   "hp_b": 428
   },
   {
    "case": "mirror",
@@ -38,7 +38,7 @@
    "seed": 1,
    "winner": "a",
    "turns": 5,
-   "hp_a": 580,
+   "hp_a": 428,
    "hp_b": 0
   },
   {
@@ -59,7 +59,7 @@
    "winner": "b",
    "turns": 5,
    "hp_a": 0,
-   "hp_b": 580
+   "hp_b": 428
   },
   {
    "case": "fire_vs_ice",
@@ -132,59 +132,59 @@
    "seed": 0,
    "winner": "a",
    "turns": 13,
-   "hp_a": 1038,
-   "hp_b": 0
-  },
-  {
-   "case": "big_teams",
-   "team_a": [
-    "音速犬",
-    "恶魔狼",
-    "卡瓦重",
-    "银月狼王",
-    "冰钻布鲁斯",
-    "火神"
-   ],
-   "team_b": [
-    "白发路路",
-    "寂灭骨龙",
-    "烈火战神",
-    "水灵",
-    "卡瓦重",
-    "炽心勇狮"
-   ],
-   "policy_a": "smart",
-   "policy_b": "greedy",
-   "seed": 1,
-   "winner": "a",
-   "turns": 13,
-   "hp_a": 1038,
-   "hp_b": 0
-  },
-  {
-   "case": "big_teams",
-   "team_a": [
-    "音速犬",
-    "恶魔狼",
-    "卡瓦重",
-    "银月狼王",
-    "冰钻布鲁斯",
-    "火神"
-   ],
-   "team_b": [
-    "白发路路",
-    "寂灭骨龙",
-    "烈火战神",
-    "水灵",
-    "卡瓦重",
-    "炽心勇狮"
-   ],
-   "policy_a": "smart",
-   "policy_b": "greedy",
-   "seed": 2,
-   "winner": "a",
-   "turns": 14,
    "hp_a": 765,
+   "hp_b": 0
+  },
+  {
+   "case": "big_teams",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重",
+    "银月狼王",
+    "冰钻布鲁斯",
+    "火神"
+   ],
+   "team_b": [
+    "白发路路",
+    "寂灭骨龙",
+    "烈火战神",
+    "水灵",
+    "卡瓦重",
+    "炽心勇狮"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 1,
+   "winner": "a",
+   "turns": 11,
+   "hp_a": 1182,
+   "hp_b": 0
+  },
+  {
+   "case": "big_teams",
+   "team_a": [
+    "音速犬",
+    "恶魔狼",
+    "卡瓦重",
+    "银月狼王",
+    "冰钻布鲁斯",
+    "火神"
+   ],
+   "team_b": [
+    "白发路路",
+    "寂灭骨龙",
+    "烈火战神",
+    "水灵",
+    "卡瓦重",
+    "炽心勇狮"
+   ],
+   "policy_a": "smart",
+   "policy_b": "greedy",
+   "seed": 2,
+   "winner": "a",
+   "turns": 11,
+   "hp_a": 1182,
    "hp_b": 0
   },
   {

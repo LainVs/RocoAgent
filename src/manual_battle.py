@@ -180,14 +180,14 @@ class Session:
                 if not (0 <= payload < len(bench)):
                     return {"error": "换人下标越界"}
                 self.forced_switch = False
-                # 换上（不走 step：倒下的先换掉已经由 begin_turn 处理，
-                # 这里直接定位 ia 并补满能量）
-                self.bt.ia = bench[payload]
-                self.bt.a[self.bt.ia].energy = SIM.ENERGY_CAP
+                # 走 step("switch")：clear_buffs（重置入场标记）、
+                # switch_in 印记（棘刺/降灵/暗涌）等全部走同一代码路径
+                evs = self.bt.step("switch", payload, "energy", None)
+                for e in evs:
+                    self._say("T%d %s" % (self.bt.turn, e))
                 self.actions.append({"turn": self.bt.turn, "kind": "switch",
                                      "to": self.bt.me.name})
-                self._say("T%d 我方换上 %s" % (self.bt.turn, self.bt.me.name))
-                return self.state(events=["我方换上 " + self.bt.me.name])
+                return self.state(events=evs)
 
             if kind == "skill":
                 try:
