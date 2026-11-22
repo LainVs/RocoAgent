@@ -174,6 +174,12 @@
 - [x] **buff_fx_index.json**（177 条 buff 效果索引）：buff.json desc
       正则抽取，任何 effect_id 都能查到具体效果数值
 
+## 本轮（S7.5）
+
+- [x] **手操开局选首发**（pick_starter）：new() 不自动 begin_turn，
+      state 返回 pick_starter=True，玩家 act({"kind":"starter","i":N})
+      后进入第一回合。skip_starter=True 跳过（批量测试用）。
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
