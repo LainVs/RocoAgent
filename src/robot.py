@@ -2389,6 +2389,26 @@ class Bot:
         except Exception:
             return None
 
+    def _band_blocked(self, now, why):
+        """记录 _maybe_band_scan 被挡住的原因（限流 20s，同一原因只报一次）。
+
+        为什么要这个：BAND 整场无日志时，光看代码无法知道是 `bar` 没读到、
+        还是 `pet_at` 没稳定、还是重试次数用完。把每个短路点都留痕，
+        下次复现时日志直接给答案。
+
+        正常运行时 20s 才输出一次，且只在原因**变化**时输出，
+        对日志量的影响可以忽略。
+        """
+        if why == getattr(self, "_band_why", None):
+            if now - getattr(self, "_band_why_at", 0.0) < 20.0:
+                return
+        self._band_why = why
+        self._band_why_at = now
+        log("BAND skip: %s (my=%s tries=%d/%d pet_age=%.1fs)"
+            % (why, getattr(self, "my_name", None),
+               getattr(self, "_band_tries", 0), self.BAND_TRIES,
+               now - getattr(self, "pet_at", 0.0)))
+
     def _maybe_band_scan(self, st, now):
         """换精灵后对缓存 miss 的槽位做一次卡面名字带 OCR。
 
@@ -2413,21 +2433,32 @@ class Bot:
         换人动画期间卡面经常只画出 2~3 张，一次读不全就整场放弃太亏。
         """
         my = getattr(self, "my_name", None)
+        # 诊断：本函数的每次短路都留痕（限流 20s），否则"整场无日志"
+        # 根本无法判断是被哪一条挡住的。_band_diag 只在调试开关下输出。
         if not my or not st.get("bar"):
+            self._band_blocked(now, "my=%r bar=%r" % (my, st.get("bar")))
             return
         # 出招窗口/倒计时内绝不动（OCR 会占住感知线程）
         if st.get("countdown"):
+            self._band_blocked(now, "countdown")
             return
         if getattr(self, "acted_at", 0.0) and now - self.acted_at < 2.0:
+            self._band_blocked(now, "acted %.1fs ago"
+                               % (now - self.acted_at))
             return
         # 上场稳定 1.2 秒再扫（换人动画期间卡面还没画完）
-        if now - getattr(self, "pet_at", 0.0) < 1.2:
+        _stable = now - getattr(self, "pet_at", 0.0)
+        if _stable < 1.2:
+            self._band_blocked(now, "pet settled %.2fs" % _stable)
             return
         tries = getattr(self, "_band_tries", 0)
         if tries >= self.BAND_TRIES:
+            self._band_blocked(now, "tries exhausted (%d/%d)"
+                               % (tries, self.BAND_TRIES))
             return
         # 同一轮两次尝试至少隔 1.5s，别在同一帧上反复烧 OCR
         if tries and now - getattr(self, "_band_scan_at", 0.0) < 1.5:
+            self._band_blocked(now, "cooldown")
             return
         try:
             import perceive as _P
@@ -2461,8 +2492,11 @@ class Bot:
                 if name:
                     log("BAND -> %s 槽%d = %s (%.2f)" % (my, slot, name, conf))
                 else:
-                    log("BAND -> %s 槽%d 未识别 (conf %.2f)"
-                        % (my, slot, conf))
+                    raw, nvoc, thr = SM.raw_of(my, slot)
+                    # 带上 OCR 原文和门限：0.79 与 0.80 这种差一口气的情况
+                    # 必须能看到"到底读成了什么"才能判断是字错还是漏字。
+                    log("BAND -> %s 槽%d 未识别 (conf %.2f < %.2f) raw=%r vocab=%d"
+                        % (my, slot, conf, thr, raw, nvoc))
         except Exception as e:
             log("BAND scan failed: %s: %s" % (type(e).__name__, e))
             self._band_tries = self.BAND_TRIES     # 出错也别每帧重试

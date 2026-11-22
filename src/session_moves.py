@@ -185,6 +185,7 @@ def veto(pet, slot):
 
 # ---------------------------------------------------------------- 名字带读法
 _BAND_LAST = {}       # (pet, slot) -> (name, conf, at)
+_BAND_RAW = {}        # (pet, slot) -> (raw_text, vocab_n, threshold, at)
 _BAND_TTL = 600.0     # 同一槽位 10 分钟内不重复 OCR（名字不会变）
 
 
@@ -212,9 +213,21 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     if img is None or getattr(img, "size", 0) == 0:
         return None, 0.0
-    # ★ 2026-11-22 实机标定（bar_partial_204511.png，docs/LIVE_FINDINGS）
-    # 名字在胶囊下缘 +5..+95、左右各扩 90 的区域里（实测 OCR 出
-    # 「力量增效」「跌落」「火云车」，conf 1.00）。
+    # ★ 2026-11-22 实机标定，2026-11-23 修正起点
+    #
+    # 名字带在**胶囊下缘** +3..+65、左右各扩 90（docs/LIVE_FINDINGS）。
+    #
+    # ⚠ 旧代码写成 `img[fy0 + 5 : fy1 + 95]` —— 从胶囊**上缘**+5 开始，
+    # 把整颗胶囊连同里面的伤害数字一起圈进 ROI。实测后果（线上日志）：
+    #
+    #     raw='160'   raw='5z'       <- 胶囊里的伤害数字
+    #     raw='OSE 恶魔..'
+    #
+    # OCR 先读出数字，词表匹配自然失败（conf 0.00），这就是"BAND 一直
+    # 未识别"的最后一层原因。同一张真帧（logs/det2/now2_full.png）对比：
+    #
+    #     上缘起点(upper): '泡沫 | 14 影袭 | 能量 | 快速移'   <- 混入 14
+    #     下缘起点(below): '泡沫 | 影袭 | 能量 | 快速移'      <- 4/4 全对
     #
     # 坐标系自适应：skill_pill_boxes 返回**整帧坐标**（已含 SKILL_BOX
     # 偏移）；测试假数据可能传裁图内坐标。判定标准：x0/y0 已经大于
@@ -224,7 +237,7 @@ def read_band(pet, slot, screen, pill_box):
         fx0, fy0, fx1, fy1 = x0, y0, x1, y1
     else:
         fx0, fy0, fx1, fy1 = sx + x0, sy + y0, sx + x1, sy + y1
-    roi = img[fy0 + 5:fy1 + 95,
+    roi = img[fy1 + 3:fy1 + 65,
               max(0, fx0 - 90):min(2560, fx1 + 90)]
     if roi.size == 0 or roi.shape[0] < 20:
         return None, 0.0
@@ -267,9 +280,17 @@ def read_band(pet, slot, screen, pill_box):
     name, sc = ocr_cn.Ocr.match(raw, vocab)
     # 词表小时门槛可以放宽（分母小，1 字偏差对应的分数更高也更可信）
     thr = 0.80 if len(vocab) < 60 else BAND_MIN_CONF
+    # 诊断：把"读到了什么"和"为什么拒"一起缓存，供日志与前端查看。
+    # 只记 raw 与词表规模，不记整条词表（太大）。
+    _BAND_RAW[key] = (raw, len(vocab), thr, now)
     if name and sc >= thr:
-        with _LOCK:
-            confirm(pet, slot, name, src="band")
+        # ⚠ 不要在这里包 `with _LOCK:` —— confirm() 自己会加锁，
+        # 而 _LOCK 是 threading.Lock()（**不可重入**），嵌套获取会自锁。
+        # 2026-11-23 实测：这个写法让 read_band 永久挂死（faulthandler
+        # 抓到 session_moves.py:288 卡在 confirm 的 with _LOCK:），
+        # 表现为 BAND 一次都没成功采纳过（session_moves.json 至今不存在），
+        # 且可能拖死感知线程。
+        confirm(pet, slot, name, src="band")
         _BAND_LAST[key] = (name, sc, now)
         return name, sc
     _BAND_LAST[key] = (None, sc, now)
@@ -282,6 +303,19 @@ def band_stats():
     return {"cached": len(_BAND_LAST),
             "fresh": sum(1 for v in _BAND_LAST.values()
                          if now - v[2] < _BAND_TTL)}
+
+
+def raw_of(pet, slot):
+    """诊断：上一次 OCR 读到的原文 + 词表规模 + 当时的门槛。
+
+    返回 (raw, vocab_n, threshold)。没读过返回 ("", 0, 0.0)。
+    用途：BAND 被门槛拒绝时，日志要能显示"到底读成了什么字" ——
+    0.79 与 0.80 只差 0.01，必须分清是错别字还是漏字。
+    """
+    e = _BAND_RAW.get((pet, int(slot)))
+    if not e:
+        return "", 0, 0.0
+    return e[0], e[1], e[2]
 
 
 # ---------------------------------------------------------------- 自检
