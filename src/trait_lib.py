@@ -54,6 +54,9 @@ SUPPORTED = {
     # 吸血（文本推导）
     ("entrance", "always"): {"lifesteal"},
     ("usage", "firsthand"): {"lifesteal"},
+    # S6.16：traits_text_derived 的规则（authority 特性分类后补充）
+    ("turn_end", "always"): {"heal_pct"},
+    ("ON_USE_SKILL", "always"): {"stat_buff"},
 }
 
 # 元素名 -> mode 前缀判定
@@ -73,13 +76,17 @@ def _load():
     except Exception:
         pass
     # 补充表：data/traits_text_derived.json（S6.15 authority 特性分类后
-    # 生成的 49 条补充规则——氧循环/腐植循环/深层氧循环等）
+    # 生成的 49 条补充规则——氧循环/腐植循环/深层氧循环等）。
+    # ★ 覆盖条件：主表**没有规则**时用补充表（不是"没有条目"时）。
+    #   氧循环在主表有 ignored 条目（rules=[]），但 authority 分类后
+    #   有了正确的 heal_pct 规则——如果按"没有条目"判断，补充规则
+    #   永远不会生效。
     try:
         _p2 = os.path.join(os.path.dirname(PATH),
                            "traits_text_derived.json")
         with io.open(_p2, encoding="utf-8") as fh:
             for k, v in (json.load(fh) or {}).items():
-                if k not in out:
+                if k not in out or not (out[k].get("rules") or []):
                     out[k] = v
     except Exception:
         pass

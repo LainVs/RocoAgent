@@ -1559,9 +1559,17 @@ class Battle:
                 events.append("%s 中毒印记 -%d（剩 %d/%d）"
                               % ("我方" if side == "a" else "对方",
                                  d2, p.hp, p.max_hp))
-            if not trait_lib.supported_rules(getattr(p, "trait", None)):
-                for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
-                    events.append(e)
+            # S6.16：traits_text_derived 的规则在 trait_lib 层消费
+            # （turn_end/heal_pct 等新 kind 不在 nrc HANDLERS 里）
+            for r in trait_lib.supported_rules(getattr(p, "trait", None)):
+                if r.get("kind") == "heal_pct" and p.alive:
+                    _hp = max(1, int(p.max_hp * float(r.get("value") or 0)))
+                    _b = p.hp
+                    p.hp = min(p.max_hp, p.hp + _hp)
+                    if p.hp > _b:
+                        events.append("%s %s（剩 %d/%d）"
+                                      % ("我方" if side == "a" else "对方",
+                                         r.get("kind", ""), p.hp, p.max_hp))
             if not trait_lib.supported_rules(getattr(p, "trait", None)):
                 for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
                     events.append(e)
