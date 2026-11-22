@@ -96,7 +96,9 @@ class Session:
     # ---------------------------------------------------------- 开局
     def new(self, team_a, cfg_a=None, opponent_mode="lineups",
             team_b=None, cfg_b=None, policy_b="smart", seed=0,
-            weather="none", marks=None, marks_b=None, dex=None):
+            weather="none", marks=None, marks_b=None, dex=None,
+            skip_starter=False):
+        """skip_starter=True 时不开局选首发（批量测试用）。"""
         with self.lock:
             dex = dex or SIM.Dex()
             ta = [str(x) for x in (team_a or [])][:6]
@@ -136,13 +138,17 @@ class Session:
                 self.bt.set_marks("b", field, stacks)
             self.log = []
             self.actions = []
+            # S7.5：开局选首发——pick_starter=True 时不自动 begin_turn，
+            # 等玩家 act({"kind":"starter","i":N}) 后才进入第一回合
+            self.pick_starter = not skip_starter
             self._say("对局开始：我方 %s vs %s（%s，对手策略 %s%s）"
                       % ("/".join(ta), "/".join(tb),
                          self.meta.get("opponent") or "固定", policy_b,
                          ("，天气 " + str(weather))
                          if weather and weather != "none" else ""))
-            if not self.bt.begin_turn():
-                self._record()
+            if not skip_starter:
+                if not self.bt.begin_turn():
+                    self._record()
             return self.state()
 
     # ---------------------------------------------------------- 操作
@@ -166,8 +172,25 @@ class Session:
 
             kind = (action or {}).get("kind") or "skill"
 
-            # 我方倒下等待玩家选换人
-            if getattr(self, "forced_switch", False):
+            # 开局选首发（S7.5）
+            if getattr(self, "pick_starter", False):
+                if kind != "starter":
+                    return {"error": "请先选择首发精灵",
+                            "state": self.state()}
+                payload = action.get("i")
+                try:
+                    payload = int(payload)
+                except (TypeError, ValueError):
+                    return {"error": "首发下标非法"}
+                if not (0 <= payload < len(self.bt.a)):
+                    return {"error": "首发下标越界"}
+                self.pick_starter = False
+                self.bt.ia = payload
+                self.bt.a[self.bt.ia].energy = SIM.ENERGY_CAP
+                self._say("T%d 我方首发 %s" % (self.bt.turn, self.bt.me.name))
+                if not self.bt.begin_turn():
+                    self._record()
+                return self.state(events=["我方首发 " + self.bt.me.name])
                 if kind != "switch":
                     return {"error": "我方精灵已力竭，请先选择上场的精灵",
                             "state": self.state(forced_switch=True)}
@@ -261,6 +284,7 @@ class Session:
                 "max_turn": SIM.MAX_TURNS,
                 "energy_gain": SIM.ENERGY_GAIN,
                 "forced_switch": bool(forced_switch),
+                "pick_starter": getattr(self, "pick_starter", False),
                 "done": bt.done,
                 "result": ("win" if bt.done == "a"
                            else "lose" if bt.done == "b" else None),
