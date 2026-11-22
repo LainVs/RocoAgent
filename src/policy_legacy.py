@@ -35,8 +35,13 @@ _MY_COSTS = {"at": 0.0, "name": None, "costs": {}}
 def my_card_costs(my_name, force=False):
     """我方这只精灵四个技能槽的耗能 {slot: cost}，缓存 60 秒。
 
-    卡片顺序 = 装备的 4 个技能顺序，所以耗能不需要读 HUD 上的 ★N 徽标，
-    直接从 team_db.moves + skills.cost 查 —— 零额外识别成本。
+    ★ 2026-11-22：数据来源改为三层降级（docs/PLAN_DYNAMIC_SKILLS.md）
+    --------------------------------------------------------------
+    卡片顺序 = 装备的 4 个技能顺序。耗能不需要读 HUD 徽标：
+        1. session/band 的技能名（观测证据）-> 查 skills.cost
+        2. team_db.moves（表配置）        -> 查 skills.cost
+    观测命中的槽位以观测为准；表过期的槽位会被 session_moves 的
+    校验环逐步纠正。
     """
     import time as _t
     if (not force and _MY_COSTS["name"] == my_name
@@ -46,16 +51,44 @@ def my_card_costs(my_name, force=False):
     try:
         import sqlite3
         from portrait_db import DB_PATH
-        import team_db
-        team = {t.get("name"): t for t in team_db.dump_team() if t.get("name")}
-        ent = team.get(my_name) or {}
-        moves = ent.get("moves") or []
-        if moves:
-            db = sqlite3.connect(DB_PATH)
-            for i, sid in enumerate(moves[:4]):
-                r = db.execute("SELECT cost FROM skills WHERE id=?", (int(sid),)).fetchone()
+
+        # 第一层：观测证据（会话缓存 / 卡面直读）覆盖一切
+        resolved = {}          # slot -> skill_name
+        try:
+            import session_moves as SM
+            snap = SM.snapshot(my_name)
+            for slot, e in snap.items():
+                if e.get("name"):
+                    resolved[slot] = e["name"]
+        except Exception:
+            resolved = {}
+
+        db = sqlite3.connect(DB_PATH)
+        try:
+            for slot, name in resolved.items():
+                if not (1 <= slot <= 4):
+                    continue
+                r = db.execute(
+                    "SELECT cost FROM skills WHERE name=? ORDER BY id LIMIT 1",
+                    (name,)).fetchone()
                 if r and r[0] is not None:
-                    out[i + 1] = int(r[0])
+                    out[slot] = int(r[0])
+            # 第二层：表配置只填观测没覆盖的槽位
+            import team_db
+            team = {t.get("name"): t
+                    for t in team_db.dump_team() if t.get("name")}
+            ent = team.get(my_name) or {}
+            moves = ent.get("moves") or []
+            for i, sid in enumerate(moves[:4]):
+                slot = i + 1
+                if slot in out:
+                    continue
+                r = db.execute(
+                    "SELECT cost FROM skills WHERE id=?",
+                    (int(sid),)).fetchone()
+                if r and r[0] is not None:
+                    out[slot] = int(r[0])
+        finally:
             db.close()
     except Exception:
         pass

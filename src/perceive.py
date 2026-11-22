@@ -874,10 +874,39 @@ def _team_snapshot():
     return team
 
 
+def _skill_by_name(name):
+    """技能名 -> (skill_id, power, priority, cost)。查不到返回 None。"""
+    if not name:
+        return None
+    import sqlite3
+    from portrait_db import DB_PATH
+    db = sqlite3.connect(DB_PATH)
+    try:
+        r = db.execute(
+            "SELECT id, power, priority, cost FROM skills WHERE name=? "
+            "ORDER BY id LIMIT 1", (name,)).fetchone()
+        return tuple(r) if r else None
+    except Exception:
+        return None
+    finally:
+        db.close()
+
+
 def _skill_meta(my_name):
     """我方某只精灵的技能表：moves / 每个槽位的 power 与 name / 变化技能耗能集合。
 
     返回 None 表示查不到（调用方按"未知"处理）。结果按 my_name 缓存 30s。
+
+    ★ 2026-11-22 数据来源改为三层降级（docs/PLAN_DYNAMIC_SKILLS.md）
+    --------------------------------------------------------------
+    用户经常临时换队伍，my_team 表经常过期。现在每个槽位按
+    session_moves 的三层链解析：
+
+        1. session/band  会话缓存或卡面直读（观测证据，最可信）
+        2. team_db       my_team 表配置（加速缓存，可能过期）
+        3. unknown       都没有：只知道这只精灵可学技能的 dash 耗能集合
+
+    meta["sources"][i] 记录每个槽位的来源，turns.jsonl 可以统计命中率。
     """
     if not my_name:
         return None
@@ -886,7 +915,7 @@ def _skill_meta(my_name):
     if hit is not None and now - hit["at"] < _META_TTL:
         return hit
     meta = {"at": now, "moves": [], "powers": {}, "names": {},
-            "priorities": {}, "dash_costs": None}
+            "priorities": {}, "dash_costs": None, "sources": {}}
     team = _team_snapshot()
     meta["moves"] = list((team.get(my_name) or {}).get("moves") or [])
     try:
@@ -926,8 +955,19 @@ def _skill_meta(my_name):
                         meta["priorities"][i] = -1        # 后手
                     else:
                         meta["priorities"][i] = 0
-            if not meta["moves"]:
-                # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
+                    meta["sources"][i] = "team_db"
+        finally:
+            db.close()
+    except Exception:
+        pass
+
+    if not meta["moves"]:
+        # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
+        try:
+            import sqlite3
+            from portrait_db import DB_PATH
+            db = sqlite3.connect(DB_PATH)
+            try:
                 row = db.execute(
                     "SELECT id FROM species WHERE name=? "
                     "ORDER BY implemented DESC, total DESC LIMIT 1",
@@ -942,8 +982,47 @@ def _skill_meta(my_name):
                         if r[0] is not None:
                             costs.add(int(r[0]))
                     meta["dash_costs"] = costs
-        finally:
-            db.close()
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+    # ---- 三层降级：session/band 的观测证据覆盖 team_db（2026-11-22）
+    #
+    # 为什么放循环外单独处理：观测证据的权威性高于表配置。表里配了
+    # 「火云车」但实机卡面直读是「闪燃」时，以实机为准，并打
+    # TEAM STALE 标记提醒用户跑 team_audit。
+    try:
+        import session_moves as SM
+        for i in range(4):
+            slot = i + 1
+            obs = SM.get(my_name, slot)
+            src = SM.source(my_name, slot)
+            if not obs:
+                continue
+            tname = meta["names"].get(i)
+            if tname and tname != obs:
+                SM.note_team_stale(my_name)
+            meta["names"][i] = obs
+            meta["sources"][i] = src or "session"
+            row = _skill_by_name(obs)
+            if row:
+                _sid, power, pri, _cost = row
+                meta["powers"][i] = power or 0
+                # moves 顺序仍按表（卡片顺序），技能 id 对不上也无所谓 ——
+                # 下游只消费 powers/names/priorities。
+                if meta["moves"] and i < len(meta["moves"]) and \
+                        meta["moves"][i] != _sid:
+                    meta["moves"][i] = _sid
+                _pri = pri or 0
+                if _pri == 5:
+                    meta["priorities"][i] = 0
+                elif _pri > 5:
+                    meta["priorities"][i] = _pri - 5
+                elif _pri > 0:
+                    meta["priorities"][i] = -1
+                else:
+                    meta["priorities"][i] = 0
     except Exception:
         pass
     _meta_cache[my_name] = meta
@@ -960,11 +1039,13 @@ def _fix_status_kinds(slots, my_name):
     实测 2026-11-21 02:40 抓到 `i1 v=50 kind=num`，而那个槽位其实是
     「力量增效」（cost 1，无伤害）。
 
-    数据来源的降级链
-    ----------------
-    1. team_db 里这只精灵的 moves（最准，但队伍配置常常不全）
-    2. 如果 team_db 没有 -> 用**这只精灵所有可学技能**里 power<=0 的
-       技能名集合，再跟卡面耗能对照（模糊但比不判好）
+    数据来源的降级链（2026-11-22 更新）
+    --------------------------------
+    1. `_skill_meta` 的三层链：session/band（观测） > team_db（表）
+       —— `attach_skill_names` 已经把观测结果写进 slots，这里主要
+       处理"表里有但观测还没来"的窗口期
+    2. 表完全没有 -> 用**这只精灵所有可学技能**里 power<=0 的
+       技能耗能集合，再跟卡面对照（模糊但比不判好）
 
     实测教训：03:10 那局出战的是「音速犬」，但 team_db 只配了「恶魔狼」，
     所以第 1 条路查不到 -> kind 全是 None -> buff 分支仍然走不到。
