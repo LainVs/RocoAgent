@@ -434,6 +434,10 @@ class Pet:
             for r in trait_lib.supported_rules(self.trait or ""))
         self._dead_base_atk = self.trait_atk_buff
         self._dead_base_def = self.trait_def_buff
+        # 特性速度加成（烈冰钻/变形活画），begin_turn 重算
+        self._trait_speed = 0
+        # 全神贯注（入场+100%，每行动-20%）：剩余层数
+        self._focus_layers = 0
         self._trait_first_done = False
         # nrc-ai 手写效果表用到的状态（异常状态 + 本回合威力修正）
         self.status = {}
@@ -487,6 +491,9 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
                                      foe_total_cost=foe_cost)
         power_mult = mods["power_mult"]
         power_bonus = mods["power_bonus"]
+        self_damage_pct = float(mods.get("self_damage_pct") or 0)
+    else:
+        self_damage_pct = 0.0
     power = max(0, int(int(move["power"]) * float(power_mult)
                        + int(power_bonus)))
     # 天气 + 印记（2026-11-22）：两者都作用在**威力**上，和 roco-cal 的
@@ -517,6 +524,7 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
                      type_eff=eff, stab=stab)
     dmg *= trait_lib.incoming_mult(defender, move)
     dmg *= getattr(defender, "taken_mult", 1.0)
+    calc_damage.last_self_damage_pct = self_damage_pct
     return max(1, int(dmg))
 
 
@@ -745,9 +753,13 @@ class Battle:
         return max(0, base + d)
 
     def eff_spe(self, side, pet):
-        """实际速度（减速印记 -10）。"""
+        """实际速度（减速印记 -10 / 特性 speed_buff）。"""
         import battle_fx
-        return pet.spe + battle_fx.mark_speed_delta(self.marks.get(side) or {})
+        sp = pet.spe + battle_fx.mark_speed_delta(self.marks.get(side) or {})
+        # 特性给的速度加成（烈冰钻：敌方总能耗>25 时 +75；变形活画：
+        # 敌方增益层 x5）。挂在 pet._trait_speed，由 begin_turn 重算。
+        sp += int(getattr(pet, "_trait_speed", 0) or 0)
+        return sp
 
     def mark_state(self):
         return {"weather": self.weather,
@@ -837,19 +849,41 @@ class Battle:
         # 特性：入场首回合的临时增益（`专注力` 这类）+ 倒下数动态增益
         # （悲悯/悼亡，timing=current，每次出手前重算）
         import trait_lib
+        import battle_fx as _bf
         for p in (self.me, self.foe):
             if p is None:
                 continue
+            trait = p.trait or ""
+            # 全神贯注（风暴战犬）：入场 +100%，每次行动 -20%
+            if trait == "全神贯注":
+                if not getattr(p, "_focus_init", False):
+                    p._focus_layers = 5          # 100% / 20% = 5 层
+                    p._focus_init = True
+                p.trait_tmp_atk = 0.2 * p._focus_layers
             if not getattr(p, "_trait_first_done", True):
                 a, d = trait_lib.first_turn_buffs(p)
                 p.trait_tmp_atk += a
                 p.trait_tmp_def += d
                 p._trait_first_done = True
-            # 倒下数增益：基础值 carrier_buffs + 当前 dead_buffs 动态覆盖
+            # 倒下数/持续状态增益：每回合开始时动态重算（timing=current）
             if p._dead_trait:
-                da, dd = trait_lib.dead_buffs(p)
+                da, dd = trait_lib.dynamic_buffs(p)
                 p.trait_atk_buff = p._dead_base_atk + da
                 p.trait_def_buff = p._dead_base_def + dd
+            # 特性速度加成：变形活画（敌方增益层 x5）、
+            # 烈冰钻（敌方总能耗>25 时 +75）
+            sp = 0
+            enemy = self.foe if p is self.me else self.me
+            if trait == "变形活画" and enemy is not None:
+                layers = int(round(enemy.atk_buff / 0.1)) + \
+                    int(round(enemy.def_buff / 0.1))
+                sp += 5 * layers
+            if trait in ("烈冰钻", "烈冰钻钻") and enemy is not None:
+                foe_cost = sum(int(m.get("cost") or 0)
+                               for m in enemy.moves)
+                if foe_cost > 25:
+                    sp += 75
+            p._trait_speed = sp
         # nrc-ai 手写效果（ON_ENTER / ON_BATTLE_START / PASSIVE）只在
         # **开局**或**换人入场**时触发一次；站场期间不重复。
         # 触发记录挂在 Battle 上（per side + pet id），换人入场时那只
@@ -1148,6 +1182,22 @@ class Battle:
                 events.append("%s 龙噬印记生效（双攻 +%d%%）"
                               % ("我方" if who == "a" else "对方",
                                  round(100 * gain)))
+            # 光度换算：使用火系技能后失去 15% 生命（原文），打完再扣自己
+            import trait_lib as _tl
+            self_dmg = 0.0
+            mods_now = _tl.attack_mods(
+                atk, mv, first=(idx == 0),
+                foe_total_cost=sum(int(m.get("cost") or 0)
+                                   for m in dfn.moves))
+            self_dmg = float(mods_now.get("self_damage_pct") or 0)
+            if self_dmg > 0 and atk.alive:
+                sd = max(1, int(atk.max_hp * self_dmg))
+                atk.hp = max(0, atk.hp - sd)
+                events.append("%s %s 的代价：失去 %d 生命（剩 %d/%d）"
+                              % ("我方" if who == "a" else "对方",
+                                 mv["name"], sd, atk.hp, atk.max_hp))
+                if not atk.alive:
+                    events.append("%s 倒下" % atk.name)
             # 吸血：先按特性规则（渴求/先机虹吸），再按**技能描述里的吸血**。
             # 原文：「造成伤害时，根据吸血比例和造成伤害值，回复生命」。
             ls = trait_lib.attack_mods(
@@ -1169,9 +1219,14 @@ class Battle:
             if not dfn.alive:
                 events.append("%s 倒下" % dfn.name)
 
-        # 首回合临时增益只在那一回合有效，回合结束就撤掉
+        # 首回合临时增益只在那一回合有效，回合结束就清掉；
+        # 全神贯注的 -20%/行动 在行动结算后单独衰减（不是清零）
         for p in list(self.a) + list(self.b):
-            p.trait_tmp_atk = 0.0
+            if (p.trait or "") == "全神贯注":
+                p._focus_layers = max(0, getattr(p, "_focus_layers", 5) - 1)
+                p.trait_tmp_atk = 0.2 * p._focus_layers
+            else:
+                p.trait_tmp_atk = 0.0
             p.trait_tmp_def = 0.0
 
         # 回合末：印记（光合 +1 能量 / 中毒印记 3%）+ 异常状态 + 特性 ON_TURN_END

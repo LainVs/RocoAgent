@@ -156,6 +156,7 @@ def attack_mods(pet, move, first=False, foe_total_cost=None):
 
         敌方 4 个技能总耗能 20 -> 威力 x(1 + 0.1*20) = x3.0
     """
+    trait = getattr(pet, "trait", "") or ""
     out = {"power_mult": 1.0, "power_bonus": 0, "lifesteal": 0.0}
     if not move:
         return out
@@ -183,6 +184,15 @@ def attack_mods(pet, move, first=False, foe_total_cost=None):
             out["power_mult"] *= 1.0 + float(r.get("value") or 0)
         elif kind == "power_bonus":
             out["power_bonus"] += int(r.get("value") or 0)
+    # 光度换算特判：原文「携带的火系技能获得选择：使用后失去15%生命，
+    # 光系技能威力永久+30」。roco-cal 把 mode 写成 fire_skill（数值挂错了
+    # 面向），按原文修正：光系威力 +30（flat）；火系使用后自伤 15%
+    # （由 Battle 结算后处理，out["self_damage_pct"] 通道）。
+    if trait == "光度换算" and move:
+        if (move.get("type") or "") == "光":
+            out["power_bonus"] += 30
+        elif (move.get("type") or "") == "火":
+            out["self_damage_pct"] = 0.15
     return out
 
 

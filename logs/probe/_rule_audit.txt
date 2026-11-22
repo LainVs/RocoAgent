@@ -1,0 +1,55 @@
+﻿宸茬敓鏁堣鍒欓€愭潯瀹¤
+
+[鈥滃浗鐜嬧€濈殑濞佷弗] 楦悏鍚夊浗鐜嬬殑绉嶆棌璧勮川澶у箙澧炲姞锛岃兘鑰椾负1鐨勬妧鑳藉▉鍔?50%銆?
+   timing=action mode=skill_cost_1 kind=power_multiplier vals={}
+[涓撴敞鍔沒 鍏ュ満棣栧洖鍚堬紝鑾峰緱鐗╂敾+100%銆?
+   timing=turn_start mode=first_turn kind=stat_buff vals={'atk': 1.0}
+[淇濆畧娲綸 鎬绘妧鑳借兘鑰楀皬浜?鏃讹紝鑷繁鑾峰緱鍙岄槻+80%銆?
+   timing=carried mode=skills_cost_lt_4 kind=stat_buff vals={'def': 0.8, 'res': 0.8}
+      鈿?timing=carried锛氭潯浠朵緷璧栨惡甯︽妧鑳斤紝Pet 鏋勯€犳椂绠椾竴娆★紙鏈綔 PVP 鎶€鑳界粍涓嶄腑閫斿彉锛屽彲鎺ュ彈锛?
+[鍏堟満铏瑰惛] 
+   timing=usage mode=firsthand kind=lifesteal vals={}
+[鍏夊害鎹㈢畻] 鎼哄甫鐨勭伀绯绘妧鑳借幏寰楅€夋嫨锛氫娇鐢ㄥ悗澶卞幓15%鐢熷懡锛屽厜绯绘妧鑳藉▉鍔涙案涔?30銆?
+   timing=usage mode=fire_skill kind=power_bonus vals={}
+[鍏ㄧ璐敞] 鍏ュ満鏃讹紝鑾峰緱鐗╂敾+100%锛屾瘡娆¤鍔ㄥ悗-20%銆?
+   timing=turn_start mode=first_turn kind=stat_buff vals={'atk': 0.2}
+[鍏遍福] 鎼哄甫鐨勩€岃櫕楦ｃ€嶆妧鑳藉▉鍔?20銆?
+   timing=default mode=chongming_bonus kind=power_bonus vals={}
+[鍐伴捇] 鏁屾柟鎼哄甫鎶€鑳芥€昏兘鑰楁瘡鏈?鐐癸紝鑷繁鏀诲嚮鏃跺▉鍔?10%銆?
+   timing=carried mode=skills_total_cost kind=power_multiplier vals={}
+      鈿?timing=carried锛氭潯浠朵緷璧栨惡甯︽妧鑳斤紝Pet 鏋勯€犳椂绠椾竴娆★紙鏈綔 PVP 鎶€鑳界粍涓嶄腑閫斿彉锛屽彲鎺ュ彈锛?
+[鍕囨暍] 鎼哄甫鐨勮兘鑰楀ぇ浜?鐨勬妧鑳斤紝濞佸姏+40%銆?
+   timing=action mode=skill_cost_gt_3 kind=power_multiplier vals={}
+[鍙樺舰娲荤敾] 琛屽姩鏃讹紝鏁屾柟姣忔湁1灞傚鐩婏紝鏈琛屽姩鎶€鑳藉▉鍔?10%锛岄€熷害+5銆?
+   timing=current mode=bonus_count kind=stat_buff vals={'spd': 5}
+      鈿?timing=current锛氬簲涓烘寔缁姸鎬侊紝寮曟搸鏄惁姣忓洖鍚堥噸绠楋紵
+[澶虹洰] 棰濆鑾峰緱涓変釜鏈惡甯︾殑闅忔満鎶€鑳斤紝涓旈潪鍏夌郴鎶€鑳藉▉鍔?25%銆?
+   timing=usage mode=non_light_skill kind=power_multiplier vals={}
+[瀹囧畽涔嬬溂] 鏁屾柟姣忔湁1灞傛槦闄ㄥ嵃璁帮紝鑷繁鑾峰緱鐗╅槻+10%銆?
+   timing=current mode=starfall_marks kind=stat_buff vals={'def': 0.1}
+      鈿?timing=current锛氬簲涓烘寔缁姸鎬侊紝寮曟搸鏄惁姣忓洖鍚堥噸绠楋紵
+[鎮叉偗] 宸辨柟闃熶紞涓瘡鏈?鍙姏绔殑绮剧伒锛岃嚜宸辫幏寰楀弻鏀?30%銆?
+   timing=current mode=pets_dead_count kind=stat_buff vals={'atk': 0.3, 'mag': 0.3}
+      鈿?timing=current锛氬簲涓烘寔缁姸鎬侊紝寮曟搸鏄惁姣忓洖鍚堥噸绠楋紵
+[鎮间骸] 鍙屾柟闃熶紞涓瘡鏈?鍙姏绔殑绮剧伒锛岃嚜宸辫幏寰楀弻鏀?30%銆?
+   timing=current mode=pets_dead_count kind=stat_buff vals={'atk': 0.3, 'mag': 0.3}
+      鈿?timing=current锛氬簲涓烘寔缁姸鎬侊紝寮曟搸鏄惁姣忓洖鍚堥噸绠楋紵
+[鎸鸿捣鑳歌劘] 鎼哄甫鐨勮兘鑰椾负1鐨勬妧鑳斤紝濞佸姏+50%銆?
+   timing=action mode=skill_cost_1 kind=power_multiplier vals={}
+[姘寸考椋炲崌] 宸辨柟绮剧伒姣忎娇鐢?娆℃按绯绘妧鑳?鑷繁鍏ュ満鏃惰幏寰楀叏浠呰兘鑳借€?1,涓旇兘鑰椾负0鐨勬妧鑳藉▉鍔?30%
+   timing=action mode=skill_cost_0 kind=power_multiplier vals={}
+[娓存眰] 鍏ュ満鏃惰幏寰?0%鍚歌銆?
+   timing=entrance mode=always kind=lifesteal vals={}
+[鐑堝啺閽籡 鏁屾柟鎼哄甫鎶€鑳芥€昏兘鑰楁瘡鏈?鐐癸紝鑷繁鏀诲嚮鏃跺▉鍔?10%锛岃嫢鏁屾柟鎬昏兘鑰楀ぇ浜?5锛岃嚜宸辫幏寰楅€熷害+75銆?
+   timing=carried mode=skills_total_cost kind=power_multiplier vals={}
+      鈿?timing=carried锛氭潯浠朵緷璧栨惡甯︽妧鑳斤紝Pet 鏋勯€犳椂绠椾竴娆★紙鏈綔 PVP 鎶€鑳界粍涓嶄腑閫斿彉锛屽彲鎺ュ彈锛?
+[鐩┖] 鎼哄甫鐨勯潪鍏夌郴鎶€鑳斤紝濞佸姏+25%銆?
+   timing=default mode=non_light_skill kind=power_multiplier vals={}
+[璐緱鏃犲帉] 鍏ュ満鏃惰幏寰?0%鍚歌锛屾瘡杩囬噺鍥炲5%鐢熷懡杞寲涓?0%鐗╂敾銆?
+   timing=entrance mode=always kind=lifesteal vals={}
+[閫愰瓊楦焆 鑳借€楀皬浜庣瓑浜?鐨勬敾鍑绘妧鑳斤紝鏃犳硶瀵硅嚜宸遍€犳垚浼ゅ銆?
+   timing=incoming mode=attack_skill_cost_lt_1 kind=damage_reduction vals={}
+[榻愰福] 鑷繁鎼哄甫鐨勩€岃櫕楦ｃ€嶆妧鑳藉▉鍔?20锛屽繁鏂圭簿鐏垫惡甯︾殑铏郴鎶€鑳借幏寰楀阀鍙橈細铏福銆?
+   timing=default mode=chongming_bonus kind=power_bonus vals={}
+
+鍏?22 鏉″凡鐢熸晥瑙勫垯
