@@ -81,22 +81,18 @@
    stale 自动打标）。✅ 15b7e3a（含 dash_costs 缩进回归修复）
 5. 播报敌我分流：我方出招播报确认槽位（`_last_pressed_slot` 6s 窗口，
    `_name_close` 编辑距离 1 判敌我）。✅ 2f58e81
-6. 指标：turns.jsonl 加 `skill_source` 字段。⬜ 未做（meta["sources"]
-   已备好，只差落盘）
+6. 指标：turns.jsonl 加 `skill_source` 字段。✅ d6b780c
 7. 名字带的线上触发：换精灵后对缓存 miss 的槽位调 read_band。
-   ⬜ 未做（模块已就绪）
+   ✅ 7bc8b2c（perceive.skill_pill_boxes + robot._maybe_band_scan）
 
 ## 六、当前状态
 
 | 层 | 证据源 | 状态 |
 |---|---|---|
 | session | 我方播报（每回合自动） | ✅ 已接（robot._cast_ocr） |
-| band | 卡面名字带 OCR | ✅ 模块就绪，未在线上触发 |
+| band | 卡面名字带 OCR | ✅ 已接（robot._maybe_band_scan，换精灵后触发） |
 | team_db | my_team 表 | ✅ 降为兜底，过期自动 TEAM STALE |
 
-换精灵后第一回合：team_db 兜底出招 → 播报逐个确认槽位 →
-第二回合起全部来自 session。表过期自动暴露（TEAM STALE 日志），
-不再需要人工维护每个队伍。
-
-剩余两步都是低风险增量：⑥ 只加一个日志字段；⑦ 要挑触发时机
-（换人后动画期，参照 _maybe_scan_foe 的窗口逻辑）避免占用决策窗口。
+全部 7 步完成。换精灵后第一回合：team_db 兜底出招（skill_source 记入
+turns.jsonl）→ 名字带 + 播报逐槽确认 → 第二回合起全部来自观测。
+表过期自动暴露（TEAM STALE 日志），不再需要人工维护每个队伍。
