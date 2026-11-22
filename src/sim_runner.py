@@ -24,6 +24,8 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description="批量模拟对局，输出 JSON")
     ap.add_argument("--team-a", required=True, help="逗号分隔的精灵名")
     ap.add_argument("--team-b", required=True)
+    ap.add_argument("--cfg-a", default="", help="JSON：[{iv,nature,moves,max_hp},...]")
+    ap.add_argument("--cfg-b", default="")
     ap.add_argument("--policy-a", default="smart",
                     choices=("greedy", "smart", "buff"))
     ap.add_argument("--policy-b", default="greedy",
@@ -41,8 +43,18 @@ def main(argv=None):
 
     import simulator as SIM
 
+    def jload(s):
+        if not s:
+            return None
+        try:
+            return json.loads(s)
+        except Exception:
+            return None
+
     ta = [x.strip() for x in (args.team_a or "").split(",") if x.strip()]
     tb = [x.strip() for x in (args.team_b or "").split(",") if x.strip()]
+    ca = jload(args.cfg_a)
+    cb = jload(args.cfg_b)
     ta = [x for x in ta if SIM.Dex().species(x)]
     tb = [x for x in tb if SIM.Dex().species(x)]
     if not ta or not tb:
@@ -62,7 +74,8 @@ def main(argv=None):
     for i in range(max(1, min(args.games, 500))):
         pa, pb = pa_cls(), pb_cls()
         w, t, ha, hb = SIM.run_match(dex, ta, tb, pa, pb,
-                                     seed=(args.seed or 0) + i)
+                                     seed=(args.seed or 0) + i,
+                                     cfg_a=ca, cfg_b=cb)
         wins[w if w in ("a", "b") else "draw"] += 1
         turns.append(t)
         if len(examples) < 5:

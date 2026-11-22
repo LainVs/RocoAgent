@@ -1662,22 +1662,137 @@ function goto(p) {
 
 /* ================================================================
    模拟器（POST /api/sim/run，子进程隔离）
+   —— 队伍编辑器：每侧 6 槽，精灵可配 性格/个体/技能/HP
    ================================================================ */
+const simTeams = { a: Array(6).fill(null), b: Array(6).fill(null) };
+let simSide = 'a';
+let simDexPool = [];
+let simEditorSlot = -1;
+
+function simRenderSlots() {
+  const wrap = $('simSlots');
+  wrap.innerHTML = simTeams[simSide].map((p, i) => {
+    if (!p) {
+      return `<div class="sim-slot empty" data-i="${i}"
+        style="border:1px dashed var(--line-soft);border-radius:8px;padding:10px;text-align:center;cursor:pointer;font-size:11px;color:var(--ink-3)">
+        + 槽位 ${i + 1}</div>`;
+    }
+    return `<div class="sim-slot" data-i="${i}"
+      style="border:1px solid var(--line-soft);border-radius:8px;padding:8px;cursor:pointer;font-size:11px">
+      <b>${p.name}</b><br>
+      <span style="color:var(--ink-3)">IV${p.iv ?? 60} ${p.nature || '无性格'}</span><br>
+      <span style="color:var(--ink-3)">技能 ${(p.moves || []).length} 项${p.max_hp ? ' · HP' + p.max_hp : ''}</span>
+    </div>`;
+  }).join('');
+  wrap.querySelectorAll('.sim-slot').forEach((el) => {
+    el.addEventListener('click', () => openSimEditor(+el.dataset.i));
+  });
+}
+
+async function openSimEditor(slot) {
+  simEditorSlot = slot;
+  const cur = simTeams[simSide][slot] || {};
+  $('simEdTitle').textContent = `编辑 ${simSide === 'a' ? '我方' : '对方'} 槽位 ${slot + 1}`;
+  $('simEdName').value = cur.name || '';
+  $('simEdIv').value = cur.iv ?? 60;
+  $('simEdHp').value = cur.max_hp || '';
+  if (!$('simEdNature').options.length) {
+    // 性格表首次拉一次（从任意精灵详情里拿，缓存后不再请求）
+    const r = await fetch(API + '/api/sim/species?name=' +
+      encodeURIComponent('音速犬'), { cache: 'no-store' });
+    const o = await r.json();
+    const nats = o.natures || [];
+    $('simEdNature').innerHTML =
+      '<option value="">— 无性格 —</option>' +
+      nats.map((n) => `<option>${n}</option>`).join('');
+    $('simDexList').innerHTML = (simDexPool || []).map((n) =>
+      `<option value="${n}">`).join('');
+  }
+  $('simEdNature').value = cur.nature || '';
+  $('simEdMsg').textContent = '';
+  $('simEditor').hidden = false;
+  // 技能列表：名字非空才拉
+  const mvWrap = $('simEdMoves');
+  mvWrap.innerHTML = '<span style="color:var(--ink-3);font-size:11px">先填精灵名</span>';
+  if (cur.name) await simLoadMoves(cur.name, cur.moves || []);
+}
+
+async function simLoadMoves(name, checked) {
+  const mvWrap = $('simEdMoves');
+  try {
+    const r = await fetch(API + '/api/sim/species?name=' +
+      encodeURIComponent(name), { cache: 'no-store' });
+    const o = await r.json();
+    if (o.error) {
+      mvWrap.innerHTML = `<span style="color:var(--ink-3)">${o.error}</span>`;
+      $('simEdInfo').textContent = '—';
+      return;
+    }
+    $('simEdInfo').innerHTML =
+      `属性 ${o.types.join('/')} · 特性 ${o.trait} · ` +
+      `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
+      `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
+    const want = new Set(checked);
+    mvWrap.innerHTML = (o.moves || []).map((m) => `
+      <label style="display:flex;gap:6px;align-items:center;font-size:11px">
+        <input type="checkbox" data-mid="${m.id}"
+          ${want.has(m.id) ? 'checked' : ''}>
+        ${m.name} <span style="color:var(--ink-3)">威力${m.power || 0} 耗${m.cost}</span>
+      </label>`).join('');
+  } catch (e) {
+    mvWrap.innerHTML = '拉取失败：' + e;
+  }
+}
+
+function bindSimUI() {
+  $('simSide').querySelectorAll('button').forEach((b) => {
+    b.addEventListener('click', () => {
+      simSide = b.dataset.side;
+      $('simSide').querySelectorAll('button').forEach((x) =>
+        x.classList.toggle('active', x === b));
+      simRenderSlots();
+    });
+  });
+  $('simEdName').addEventListener('change', () => {
+    const nm = $('simEdName').value.trim();
+    if (nm) simLoadMoves(nm, []);
+  });
+  $('simEdClose').addEventListener('click', () => {
+    $('simEditor').hidden = true;
+  });
+  $('simEdOk').addEventListener('click', () => {
+    const nm = $('simEdName').value.trim();
+    if (!nm) { $('simEdMsg').textContent = '先填精灵名'; return; }
+    const moves = Array.from(
+      $('simEdMoves').querySelectorAll('input:checked')).map((c) => +c.dataset.mid);
+    simTeams[simSide][simEditorSlot] = {
+      name: nm,
+      iv: Math.max(0, Math.min(100, parseInt($('simEdIv').value, 10) || 60)),
+      nature: $('simEdNature').value || null,
+      moves,
+      max_hp: parseInt($('simEdHp').value, 10) || null,
+    };
+    $('simEditor').hidden = true;
+    simRenderSlots();
+  });
+}
+
 async function runSim() {
   const btn = $('btnSimRun');
   const st = $('simStatus');
-  const parseTeam = (id) => $(id).value.split(/[,，\n]/)
-    .map((s) => s.trim()).filter(Boolean);
+  const pick = (side) => simTeams[side].filter(Boolean);
   const body = {
-    team_a: parseTeam('simTeamA'),
-    team_b: parseTeam('simTeamB'),
+    team_a: simTeams.a.filter(Boolean).map((p) => p.name),
+    team_b: simTeams.b.filter(Boolean).map((p) => p.name),
+    cfg_a: simTeams.a.filter(Boolean),
+    cfg_b: simTeams.b.filter(Boolean),
     policy_a: $('simPolA').value,
     policy_b: $('simPolB').value,
     games: Math.max(1, Math.min(200, parseInt($('simGames').value, 10) || 20)),
     seed: 0,
   };
   if (!body.team_a.length || !body.team_b.length) {
-    st.textContent = '两边队伍都要填精灵名';
+    st.textContent = '两边都要至少 1 只精灵';
     return;
   }
   btn.disabled = true;
@@ -1689,29 +1804,23 @@ async function runSim() {
       body: JSON.stringify(body),
     });
     const o = await r.json();
-    if (o.error) {
-      st.textContent = '失败：' + o.error;
-      return;
-    }
-    st.textContent = `完成（${(o.games)} 局）`;
+    if (o.error) { st.textContent = '失败：' + o.error; return; }
+    st.textContent = `完成（${o.games} 局）`;
     $('simResultCard').hidden = false;
     $('simResultSub').textContent =
       `${o.team_a.join('/')} (${o.policy_a}) vs ${o.team_b.join('/')} (${o.policy_b})`;
     $('simMetrics').innerHTML =
-      metricHtml('A 胜率', `${o.win_rate_a}%`, '', '', 
+      metricHtml('A 胜率', `${o.win_rate_a}%`, '', '',
         o.win_rate_a >= 55 ? 'win' : o.win_rate_a >= 45 ? 'warn' : 'lose') +
       metricHtml('A 胜 / B 胜', `${o.wins_a} / ${o.wins_b}`, '', '', '') +
       metricHtml('平局', o.draws, '', '', '') +
       metricHtml('平均回合', o.avg_turns, '', '', '') +
       metricHtml('中位回合', o.median_turns, '', '', '');
-    const tb = $('simTbl').querySelector('tbody');
-    tb.innerHTML = (o.examples || []).map((x) => `
+    $('simTbl').querySelector('tbody').innerHTML = (o.examples || []).map((x) => `
       <tr>
         <td>${x.game}</td>
         <td>${x.winner === 'a' ? '我方' : x.winner === 'b' ? '对方' : '平'}</td>
-        <td>${x.turns}</td>
-        <td>${x.hp_a}</td>
-        <td>${x.hp_b}</td>
+        <td>${x.turns}</td><td>${x.hp_a}</td><td>${x.hp_b}</td>
       </tr>`).join('');
   } catch (e) {
     st.textContent = '请求失败：' + e;
@@ -1721,18 +1830,22 @@ async function runSim() {
 }
 
 async function loadSimPool() {
-  // 预热：把 my_team 填进输入框（一键）
-  $('btnSimMine').addEventListener('click', async () => {
-    try {
-      const r = await fetch(API + '/api/team', { cache: 'no-store' });
-      const o = await r.json();
-      const names = (o.slots || []).map((s) => s.name).filter(Boolean);
-      $('simTeamA').value = names.join(',');
-      $('simStatus').textContent = `已填入 my_team ${names.length} 只`;
-    } catch (e) {
-      $('simStatus').textContent = 'my_team 拉取失败：' + e;
-    }
-  });
+  try {
+    const r = await fetch(API + '/api/sim/pool', { cache: 'no-store' });
+    const o = await r.json();
+    simDexPool = o.items || [];
+    $('simDexList').innerHTML = simDexPool.map((n) =>
+      `<option value="${n}">`).join('');
+  } catch (e) { /* 池子拉不到不影响手输名字 */ }
+  try {
+    const r = await fetch(API + '/api/sim/presets', { cache: 'no-store' });
+    const o = await r.json();
+    const sel = $('simPresetSel');
+    sel.innerHTML = '<option value="">— 预设队伍 —</option>' +
+      (o.presets || []).map((p) => `<option>${p.name}</option>`).join('');
+  } catch (e) { /* 同上 */ }
+  bindSimUI();
+  simRenderSlots();
 }
 
 
@@ -1746,6 +1859,85 @@ document.querySelectorAll('.nav-item').forEach((b) => {
 // 模拟器：按钮 + my_team 一键填入（进页面时绑定一次）
 loadSimPool();
 $('btnSimRun').addEventListener('click', runSim);
+$('btnSimMine').addEventListener('click', async () => {
+  try {
+    const r = await fetch(API + '/api/team', { cache: 'no-store' });
+    const o = await r.json();
+    const slots = (o.slots || []).filter((s) => s.name);
+    simTeams.a = slots.map((s) => ({
+      name: s.name, iv: 60, nature: null,
+      moves: (s.skills || []).map((k) => k.id).filter(Boolean),
+      max_hp: s.max_hp || null,
+    }));
+    while (simTeams.a.length < 6) simTeams.a.push(null);
+    simSide = 'a';
+    $('simSide').querySelectorAll('button').forEach((x) =>
+      x.classList.toggle('active', x.dataset.side === 'a'));
+    simRenderSlots();
+    toast(`已载入 my_team ${slots.length} 只`);
+  } catch (e) {
+    toast('my_team 拉取失败：' + e);
+  }
+});
+$('btnSimPresetSave').addEventListener('click', async () => {
+  const name = $('simPresetName').value.trim();
+  const team = simTeams[simSide].filter(Boolean);
+  if (!name || !team.length) { toast('先填预设名和当前侧队伍'); return; }
+  const r = await fetch(API + '/api/sim/preset/save', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ name, team }),
+  });
+  const o = await r.json();
+  toast(o.ok ? `预设「${name}」已保存` : '保存失败：' + o.msg);
+  if (o.ok) loadSimPool();
+});
+$('btnSimPresetLoad').addEventListener('click', async () => {
+  const name = $('simPresetSel').value;
+  if (!name) { toast('先选一个预设'); return; }
+  const r = await fetch(API + '/api/sim/presets', { cache: 'no-store' });
+  const o = await r.json();
+  const p = (o.presets || []).find((x) => x.name === name);
+  if (!p) { toast('预设不存在'); return; }
+  simTeams[simSide] = p.team.slice(0, 6);
+  while (simTeams[simSide].length < 6) simTeams[simSide].push(null);
+  simRenderSlots();
+  toast(`预设「${name}」已载入${simSide === 'a' ? '我方' : '对方'}`);
+});
+$('btnSimPresetDel').addEventListener('click', async () => {
+  const name = $('simPresetSel').value;
+  if (!name) { toast('先选一个预设'); return; }
+  const r = await fetch(API + '/api/sim/preset/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=utf-8' },
+    body: JSON.stringify({ name }),
+  });
+  const o = await r.json();
+  toast(o.ok ? `预设「${name}」已删除` : '删除失败：' + o.msg);
+  if (o.ok) loadSimPool();
+});
+
+// 悬浮窗：开/关（不再跳页面 —— 原来是 <a href=index.html>，
+// 在 WebView2 窗口里点它等于当前页跳走，用户以为坏了）
+$('btnOverlay').addEventListener('click', async () => {
+  const b = $('btnOverlay');
+  b.disabled = true;
+  try {
+    const r = await fetch(API + '/api/overlay/toggle', { method: 'POST' });
+    const o = await r.json();
+    if (o.ok) {
+      toast(o.action === 'started' ? '悬浮窗已启动'
+        : o.action === 'shown' ? '悬浮窗已唤到前台'
+        : (o.msg || '悬浮窗在运行'));
+    } else {
+      toast('失败：' + (o.msg || '未知'));
+    }
+  } catch (e) {
+    toast('请求失败：' + e);
+  } finally {
+    b.disabled = false;
+  }
+});
 
 $('btnStart').addEventListener('click', async () => {
   const btn = $('btnStart');

@@ -188,20 +188,37 @@ class Dex:
 class Pet:
     """场上的一只精灵。"""
 
-    def __init__(self, dex, name, iv=60, nature_hp=1.0):
+    def __init__(self, dex, name, iv=60, nature_hp=1.0, nature=None):
+        """iv：个体值（PvP 基准 60）；nature：完整性格名（config/nature_table.json）。
+
+        ★ 2026-11-22 支持完整性格（UI 模拟器需求）
+        ------------------------------------------
+        原来只有 `nature_hp`（HP 倍率），其它五项固定 1.0 ——
+        意味着模拟器里「固执」（物攻+20%）和「平和」（HP+20%）只差一项，
+        无法模拟性格对速度/物攻的真实影响。
+
+        现在 nature 传入性格名后，六项倍率全部走
+        `statmodel.nature_mult()`（31 种性格官方表）。
+        nature_hp 保留兼容旧调用方（它等价于 nature 的 hp 倍率）。
+        """
         self.name = name
         self.data = dex.species(name)
         if not self.data:
             raise ValueError("未知精灵: %s" % name)
         import statmodel as S
         b = self.data["base"]
-        self.max_hp = S.calc_real_stat(b[0], iv, nature_hp, is_hp=True)
+        mult = S.nature_mult(nature) if nature else {
+            "hp": nature_hp, "patk": 1.0, "matk": 1.0,
+            "pdef": 1.0, "mdef": 1.0, "spd": 1.0}
+        self.nature = nature
+        self.iv = iv
+        self.max_hp = S.calc_real_stat(b[0], iv, mult["hp"], is_hp=True)
         self.hp = self.max_hp
-        self.atk = S.calc_real_stat(b[1], iv, 1.0)
-        self.spa = S.calc_real_stat(b[2], iv, 1.0)
-        self.dfn = S.calc_real_stat(b[3], iv, 1.0)
-        self.spd = S.calc_real_stat(b[4], iv, 1.0)
-        self.spe = S.calc_real_stat(b[5], iv, 1.0)
+        self.atk = S.calc_real_stat(b[1], iv, mult["patk"])
+        self.spa = S.calc_real_stat(b[2], iv, mult["matk"])
+        self.dfn = S.calc_real_stat(b[3], iv, mult["pdef"])
+        self.spd = S.calc_real_stat(b[4], iv, mult["mdef"])
+        self.spe = S.calc_real_stat(b[5], iv, mult["spd"])
         self.types = self.data["types"]
         self.trait = self.data["trait"]
         self.energy = ENERGY_CAP
@@ -393,11 +410,36 @@ class BuffPolicy(Policy):
 
 # ---------------------------------------------------------------- 对局
 
-def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None):
-    """跑一局。返回 (winner, turns, hp_a, hp_b)。"""
+def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
+              cfg_a=None, cfg_b=None):
+    """跑一局。返回 (winner, turns, hp_a, hp_b)。
+
+    cfg_a/cfg_b（2026-11-22，UI 模拟器）：
+        [{"name":..., "iv":60, "nature":"固执", "moves":[技能id...],
+          "max_hp":417(可选覆盖)}, ...]
+        与 team_a/team_b 按位置对应；None 的字段用默认值。
+        moves 传入后 Pet 用指定技能而不是 Dex 学法表。
+    """
     rnd = random.Random(seed)
-    a = [Pet(dex, n) for n in team_a]
-    b = [Pet(dex, n) for n in team_b]
+
+    def build(team, cfg):
+        pets = []
+        for i, n in enumerate(team):
+            c = (cfg or [None] * len(team))[i] or {}
+            p = Pet(dex, n, iv=c.get("iv", 60),
+                    nature=c.get("nature"))
+            if c.get("moves"):
+                # UI 指定的技能：按 id 从 Dex 学法表里挑（保持顺序）
+                want = [int(x) for x in c["moves"]]
+                p.moves = [m for m in p.moves if m["id"] in want] or p.moves
+            if c.get("max_hp"):
+                p.max_hp = int(c["max_hp"])
+                p.hp = p.max_hp
+            pets.append(p)
+        return pets
+
+    a = build(team_a, cfg_a)
+    b = build(team_b, cfg_b)
     ia = ib = 0
 
     for turn in range(1, MAX_TURNS + 1):

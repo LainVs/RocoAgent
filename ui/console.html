@@ -32,13 +32,13 @@
       <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect x="1.6" y="1.6" width="6.8" height="6.8" rx="1"/></svg>
       停止
     </button>
-    <a class="btn" href="index.html" target="_blank">
+    <button class="btn" id="btnOverlay" title="开/关悬浮窗">
       <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
-        <rect x="1.2" y="1.2" width="8.6" height="8.6" rx="1.6" stroke="currentColor" stroke-width="1.1"/>
-        <path d="M1.2 4h8.6" stroke="currentColor" stroke-width="1.1"/>
+        <rect x="0.9" y="1.9" width="9.2" height="6.6" rx="1.4" stroke="currentColor" stroke-width="1.1"/>
+        <path d="M3.4 10.1h4.2" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
       </svg>
       悬浮窗
-    </a>
+    </button>
   </header>
 
   <!-- ── 主体 ──────────────────────────────────────── -->
@@ -129,7 +129,7 @@
             <span class="card-title">当前状态</span>
             <span class="card-sub" id="liveAge"></span>
             <div class="card-actions">
-              <a class="btn" href="index.html" target="_blank" style="padding:4px 9px;font-size:11px">打开悬浮窗</a>
+              <button class="btn" id="btnOverlay" style="padding:4px 9px;font-size:11px">开关悬浮窗</button>
             </div>
           </div>
           <div id="liveBody">
@@ -287,38 +287,42 @@
         <div class="card">
           <div class="card-head">
             <span class="card-title">对战模拟器</span>
-            <span class="card-sub" id="simSub">官方公式 + 官方 buff 精确值，子进程隔离跑</span>
+            <span class="card-sub">官方公式 + 官方 buff 精确值 · 可选性格/个体/技能 · 预设队伍</span>
+            <div class="card-actions">
+              <div class="seg" id="simSide">
+                <button data-side="a" class="active">我方</button>
+                <button data-side="b">对方</button>
+              </div>
+            </div>
           </div>
-          <div class="sim-form" style="display:grid;gap:10px;margin-bottom:4px">
-            <div>
-              <label style="font-size:11px;color:var(--ink-3)">我方队伍（逗号分隔精灵名）</label>
-              <textarea id="simTeamA" rows="2" style="width:100%" placeholder="音速犬,恶魔狼,银月狼王"></textarea>
-              <button class="btn" id="btnSimMine" style="padding:4px 9px;font-size:11px;margin-top:4px">填入 my_team</button>
-            </div>
-            <div>
-              <label style="font-size:11px;color:var(--ink-3)">对方队伍</label>
-              <textarea id="simTeamB" rows="2" style="width:100%" placeholder="白发路路,寂灭骨龙,水灵"></textarea>
-            </div>
-            <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ink-2)">
-              <span>我方策略</span>
-              <select id="simPolA">
-                <option value="smart">smart（击杀/换人判断）</option>
-                <option value="greedy">greedy（贪心最高伤）</option>
-                <option value="buff">buff（先增益）</option>
-              </select>
-              <span>对方策略</span>
-              <select id="simPolB">
-                <option value="greedy">greedy</option>
-                <option value="smart">smart</option>
-                <option value="buff">buff</option>
-              </select>
-              <span>局数</span>
-              <input id="simGames" type="number" value="20" min="1" max="200" style="width:64px">
-            </div>
-            <div style="display:flex;gap:10px;align-items:center">
-              <button class="btn primary" id="btnSimRun">开始模拟</button>
-              <span style="font-size:11px;color:var(--ink-3)" id="simStatus"></span>
-            </div>
+          <div id="simSlots" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:10px"></div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px">
+            <button class="btn" id="btnSimMine" style="padding:4px 9px;font-size:11px">载入 my_team 到我方</button>
+            <select id="simPresetSel" style="max-width:200px;font-size:11px">
+              <option value="">— 预设队伍 —</option>
+            </select>
+            <button class="btn" id="btnSimPresetLoad" style="padding:4px 9px;font-size:11px">载入到当前侧</button>
+            <button class="btn" id="btnSimPresetSave" style="padding:4px 9px;font-size:11px">保存当前侧</button>
+            <button class="btn" id="btnSimPresetDel" style="padding:4px 9px;font-size:11px">删除</button>
+            <input id="simPresetName" placeholder="预设名" style="width:110px;font-size:11px">
+          </div>
+          <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ink-2);margin-bottom:8px">
+            <span>我方策略</span>
+            <select id="simPolA">
+              <option value="smart">smart（击杀/换人）</option>
+              <option value="greedy">greedy</option>
+              <option value="buff">buff</option>
+            </select>
+            <span>对方策略</span>
+            <select id="simPolB">
+              <option value="greedy">greedy</option>
+              <option value="smart">smart</option>
+              <option value="buff">buff</option>
+            </select>
+            <span>局数</span>
+            <input id="simGames" type="number" value="20" min="1" max="200" style="width:64px">
+            <button class="btn primary" id="btnSimRun">开始模拟</button>
+            <span style="color:var(--ink-3)" id="simStatus"></span>
           </div>
         </div>
         <div class="card" id="simResultCard" hidden>
@@ -332,6 +336,40 @@
               <thead><tr><th>局</th><th>胜方</th><th>回合</th><th>我方余血</th><th>对方余血</th></tr></thead>
               <tbody></tbody>
             </table>
+          </div>
+        </div>
+
+        <!-- 精灵编辑弹层（选性格/个体/技能/HP） -->
+        <div id="simEditor" hidden style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center">
+          <div style="background:#fff;border-radius:10px;padding:16px;min-width:520px;max-width:640px;max-height:82vh;overflow:auto;color:#222">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+              <b id="simEdTitle">编辑精灵</b>
+              <button class="btn" id="simEdClose" style="padding:3px 9px">关闭</button>
+            </div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:10px">
+              <div>
+                <label style="font-size:10px;color:#888">精灵名</label>
+                <input id="simEdName" list="simDexList" placeholder="输入/选择" style="width:150px">
+                <datalist id="simDexList"></datalist>
+              </div>
+              <div>
+                <label style="font-size:10px;color:#888">性格</label>
+                <select id="simEdNature"></select>
+              </div>
+              <div>
+                <label style="font-size:10px;color:#888">个体值 (0-100)</label>
+                <input id="simEdIv" type="number" value="60" min="0" max="100" style="width:70px">
+              </div>
+              <div>
+                <label style="font-size:10px;color:#888">最大HP覆盖</label>
+                <input id="simEdHp" type="number" placeholder="留空=按公式" style="width:100px">
+              </div>
+            </div>
+            <div id="simEdInfo" style="font-size:11px;color:#555;margin-bottom:8px">—</div>
+            <label style="font-size:10px;color:#888">技能（勾选 4 个，顺序=卡槽顺序）</label>
+            <div id="simEdMoves" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:6px 0 12px;max-height:220px;overflow:auto"></div>
+            <button class="btn primary" id="simEdOk" style="padding:5px 14px">确定</button>
+            <span style="font-size:11px;color:#888;margin-left:8px" id="simEdMsg"></span>
           </div>
         </div>
       </section>

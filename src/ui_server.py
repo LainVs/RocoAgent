@@ -1166,6 +1166,78 @@ def sim_species_pool():
         return {"error": str(e), "items": []}
 
 
+SIM_PRESETS = os.path.join(ROOT, "data", "sim_presets.json")
+
+
+def sim_preset_list():
+    """预设队伍清单（存 data/sim_presets.json，无库依赖）。"""
+    try:
+        with io.open(SIM_PRESETS, encoding="utf-8") as fh:
+            return {"presets": json.load(fh)}
+    except Exception:
+        return {"presets": []}
+
+
+def sim_preset_save(body):
+    """保存/覆盖一个预设：{name, team:[{name,iv,nature,moves,max_hp}], note}"""
+    name = (body.get("name") or "").strip()
+    team = body.get("team") or []
+    if not name or not team:
+        return {"ok": False, "msg": "缺 name 或 team"}
+    presets = sim_preset_list().get("presets") or []
+    entry = {"name": name,
+             "team": team[:6],
+             "note": (body.get("note") or "")[:120],
+             "at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    presets = [p for p in presets if p.get("name") != name]
+    presets.append(entry)
+    try:
+        os.makedirs(os.path.dirname(SIM_PRESETS), exist_ok=True)
+        with io.open(SIM_PRESETS, "w", encoding="utf-8") as fh:
+            json.dump(presets, fh, ensure_ascii=False, indent=1)
+        return {"ok": True, "count": len(presets)}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+def sim_preset_delete(body):
+    name = (body.get("name") or "").strip()
+    if not name:
+        return {"ok": False, "msg": "缺 name"}
+    presets = sim_preset_list().get("presets") or []
+    presets = [p for p in presets if p.get("name") != name]
+    try:
+        with io.open(SIM_PRESETS, "w", encoding="utf-8") as fh:
+            json.dump(presets, fh, ensure_ascii=False, indent=1)
+        return {"ok": True}
+    except Exception as e:
+        return {"ok": False, "msg": str(e)}
+
+
+def sim_species_detail(name):
+    """单只精灵的完整资料：种族值/特性/可学技能/官方性格表。
+    UI 选完精灵后拉这一条来填个体/性格/技能。"""
+    import simulator as _SIM
+    dex = _SIM.Dex()
+    s = dex.species(name or "")
+    if not s:
+        return {"error": "图鉴查不到: %s" % name}
+    import statmodel as _S
+    base = s["base"]
+    panel_std = _S.panel({k: base[i] for i, k in enumerate(
+        ("hp", "patk", "matk", "pdef", "mdef", "spd"))},
+        {k: 60 for k in ("hp", "patk", "matk", "pdef", "mdef", "spd")})
+    return {
+        "name": s["name"], "id": s["id"], "types": s["types"],
+        "trait": s["trait"],
+        "base": {"hp": base[0], "patk": base[1], "matk": base[2],
+                 "pdef": base[3], "mdef": base[4], "spd": base[5]},
+        "panel_iv60": panel_std,
+        "moves": dex.moves(s["id"]),
+        "natures": sorted(k for k in _S.natures().keys() if k != "neutral"),
+    }
+
+
 def sim_run(body):
     """跑一场模拟对局（POST /api/sim/run）。
 
@@ -1198,6 +1270,12 @@ def sim_run(body):
            "--team-b", ",".join(team_b),
            "--policy-a", pol_a, "--policy-b", pol_b,
            "--games", str(games), "--seed", str(seed)]
+    ca = body.get("cfg_a")
+    cb = body.get("cfg_b")
+    if ca:
+        cmd += ["--cfg-a", json.dumps(ca, ensure_ascii=False)]
+    if cb:
+        cmd += ["--cfg-b", json.dumps(cb, ensure_ascii=False)]
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=180)
         out = p.stdout.decode("utf-8", errors="replace")
@@ -1212,7 +1290,61 @@ def sim_run(body):
         return {"error": "%s: %s" % (type(e).__name__, e)}
 
 
-# ============================================================ 日志增量
+# ============================================================ 悬浮窗控制
+# 2026-11-22：控制台里的「悬浮窗」按钮原来是 <a href=index.html>，
+# 在 WebView2 窗口里点它 = 当前窗口跳到悬浮窗页面，不是开悬浮窗。
+#
+# 正解：悬浮窗是独立进程（src/overlay.py），有自己的单实例锁
+# （logs/overlay.pid）和「已运行就不重复启动」逻辑。
+# 这里做两个动作：
+#   1. 没在跑 -> Popen 启动（detached，不随 ui_server 退出）
+#   2. 已在跑 -> 用 Win32 找到它的窗口，SW_SHOW + 前台（它可能被折叠/隐藏）
+def overlay_status():
+    pid = 0
+    pf = os.path.join(ROOT, "logs", "overlay.pid")
+    try:
+        with io.open(pf, encoding="utf-8") as f:
+            pid = int(f.read().strip())
+    except Exception:
+        pid = 0
+    alive = False
+    if pid > 0:
+        try:
+            os.kill(pid, 0)
+            alive = True
+        except OSError:
+            alive = False
+    return {"pid": pid if alive else 0, "running": alive}
+
+
+def overlay_toggle():
+    import ctypes
+    st = overlay_status()
+    exe = sys.executable or "python"
+    src = os.path.dirname(os.path.abspath(__file__))
+    if not st["running"]:
+        try:
+            subprocess.Popen(
+                [exe, "-W", "ignore", "-X", "utf8",
+                 os.path.join(src, "overlay.py")],
+                cwd=src, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=0x00000008 | 0x00000200)  # DETACHED|NEW_GROUP
+            return {"ok": True, "action": "started"}
+        except Exception as e:
+            return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
+    # 已在跑：找到它的窗口并唤到前台
+    hwnd = ctypes.windll.user32.FindWindowW(None, "RocoAgent · 对战悬浮窗")
+    if not hwnd:
+        # 标题可能带变化，退而求其次按进程枚举太重；先提示
+        return {"ok": True, "action": "running",
+                "msg": "悬浮窗已在运行（pid %d），若看不到请看任务栏" % st["pid"]}
+    UD = ctypes.windll.user32
+    UD.ShowWindow(hwnd, 5)          # SW_SHOW
+    UD.SetForegroundWindow(hwnd)
+    return {"ok": True, "action": "shown"}
+
+
 def log_chunk(offset=0, max_bytes=48 * 1024):
     """按字节 offset 返回新增日志。前端带着上次的 offset 来拉。
 
@@ -1997,9 +2129,18 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/sim/pool":
             return self._json(sim_species_pool())
 
+        if path == "/api/sim/species":
+            return self._json(sim_species_detail(q.get("name") or ""))
+
+        if path == "/api/sim/presets":
+            return self._json(sim_preset_list())
+
         if path == "/api/sim/run":
             # POST only；GET 到这里给个提示
             return self._json({"error": "use POST /api/sim/run"})
+
+        if path == "/api/overlay/status":
+            return self._json(overlay_status())
 
         if path == "/api/portraits":
             return self._json(portraits_pending(
@@ -2049,6 +2190,15 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/run":
             return self._json(sim_run(body))
+
+        if path == "/api/overlay/toggle":
+            return self._json(overlay_toggle())
+
+        if path == "/api/sim/preset/save":
+            return self._json(sim_preset_save(body))
+
+        if path == "/api/sim/preset/delete":
+            return self._json(sim_preset_delete(body))
 
         if path == "/api/portrait/skip":
             return self._json(portrait_skip(
