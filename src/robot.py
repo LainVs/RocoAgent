@@ -123,6 +123,33 @@ from policy_legacy import (  # noqa: F401
 
 
 # ------------------------------------------------------------------ main loop
+def _name_close(a, b, tol=1):
+    """播报 OCR 的名字与已知名字是否接近（容忍错 1 个字）。
+
+    RapidOCR 对 HUD 白字黑边实测偶有 1 字错误（"音速犬"->"音速天"），
+    严格相等会漏掉一半播报。编辑距离 1 + 长度差 <=1 足够区分敌我
+    （我方 5 只名字两两差异远大于 1）。
+    """
+    if not a or not b:
+        return False
+    a, b = a.strip(), b.strip()
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+    # 编辑距离 <= tol
+    if len(a) < len(b):
+        a, b = b, a
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1] <= tol
+
+
 def _foe_hp_max(name):
     """对面最大血量：`foe_hp`（statmodel half-up）优先，`pvp_engine` 兜底。
 
@@ -1458,14 +1485,13 @@ class Bot:
         the model - the caller then falls back to the legacy decide().
         """
         import policy_v2
-        import pvp_engine as E
 
         my_name = self.my_name
         foe_name = self.foe_name
         if not my_name or not foe_name:
             return None, "policy_v2: pet identity unknown"
 
-        my_max = E.max_hp(my_name)
+        my_max = _foe_hp_max(my_name)
         foe_max = _foe_hp_max(foe_name)
         if not my_max or not foe_max:
             return None, "policy_v2: %s not in dataset" % (
@@ -1694,8 +1720,8 @@ class Bot:
                 continue
             if slot == getattr(self, "active_slot", None):
                 continue
-            import pvp_engine as E
-            mx = E.max_hp(name) or 1
+            # 统一用 _foe_hp_max（statmodel half-up 口径），与决策层一致
+            mx = _foe_hp_max(name) or 1
             pct = self.slot_hp.get(slot)
             hp = mx if pct is None else max(0, int(mx * pct / 100.0))
             out.append({"name": name, "hp": hp, "hp_max": mx,
@@ -2452,11 +2478,43 @@ class Bot:
                 return
             import re
             if "使出了" in text:
+                head = text.split("使出了", 1)[0]
                 tail = text.split("使出了", 1)[1]
                 tail = re.sub(r"[！!\s]", "", tail)
                 import ocr_cn
                 name, sc = ocr_cn.Ocr.match(tail, self._skill_vocab())
+                # ---- 分流：是我方还是对面在播报 ----
+                #
+                # 播报不分敌我，两边都用"XX 使出了 YY"句式。把 head 与
+                # 双方当前名字比对（编辑距离容忍 OCR 错 1 个字）：
+                #   · 我方 -> 确认 (my_name, 最近按过的槽位) 的技能
+                #   · 对面 -> 喂 foe_moves（原有行为）
+                my = getattr(self, "my_name", None)
+                is_mine = bool(my) and _name_close(head, my)
                 foe = getattr(self, "foe_name", None)
+                if is_mine and name and sc >= 0.6:
+                    # 播报延迟 1~3 秒；只在窗口内采信，避免跨回合错配
+                    slot = getattr(self, "_last_pressed_slot", None)
+                    pressed_at = getattr(self, "_last_pressed_at", 0.0)
+                    if slot and 0 < time.time() - pressed_at < 6.0:
+                        import session_moves as SM
+                        prev = SM.get(my, slot)
+                        if prev != name:
+                            SM.confirm(my, slot, name, src="session")
+                            log("CAST -> 我方 %s 槽%d = %s (播报, %.2f)"
+                                % (my, slot, name, sc))
+                            # 表配置与实机不一致时提醒（只提示不阻断）
+                            try:
+                                import perceive as _P
+                                meta = _P._skill_meta(my)
+                                tname = meta["names"].get(slot - 1)
+                                if tname and tname != name:
+                                    SM.note_team_stale(my)
+                                    log("TEAM STALE: %s 槽%d 表=%s 实读=%s"
+                                        % (my, slot, tname, name))
+                            except Exception:
+                                pass
+                    return
                 if name and sc >= 0.6 and foe:
                     import foe_moves
                     if foe_moves.skill(name):
@@ -3589,6 +3647,11 @@ class Bot:
         ok = False
         if action[0] == "skill":
             ok = self.send_key(action[1])
+            if ok:
+                # 记下"最近按过的槽位"：1~2 秒后播报"音速犬 使出了 X"时，
+                # 由此把 X 归到这个槽位（session_moves 的确认证据）。
+                self._last_pressed_slot = action[1]
+                self._last_pressed_at = time.time()
         elif action[0] == "energy":
             ok = self.send_key("f")
         elif action[0] == "switch":
@@ -4511,7 +4574,7 @@ class Bot:
                 dmg = self._best_damage(name, foe)
                 inc = E.worst_incoming(foe, name, top=1)
                 taken = inc[0]["dmg"] if inc else 0
-                hp = E.max_hp(name) or 1
+                hp = _foe_hp_max(name) or 1
                 score = dmg / 200.0 - taken / float(hp)
             except Exception as e:
                 skipped.append("slot%d:%s" % (slot, type(e).__name__))

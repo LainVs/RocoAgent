@@ -102,6 +102,8 @@
 | `test_priority.py` | 先发制人：能反杀才用 / 打不死不硬用 / 不压过高伤害 |
 | `test_state_bus.py` | 状态总线 |
 | `test_avatar_ident.py` | 头像通道：银行 / 高置信不出错 / 候选池 / 融合链 |
+| `test_session_moves.py` | 我方技能动态解析：确认/撤销/落盘/stale/ROI |
+| `test_cast_route.py` | 播报敌我分流：名字编辑距离 + 槽位归因 |
 
 ## 四、队伍编辑（原管理面板的功能）
 
