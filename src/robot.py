@@ -1740,6 +1740,49 @@ class Bot:
         # 过线、且 species 能查出来就采纳（形态选错无害，
         # `_portrait_species()` 会归一到种族名）。
         _ok = (name is not None and sc >= 0.55)
+        if not _ok:
+            # ---- ONNX 立绘模型兜底（2026-11-22 深夜）
+            #
+            # 模板匹配受限于"模板库质量"（清理后 p50 只有 0.57），
+            # 实测识别率停在 58%。而 `portrait_onnx` 在 HUD 头像上：
+            #
+            #     60 张真实抓帧：conf>=0.90 占 70%，中位 conf=0.99
+            #     耗时：首次 368ms，之后 16ms（模型常驻）
+            #
+            # 它认的是**立绘**，不是名字 —— 用户改名不影响。
+            #
+            # ⚠ 不做 `my_team` 白名单过滤：
+            #   实测实盘队伍可能**不在 my_team 表里**（用户会临时换精灵，
+            #   之前也见过"表里 5 只 60 级、实际打的是冥古龙 89 级"）。
+            #   用白名单会把真实的当前精灵挡掉。
+            #   改为要求：conf >= 0.90 **且** 名字能查到种族。
+            if now - getattr(self, "_self_onnx_at", 0.0) >= 3.0:
+                self._self_onnx_at = now
+                try:
+                    import portrait_onnx as _PO
+                    if _PO.available():
+                        res = _PO.predict_region(self.screen, "self", topk=3)
+                        for _nm, _conf in (res or [])[:3]:
+                            if _conf < 0.90:
+                                break
+                            sp = self._portrait_species(_nm, "self")
+                            if not sp:
+                                continue
+                            log("PET -> %s (ONNX %.2f) -> %s"
+                                % (_nm, _conf, sp))
+                            name, sc = _nm, _conf
+                            self.active_pet = _nm
+                            self.pet_at = now
+                            self.my_score = _conf
+                            if sp != self.my_name:
+                                self.my_name = sp
+                                log("PET -> species %s (ONNX)" % sp)
+                            if self.cur_slot:
+                                self.slot_species[self.cur_slot] = sp
+                                self.bench_names[self.cur_slot] = sp
+                            return
+                except Exception as e:
+                    log("PET -> ONNX failed: %s: %s" % (type(e).__name__, e))
         if _ok:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
@@ -2036,11 +2079,29 @@ class Bot:
         return best[1], best[0], margin
 
     def _portrait_species(self, stem, side):
-        """头像文件名 -> 种族名。wolf.png 这种老文件名靠库里的映射。"""
+        """头像文件名 -> 种族名。wolf.png 这种老文件名靠库里的映射。
+
+        ★ 形态名归一（2026-11-22 深夜）
+        ------------------------------
+        ONNX 返回的是**形态全名**，例如
+        `卡瓦重（雪山附近的样子）`，它的 species_id 是 2000000031（形态），
+        而本体 `卡瓦重` 是 3296 —— 伤害模型 / policy_v2 只认本体。
+
+        所以全名查到的是"形态 id"时，去掉括号再查一次本体。
+        """
         try:
             import portrait_db
+            import re as _re
             sid = portrait_db.species_of(stem + ".png", side)
-            return portrait_db.species_name(sid) if sid else None
+            nm = portrait_db.species_name(sid) if sid else None
+            base = _re.sub(r"[（(][^）)]*[）)]", "", stem).strip()
+            if base and base != stem:
+                sid2 = portrait_db.species_of(base + ".png", side)
+                nm2 = portrait_db.species_name(sid2) if sid2 else None
+                if nm2:
+                    # 本体名优先（形态 id 在伤害模型里查不到）
+                    return nm2
+            return nm
         except Exception:
             return None
 
