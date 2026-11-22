@@ -499,6 +499,108 @@ def _h_enemy_lose_energy_self_mp(pet, foe, params, ctx):
         pet.name, amt, battle.magic[side])
 
 
+def _h_slot_lock(pet, foe, params, ctx):
+    """SKILL_SLOT_LOCK（正位宝剑/宝剑王牌）：仅可使用指定槽位的技能。
+
+    params: {"allowed_slots": [0]} / [0, 2]。挂 pet._allowed_slots（集合），
+    Battle.step 技能选择时消费（锁外槽回落到第一个允许槽）。
+    """
+    slots = params.get("allowed_slots") or []
+    if not slots:
+        return None
+    pet._allowed_slots = set(int(s) for s in slots)
+    return "%s 技能槽锁定：仅可用 %s 号位" % (
+        pet.name, "/".join(str(s + 1) for s in sorted(pet._allowed_slots)))
+
+
+def _h_auto_switch(pet, foe, params, ctx):
+    """AUTO_SWITCH_ON_ZERO_ENERGY / AUTO_SWITCH_AFTER_ACTION：
+    回合末自动脱离（警惕/星地善良/防过载保护/奔波鬃）。
+
+    条件在 Battle 的 turn-end 块判定（需要能量/本回合动作上下文），
+    这里只挂触发器标记：pet._autoswitch = "zero_energy" | "after_action"。
+    奔波鬃的「用过防御技能」由 Battle 记录本回合动作后判定。
+    """
+    key = pet.name
+    battle = getattr(pet, "_battle", None) or (ctx or {}).get("battle")
+    if battle is None:
+        return None
+    marks = getattr(battle, "_autoswitch", None)
+    if marks is None:
+        marks = {}
+        battle._autoswitch = marks
+    if pet in getattr(battle, "a", []) or pet in getattr(battle, "b", []):
+        pass
+    # 按载体名区分语义（nrc 数据两组 params 全空，靠特性名映射）
+    trait = getattr(pet, "trait", "") or ""
+    kind = None
+    if trait == "\u8b66\u60d5":                       # 警惕
+        kind = "zero_energy_self"
+    elif trait == "\u661f\u5730\u5584\u826f":         # 星地善良
+        kind = "zero_energy_replace"
+    elif trait == "\u9632\u8fc7\u8f7d\u4fdd\u62a4":   # 防过载保护
+        kind = "after_action"
+    elif trait == "\u5954\u6ce2\u9b03":               # 奔波鬃
+        kind = "defense_used"
+    if not kind:
+        return None
+    marks[key] = kind
+    return "%s 自动脱离触发器已挂（%s）" % (pet.name, kind)
+
+
+def _h_counter_accumulate(pet, foe, params, ctx):
+    """COUNTER_ACCUMULATE_TRANSFORM（保卫/腾挪/好象坏象）：
+    特定类别应对成功 N 次 → 回满状态 + 变为棋绮后（白/黑子按载体）。
+
+    params: {"threshold": N, "category_filter": "攻击|防御|状态"}
+    ctx["my_category"]（我方应对技类别）由 Battle 的应对判定传入。
+    """
+    # category_filter 指的是**我方应对技**的类别（保卫=防御技应对 /
+    # 腾挪=攻击技应对 / 好象坏象=状态技应对，原文口径），与被应对方的
+    # 类别（ctx["category"]）不同。skill_category 返回英文。
+    my_cat = (ctx or {}).get("my_category") or ""
+    _cat_cn = {"attack": "\u653b\u51fb", "defense": "\u9632\u5fa1",
+               "status": "\u72b6\u6001"}.get(my_cat, my_cat)
+    want = params.get("category_filter") or ""
+    threshold = int(params.get("threshold") or 1)
+    if not my_cat or _cat_cn != want:
+        return None
+    acc = getattr(pet, "_counter_acc", None)
+    if acc is None:
+        acc = {}
+        pet._counter_acc = acc
+    acc[my_cat] = acc.get(my_cat, 0) + 1
+    n = acc[my_cat]
+    if n < threshold:
+        return "%s %s\u5e94\u5bf9 %d/%d \u6b21" % (pet.name, _cat_cn, n,
+                                                  threshold)
+    # 达阈值：回满状态 + 变身棋绮后
+    battle = getattr(pet, "_battle", None)
+    import simulator as _S
+    name = getattr(pet, "name", "")
+    target = ("\u68cb\u7eee\u540e\uff08\u767d\u5b50\uff09"
+              if "\u767d\u5b50" in name
+              else "\u68cb\u7eee\u540e\uff08\u9ed1\u5b50\uff09")
+    old = pet.name
+    pet.rebuild_as(_S.Dex() if False else _dex_of(pet), target)
+    # 回满状态（原文：回满状态）
+    pet.hp = pet.max_hp
+    pet.energy = _S.ENERGY_CAP
+    st = getattr(pet, "status", None)
+    if st:
+        st.clear()
+    pet.atk_buff = 0.0
+    pet.def_buff = 0.0
+    return "%s %s应对 %d 次！回满状态，变身 → %s" % (
+        pet.name, _cat_cn, n, target)
+
+
+def _dex_of(pet):
+    """从 pet._battle 取 dex（变身重算用）。"""
+    battle = getattr(pet, "_battle", None)
+    return battle.dex if battle is not None else None
+
+
 def _h_kill_mp_penalty(pet, foe, params, ctx):
     """KILL_MP_PENALTY（付给恶魔的赎价）：
     ON_KILL 时机（pet=击杀者，foe 已倒下）→ 敌方魔力 -1；
@@ -770,6 +872,11 @@ HANDLERS = {
     # S12 ABILITY_COMPUTE：开场技能改写引擎（溶解扩散/不移/快锤/暴食/
     # 冻土/飓风），消费点在 Battle
     "ABILITY_COMPUTE": _h_ability_compute,
+    # S13 SKILL_SLOT_LOCK / AUTO_SWITCH / COUNTER_ACCUMULATE_TRANSFORM
+    "SKILL_SLOT_LOCK": _h_slot_lock,
+    "AUTO_SWITCH_ON_ZERO_ENERGY": _h_auto_switch,
+    "AUTO_SWITCH_AFTER_ACTION": _h_auto_switch,
+    "COUNTER_ACCUMULATE_TRANSFORM": _h_counter_accumulate,
     # S12 飓风的被击败时机：ENEMY_LOSE_ENERGY target=self_mp →
     # 自己魔力 -1（与 KILL_MP_PENALTY 的 ON_FAINT 同语义）
 }
@@ -818,6 +925,7 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
     cat = skill_category(foe_move)
     if not cat:
         return [], False
+    ctx["category"] = cat                    # S13：COUNTER_ACCUMULATE 消费
     hit = False
     out = []
     rows = skill_rows(skill_name)

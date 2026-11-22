@@ -1497,6 +1497,30 @@ class Battle:
                         skill_a = pet.moves[p_idx]
                     else:
                         skill_b = pet.moves[p_idx]
+        # S13 SKILL_SLOT_LOCK：锁外槽回落到第一个允许槽（🟡 假设：
+        # 游戏内不可选，模拟器策略层按允许槽过滤）
+        def _lock_slot(pet, idx):
+            allowed = getattr(pet, "_allowed_slots", None)
+            if not allowed or idx is None:
+                return idx
+            if idx in allowed and idx < len(pet.moves):
+                return idx
+            for s in sorted(allowed):
+                if s < len(pet.moves):
+                    return s
+            return idx
+
+        if ka == "skill":
+            pa = _lock_slot(me, pa)
+        if kb == "skill":
+            pb = _lock_slot(foe, pb)
+        # S13 奔波鬃：记录本回合是否用过防御技能（turn-end 判定脱离）
+        for _p, _mv in ((me, skill_a), (foe, skill_b)):
+            _p._used_defense_this_turn = False
+        for _p, _mv in ((me, skill_a), (foe, skill_b)):
+            if _mv is not None and \
+                    nrc_fx.skill_category(_mv) == "defense":
+                _p._used_defense_this_turn = True
         skill_a = me.moves[pa] if (ka == "skill" and pa is not None
                                    and pa < len(me.moves)) else skill_a
         skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
@@ -1711,6 +1735,15 @@ class Battle:
                                            _ctx)
             for e in evs:
                 events.append(e)
+            # S13：应对判定时把类别写进 ctx（COUNTER_ACCUMULATE 消费）
+            #   category    = 被应对方（对方技能）的类别
+            #   my_category = 我方应对技的类别（保卫=防御技应对/腾挪=攻击技应对）
+            if hit and _ctx.get("category") is None:
+                from nrc_fx import skill_category as _sc
+                _ctx["category"] = _sc(omv)
+            if hit:
+                from nrc_fx import skill_category as _sc2
+                _ctx["my_category"] = _sc2(mv)
             # 能耗操纵（骑士敕令/瞬间零度）：应对成功 → 对方**下一回合**
             # 技能能耗+N（挂 self._cost_up_next，begin_turn 时转入本回合）
             if hit and _ctx.get("enemy_cost_up"):
@@ -1747,7 +1780,7 @@ class Battle:
                 if not trait_lib.supported_rules(
                         getattr(owner, "trait", None)):
                     for e in nrc_fx.trait_fire(owner, other,
-                                               "ON_COUNTER_SUCCESS"):
+                                               "ON_COUNTER_SUCCESS", _ctx):
                         events.append(e)
         # 处理聚能
         if ka == "energy":
@@ -2176,6 +2209,69 @@ class Battle:
             if not trait_lib.supported_rules(getattr(p, "trait", None)):
                 for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
                     events.append(e)
+
+        # S13 自动脱离（警惕/防过载保护/奔波鬃/星地善良）：
+        # turn-end 判定条件 → 复用脱离换人（清增益 → 第一个存活替补入场，
+        # 能量回满 —— 与 S6.10 脱离同一路径）。
+        # 每侧一回合只脱离一次；无替补 → 不脱离。
+        _aswitch = getattr(self, "_autoswitch", {}) or {}
+        if _aswitch:
+            for side, active, other_active in (("a", me, foe),
+                                               ("b", foe, me)):
+                if self.done:
+                    break
+                if active is None or not active.alive:
+                    continue
+                kind = _aswitch.get(active.name)
+                if not kind:
+                    continue
+                bench_sw = self.bench(side)
+                if not bench_sw:
+                    continue
+                _do = False
+                if kind == "zero_energy_self" and active.energy <= 0:
+                    _do = True                      # 警惕
+                elif kind == "after_action":
+                    _do = True                      # 防过载保护
+                elif kind == "defense_used" and \
+                        getattr(active, "_used_defense_this_turn", False):
+                    _do = True                      # 奔波鬃
+                elif kind == "zero_energy_replace":
+                    # 星地善良：己方场上精灵能量 0 → holder 替换之
+                    _holder = None
+                    for cand in (self.a if side == "a" else self.b):
+                        if cand is active or not cand.alive:
+                            continue
+                        if (getattr(cand, "trait", "") or "") == \
+                                "\u661f\u5730\u5584\u826f":
+                            _holder = cand
+                            break
+                    if active.energy <= 0 and _holder is not None:
+                        _do = True
+                if not _do:
+                    continue
+                old = active.name
+                nrc_fx.clear_buffs(active)
+                _idx = bench_sw[0] if kind != "zero_energy_replace" else \
+                    next(i for i, cand in
+                         enumerate(self.a if side == "a" else self.b)
+                         if cand is _holder)
+                if side == "a":
+                    self.ia = _idx
+                    self.a[self.ia].energy = ENERGY_CAP
+                    me = self.a[self.ia]
+                    new_name = me.name
+                    switched_a = True
+                else:
+                    self.ib = _idx
+                    self.b[self.ib].energy = ENERGY_CAP
+                    foe = self.b[self.ib]
+                    new_name = foe.name
+                    switched_b = True
+                events.append("%s %s 自动脱离，换上 %s"
+                              % ("我方" if side == "a" else "对方",
+                                 old, new_name))
+                break
 
         if not any(p.alive for p in self.a):
             self.magic["a"] = max(0, self.magic.get("a", _bf.MAGIC_LIVES) - 1)
