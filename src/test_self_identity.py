@@ -91,6 +91,26 @@ if fn is not None:
         check("保护看的是 ONNX 置信度", "0.85" in seg)
         check("avatar 自身很高时仍可覆盖", "0.75" in seg)
 
+# ---- 第三通道（旧模板库）必须降级为只兜底、不覆盖 ------------------
+#
+# 2026-11-23 07:2x 目视核对 14 个有效模板，标签几乎全错：
+#   wolf/wolf_leader -> 粉白狐狸、冰钻布鲁斯 -> 橙色小圆兽、
+#   卡瓦重#15 -> 紫色蝙蝠、恶魔狼#2 -> 蓝色狮子。
+# 这些模板却把 my_name 改成 音速犬#4/护主犬#2，污染 BAND 的技能池。
+print("\n== 第三通道（旧模板库）==")
+seg = ast.get_source_segment(SRC, fn) or ""
+check("第三通道有 _trusted 判断（ONNX 高分时不跑）", "_trusted" in seg)
+check("第三通道门槛 >= 0.62", "sc >= 0.62" in seg,
+      "旧值 0.55 会把编号残骸模板放进来")
+# 关键：第三通道不得再给 self.my_name 赋值
+tail = seg[seg.find("旧模板库（标签不可靠"):] if "旧模板库（标签不可靠" in seg else ""
+if not tail:
+    # 注释里的括弧可能是全角，退一步按 _trusted 定位
+    tail = seg[seg.find("_trusted"):] if "_trusted" in seg else ""
+assigns_myname = "self.my_name = sp" in tail
+check("第三通道不改写 my_name", not assigns_myname,
+      "模板标签已证伪，改写身份会污染 BAND 技能池校验")
+
 print()
 if FAIL:
     print("FAILED %d: %s" % (len(FAIL), ", ".join(FAIL)))

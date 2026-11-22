@@ -2007,24 +2007,43 @@ class Bot:
         # 现在用 0.55：高于错误族的最高值 0.48，留 0.07 余量；
         # 低于正确族的最低值 0.57。
         #
-        # margin 的坑：同族形态（银月狼王 #2 / #7 / #8）互相竞争，
-        # margin 中位只有 0.02。所以**不能靠 margin 卡**，只要分数
-        # 过线、且 species 能查出来就采纳（形态选错无害，
-        # `_portrait_species()` 会归一到种族名）。
-        _ok = (name is not None and sc >= 0.55)
+        # ⚠⚠ 2026-11-23 07:2x：这条判据的**前提已被证伪**。
+        # 把 14 个有效模板全部目视核对（logs/../portrait_templates.png），
+        # 标签几乎全错：
+        #
+        #     wolf / wolf_leader   -> 粉白狐狸（不是恶魔狼）
+        #     冰钻布鲁斯           -> 橙色小圆兽（完全不对）
+        #     卡瓦重#15            -> 紫色蝙蝠（完全不对）
+        #     恶魔狼#2             -> 蓝色狮子
+        #     护主犬 / 护主犬#2    -> 蓝白小兽（这两个倒是一致）
+        #
+        # 也就是说"正确种族 0.57~0.71 / 错误种族 0.37~0.48"这组标定，
+        # 是在**错标的模板**上测出来的 —— 它保证了"分数能过线"，
+        # 但从没保证"过线的名字是对的"。
+        #
+        # 实测后果（07:19~07:22）：`PET -> 音速犬#4 (0.70)` /
+        # `护主犬#2 (0.62)` 直接把 my_name 改写，而 ONNX 同一时刻给的是
+        # 恶魔狼 1.00。BAND 随之用错精灵的技能池，真实卡面（恶魔狼的
+        # 火焰切割）被"正确但无意义"地拒绝 —— 用户看到的"技能识别不准"。
+        #
+        # 修法：第三通道降级为**只兜底、不覆盖**。
+        #   1. 门槛 0.55 -> 0.62（编号模板多为批量截图残骸，须更高分）
+        #   2. ONNX 已高分确认（>=0.85）时完全不跑这一通道
+        #   3. 即便跑了，也只用它填 cur_slot 槽位表，不改 my_name
+        _upper = float(getattr(self, "_self_onnx_conf", 0.0) or 0.0)
+        _trusted = _upper >= 0.85
+        _ok = (name is not None and sc >= 0.62 and not _trusted)
         if _ok:
             if name != self.active_pet:
-                log("PET -> %s (%.2f)" % (name, sc))
+                log("PET -> %s (%.2f, 旧模板兜底)" % (name, sc))
                 self.active_pet = name
                 self.pet_at = now
                 # 真的换了一只 -> 投票历史作废，避免旧名字拖住新身份
                 getattr(self, "_pet_votes", {}).clear()
-            # policy_v2 认的是种族名（音速犬），不是模板文件名（wolf）。?
             self.my_score = sc
             sp = self._portrait_species(name, "self")
-            if sp and sp != self.my_name:
-                self.my_name = sp
-                log("PET -> species %s" % sp)
+            # ⚠ 只记槽位，**不改 my_name**：这套模板的标签已证伪，
+            # 让它改写身份会污染 BAND 的技能池校验。
             if sp and self.cur_slot:
                 # 我方 6 只不靠手填也能知道：上场时认出来就记下槽位。?
                 if self.slot_species.get(self.cur_slot) != sp:
