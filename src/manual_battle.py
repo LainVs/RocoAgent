@@ -127,8 +127,23 @@ class Session:
                              "author": "", "source": ""}
 
             self.seed = int(seed or 0)
-            self.bt = SIM.Battle(dex, ta, tb, cfg_a=cfg_a, cfg_b=cb,
-                                 seed=self.seed)
+            # S8 血脉缺省：cfg 未配 bloodline 的精灵回退主系
+            # （实战玩家用秘药改血脉，主系是最常见缺省；显式配置覆盖）
+            # 必须在 Battle 构造前填好——血脉门控发生在 Pet 构造时。
+            ca = list(cfg_a or [])
+            while len(ca) < len(ta):
+                ca.append(None)
+            for i, n in enumerate(ta):
+                c = ca[i] if isinstance(ca[i], dict) else {}
+                if not c.get("bloodline"):
+                    sp = dex.species(n)
+                    if sp and sp.get("types"):
+                        c["bloodline"] = sp["types"][0]
+                ca[i] = c
+            # S8：共鸣魔法（我方默认带愿力强化——血脉已配置的队才有意义）
+            self.bt = SIM.Battle(dex, ta, tb, cfg_a=ca, cfg_b=cb,
+                                 seed=self.seed,
+                                 magic_kind_a="愿力强化")
             self.pol_b = POLICIES.get(policy_b, SIM.SmartPolicy)()
             # 天气 / 印记（2026-11-22）：开局时设定，整局有效
             self.bt.set_weather(str(weather or "none"))
@@ -241,6 +256,19 @@ class Session:
             elif kind == "buff":
                 payload = None
                 self.actions.append({"turn": self.bt.turn, "kind": "buff"})
+            elif kind == "magic":
+                # S8 愿力强化（共鸣魔法）：payload = 0。
+                # 精灵本回合第一格替换为血脉愿力冲击并出手。
+                st = self.bt.magic_state["a"]
+                if st["used"] >= 2:
+                    return {"error": "愿力强化每场只能用 2 次"}
+                if st["cd"] > 0:
+                    return {"error": "愿力强化冷却中（还剩 %d 回合）" % st["cd"]}
+                if not getattr(me, "_yuanli_mv", None) and \
+                        not getattr(self.bt.me, "bloodline", None):
+                    return {"error": "我方精灵没有配置血脉（bloodline）"}
+                payload = 0
+                self.actions.append({"turn": self.bt.turn, "kind": "magic"})
             else:
                 return {"error": "未知动作 %s" % kind}
 
@@ -305,6 +333,17 @@ class Session:
                               "alive": bool(p.alive)}
                              for i, p in enumerate(bt.b)],
                 "meta": self.meta,
+                # S8 愿力强化（共鸣魔法）状态：UI 按钮用
+                "magic": {
+                    "name": bt.team_magic.get("a") or "",
+                    "used": bt.magic_state["a"]["used"],
+                    "max_uses": 2,
+                    "cd": bt.magic_state["a"]["cd"],
+                    "usable": (bt.team_magic.get("a") == "愿力强化"
+                               and bt.magic_state["a"]["used"] < 2
+                               and bt.magic_state["a"]["cd"] == 0
+                               and bool(getattr(bt.me, "bloodline", None))),
+                },
                 "events": events or [],
                 "log": self.log[-MAX_LOG:],
                 "fx": (self.bt.mark_state() if self.bt else {}),

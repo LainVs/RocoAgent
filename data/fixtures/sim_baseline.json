@@ -19,7 +19,7 @@
    "winner": "b",
    "turns": 5,
    "hp_a": 0,
-   "hp_b": 428
+   "hp_b": 776
   },
   {
    "case": "mirror",
@@ -37,7 +37,7 @@
    "policy_b": "smart",
    "seed": 1,
    "winner": "a",
-   "turns": 5,
+   "turns": 6,
    "hp_a": 428,
    "hp_b": 0
   },
@@ -59,7 +59,7 @@
    "winner": "b",
    "turns": 5,
    "hp_a": 0,
-   "hp_b": 428
+   "hp_b": 776
   },
   {
    "case": "fire_vs_ice",
@@ -131,8 +131,8 @@
    "policy_b": "greedy",
    "seed": 0,
    "winner": "a",
-   "turns": 13,
-   "hp_a": 765,
+   "turns": 14,
+   "hp_a": 315,
    "hp_b": 0
   },
   {
@@ -157,8 +157,8 @@
    "policy_b": "greedy",
    "seed": 1,
    "winner": "a",
-   "turns": 11,
-   "hp_a": 1182,
+   "turns": 15,
+   "hp_a": 618,
    "hp_b": 0
   },
   {
@@ -183,8 +183,8 @@
    "policy_b": "greedy",
    "seed": 2,
    "winner": "a",
-   "turns": 11,
-   "hp_a": 1182,
+   "turns": 15,
+   "hp_a": 618,
    "hp_b": 0
   },
   {
@@ -201,9 +201,9 @@
    "policy_b": "greedy",
    "seed": 0,
    "winner": "b",
-   "turns": 4,
+   "turns": 3,
    "hp_a": 0,
-   "hp_b": 107
+   "hp_b": 420
   },
   {
    "case": "greedy_pair",
@@ -219,9 +219,9 @@
    "policy_b": "greedy",
    "seed": 1,
    "winner": "b",
-   "turns": 4,
+   "turns": 3,
    "hp_a": 0,
-   "hp_b": 107
+   "hp_b": 420
   },
   {
    "case": "greedy_pair",
@@ -237,9 +237,9 @@
    "policy_b": "greedy",
    "seed": 2,
    "winner": "b",
-   "turns": 4,
+   "turns": 3,
    "hp_a": 0,
-   "hp_b": 107
+   "hp_b": 420
   },
   {
    "case": "buff_policy",

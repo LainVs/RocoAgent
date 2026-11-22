@@ -199,6 +199,7 @@ class Dex:
         self._sp = {}
         self._sk = {}
         self._trait = {}
+        self._rkpp = None
 
     def species(self, name):
         if name in self._sp:
@@ -257,6 +258,71 @@ class Dex:
                         "type": r["type_name"]})
         return out
 
+    # ------------------------------------------------------ S8 伤害类别/血脉
+    def damage_type(self, skill_id):
+        """技能伤害类别（rkpp-official 权威数据，见 resolve_skill 文档）。
+
+        缺数据按物理（2）处理 —— 与旧行为一致。
+        """
+        if self._rkpp is None:
+            self._load_rkpp()
+        v = self._rkpp.get(str(skill_id))
+        return int(v.get("damage_type") or 2) if v else 2
+
+    def _load_rkpp(self):
+        import io as _io
+        p = os.path.join(ROOT, "data", "external", "rkpp-official",
+                         "skills_official.json")
+        try:
+            self._rkpp = json.load(_io.open(p, encoding="utf-8")).get(
+                "skills") or {}
+        except Exception:
+            self._rkpp = {}
+
+    def blood_skills(self, species_id):
+        """血脉技能表：{type_id: skill_id}（species_skills.source='blood'）。
+
+        每个系别血脉一个 lv15 专属技能；学它必须改到对应血脉
+        （rocokingdomtools 原文：一种血脉，一个技能）。
+        同名多行（迪莫 3004 有血脉行 / 8007 没有）→ 按**名字**取并集。
+        """
+        nm = self.db.execute("SELECT name FROM species WHERE id=?",
+                             (species_id,)).fetchone()
+        if not nm:
+            return {}
+        rows = self.db.execute(
+            "SELECT ss.skill_id, s.type_id FROM species_skills ss "
+            "JOIN skills s ON s.id=ss.skill_id "
+            "JOIN species sp ON sp.id=ss.species_id "
+            "WHERE sp.name=? AND ss.source='blood'", (nm["name"],)).fetchall()
+        out = {}
+        for r in rows:
+            if r["type_id"] is not None:
+                out[int(r["type_id"])] = int(r["skill_id"])
+        return out
+
+    def yuanli_move(self, type_id, counter=False):
+        """愿力冲击：按血脉系别取对应行。
+
+        ⚠ id 与 type_id **不是**连续偏移（7700001=普/7700002=草/7700003=火
+        /7700004=水/7700005=光/7700007=地/…7700019=幻），必须按
+        (name, type_id) 查表。base 版 power 80；「应对！」版 power 200
+        是应对状态的预乘行——引擎里应对加成按 desc 解析，配置一律给 base。
+        """
+        nm = ("\u5e94\u5bf9\uff01\u613f\u529b\u51b2\u51fb" if counter
+              else "\u613f\u529b\u51b2\u51fb")
+        row = self.db.execute(
+            "SELECT id,name,power,cost,type_name FROM skills "
+            "WHERE name=? AND type_id=? ORDER BY id LIMIT 1",
+            (nm, int(type_id))).fetchone()
+        if row is None:
+            return None
+        return {"id": row["id"], "name": row["name"],
+                "power": int(row["power"] or 0),
+                "cost": int(row["cost"] or 0),
+                "type": row["type_name"],
+                "damage_type": self.damage_type(row["id"])}
+
     def resolve_skill(self, ref):
         """按 **id 或名字** 取一个技能（含 power=0 的辅助技能）。
         为什么单独要这一步（2026-11-22，接真实玩家阵容时发现）
@@ -271,7 +337,15 @@ class Dex:
         原来按学法表过滤，169 套里的技能只有 26% 能解析；改成直接查
         skills 表后是 **4042/4056 = 99.7%**（缺的 14 条是活动技能）。
 
-        返回 {"id","name","power","cost","type"} 或 None。
+        S8（2026-11-22）：附带 **damage_type**（rkpp-official 权威数据，
+        与 roco-cal 物攻/魔攻分类 346 技零冲突）：
+            1 = 变化技（power=0）
+            2 = 物理攻击（atk vs def）
+            3 = 魔法攻击（spa vs spd/魔抗）
+            4 = 动态（愿力冲击：双攻取高，防守用对应项）
+        旧调用方拿到的 dict 多了一个键，不影响既有解包。
+
+        返回 {"id","name","power","cost","type","damage_type"} 或 None。
         """
         if ref is None:
             return None
@@ -294,7 +368,8 @@ class Dex:
         return {"id": row["id"], "name": row["name"],
                 "power": int(row["power"] or 0),
                 "cost": int(row["cost"] or 0),
-                "type": row["type_name"]}
+                "type": row["type_name"],
+                "damage_type": self.damage_type(row["id"])}
 
     def skills_for(self, name, with_meta=False):
         """某只精灵的**完整**可学技能表（S5 优先，形态变体取并集）。
@@ -361,7 +436,7 @@ class Pet:
     """场上的一只精灵。"""
 
     def __init__(self, dex, name, iv=60, nature_hp=1.0, nature=None,
-                 invest=None):
+                 invest=None, bloodline=None):
         """iv/nature/invest：PvP 真实建模（2026-11-22 修正，用户指出）。
 
         ★ 个体值正确建模：**选三项投 60，其余 0**
@@ -381,6 +456,11 @@ class Pet:
         invest：[项名...] 要投 60 的项（"hp"/"atk"/"spa"/"def"/"spd"/"spe"），
                 缺省 ["hp","atk","spe"]（天梯最常见的攻速体三投资）。
         nature：完整性格名（31 种官方表），决定六项倍率。
+
+        S8 血脉：bloodline = 系别名（"火"），决定
+          · 愿力冲击的系别（愿力强化共鸣魔法按血脉取行）
+          · 血脉专属技能能否学习（一种血脉一个技能，lv15）
+        None = 未配置：血脉技能一律不可用（保守——不能瞎猜血脉）。
         """
         self.name = name
         self.data = dex.species(name)
@@ -410,8 +490,19 @@ class Pet:
                                     mult["spd"])
         self.types = self.data["types"]
         self.trait = self.data["trait"]
+        # S8 血脉：系别名。愿力冲击/血脉技能都按它取行。
+        self.bloodline = bloodline
         self.energy = ENERGY_CAP
         self.moves = dex.moves(self.data["id"])
+        # S8 血脉门控：默认学法表里的 blood 行，血脉不符 → 剔除。
+        # （一种血脉一个技能：学它必须改到对应血脉）
+        bl_id = _type_id_by_name(dex, self.bloodline) if self.bloodline \
+            else None
+        blood = dex.blood_skills(self.data["id"])
+        if blood:
+            self.moves = [m for m in self.moves
+                          if m["id"] not in blood.values()
+                          or blood.get(bl_id) == m["id"]]
         # buff 数值来自 roco-cal 的真实技能数据（不是虚构的"每层 +20%"）。
         #
         # 实测（2026-11-21，roco-cal skills/*.json 607 个技能）：
@@ -488,9 +579,42 @@ class Pet:
 
 # ---------------------------------------------------------------- 伤害
 
+def _type_id_by_name(dex, name):
+    """系别名 -> type_id（S8 血脉用）。找不到返回 None。"""
+    try:
+        r = dex.db.execute("SELECT id FROM types WHERE name=?",
+                           (name,)).fetchone()
+        return int(r["id"]) if r else None
+    except Exception:
+        return None
+
+
+def _yl_tid_name(dex, tid):
+    """type_id -> 系别名（S8 播报用）。"""
+    try:
+        r = dex.db.execute("SELECT name FROM types WHERE id=?",
+                           (tid,)).fetchone()
+        return r["name"] if r else str(tid)
+    except Exception:
+        return str(tid)
+
+
+# S8：触发「首个技能替换为愿力冲击」的特性 -> 替换成的系别
+# （BWIKI 特性列表 + roco-cal traits/generic_stack）
+YUANLI_TRAITS = {
+    "\u88c1\u51b3": 17,   # 裁决 -> 光
+    "\u6ecb\u517b": 3,    # 滋养 -> 草
+    "\u70b9\u71c3": 1,    # 点燃 -> 火
+    "\u51c0\u5316": 2,    # 净化 -> 水
+}
+
+
 def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
-                first=False):
+                first=False, extra_power_bonus=0):
     """用真实的 roco-cal 引擎算伤害（含特性/印记修正）。
+
+    extra_power_bonus：调用方附加的威力加成（S8 应对状态
+    「本次威力+150%」由 Battle 解析 desc 后传进来）。
 
     增益按 roco-cal 的真实公式处理（damresult.py）：
         buff_numerator = 1 + atk_up + enemy_def_down
@@ -523,7 +647,7 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     else:
         self_damage_pct = 0.0
     power = max(0, int(int(move["power"]) * float(power_mult)
-                       + int(power_bonus)))
+                       + int(power_bonus) + int(extra_power_bonus)))
     # 天气 + 印记（2026-11-22）：两者都作用在**威力**上，和 roco-cal 的
     # effective_power 一致。天气/印记挂在 Battle 上，通过 pet._battle 取；
     # 拿不到就当没有（策略单独调用 calc_damage 时也是这个行为）。
@@ -561,12 +685,42 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     dfn = defender.dfn * (1.0 + defender.def_buff
                           + getattr(defender, "trait_def_buff", 0.0)
                           + getattr(defender, "trait_tmp_def", 0.0))
+    # S8 伤害类别（rkpp damage_type，与 roco-cal 物攻/魔攻零冲突）：
+    #   2=物理 atk vs def（旧行为）  3=魔法 spa vs spd
+    #   4=动态（愿力冲击：双攻取高，防守按取中的那项）
+    # 通用攻/防增益（atk_buff/def_buff）对两条路径都生效 —— roco-cal
+    # damresult.py L677-686：物攻吃 atk/def、魔攻吃 mag/res，同一份增益。
+    dt = int(move.get("damage_type") or 2)
+    if dt == 3:
+        atk = attacker.spa * (1.0 + attacker.atk_buff
+                              + getattr(attacker, "trait_atk_buff", 0.0)
+                              + getattr(attacker, "trait_tmp_atk", 0.0))
+        dfn = defender.spd * (1.0 + defender.def_buff
+                              + getattr(defender, "trait_def_buff", 0.0)
+                              + getattr(defender, "trait_tmp_def", 0.0))
+    elif dt == 4:
+        _ea = attacker.atk * (1.0 + attacker.atk_buff
+                              + getattr(attacker, "trait_atk_buff", 0.0)
+                              + getattr(attacker, "trait_tmp_atk", 0.0))
+        _es = attacker.spa * (1.0 + attacker.atk_buff
+                              + getattr(attacker, "trait_atk_buff", 0.0)
+                              + getattr(attacker, "trait_tmp_atk", 0.0))
+        if _es > _ea:                      # 原文：双攻更高的一项
+            atk, dfn = _es, defender.spd * (1.0 + defender.def_buff
+                                            + getattr(defender,
+                                                      "trait_def_buff", 0.0)
+                                            + getattr(defender,
+                                                      "trait_tmp_def", 0.0))
+        else:
+            atk, dfn = _ea, dfn
+    calc_damage.last_damage_type = dt
     dmg = DMG.damage(int(atk), int(dfn), power,
                      type_eff=eff, stab=stab)
     dmg *= trait_lib.incoming_mult(defender, move)
     dmg *= getattr(defender, "taken_mult", 1.0)
     calc_damage.last_self_damage_pct = self_damage_pct
     calc_damage._last_burst = burst_applied
+    calc_damage.last_type_eff = eff          # S8：裁决类特性要读克制倍率
     return max(1, int(dmg))
 
 
@@ -738,7 +892,8 @@ class Battle:
     """
 
     def __init__(self, dex, team_a, team_b, cfg_a=None, cfg_b=None,
-                 seed=None, magic_a=None, magic_b=None):
+                 seed=None, magic_a=None, magic_b=None,
+                 magic_kind_a=None, magic_kind_b=None):
         self.dex = dex
         self.rnd = random.Random(seed)
         self.a = self._build(team_a, cfg_a)
@@ -762,6 +917,12 @@ class Battle:
         # 奉献（S6.13）：己方队伍计数器，影响啃咬/虫群系技能
         self.devotion = {"a": 0, "b": 0}
         self._first_turn_done = set()  # 首回合增益已触发（可轮转重置）
+        # S8 共鸣魔法（愿力强化）：每队带 1 个，冷却 3 回合、每场 2 次。
+        # 触发后**本回合**技能栏第一格替换为血脉系别的愿力冲击。
+        # ⚠ magic_a/magic_b 是 4 格魔力（生命制），共鸣魔法用 magic_kind_*
+        self.magic_state = {"a": {"used": 0, "cd": 0},
+                            "b": {"used": 0, "cd": 0}}
+        self.team_magic = {"a": magic_kind_a, "b": magic_kind_b}
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -803,12 +964,14 @@ class Battle:
         return max(0, base + d + cost_up)
 
     def eff_spe(self, side, pet):
-        """实际速度（减速印记 -10 / 特性 speed_buff）。"""
+        """实际速度（减速印记 -10 / 特性 speed_buff / S8 裁决类攻防速层数）。"""
         import battle_fx
         sp = pet.spe + battle_fx.mark_speed_delta(self.marks.get(side) or {})
         # 特性给的速度加成（烈冰钻：敌方总能耗>25 时 +75；变形活画：
         # 敌方增益层 x5）。挂在 pet._trait_speed，由 begin_turn 重算。
         sp += int(getattr(pet, "_trait_speed", 0) or 0)
+        # S8 裁决/滋养/点燃/净化：攻防速 +20%/层（克制伤害次数）
+        sp += int(pet.spe * getattr(pet, "_adv_speed", 0) or 0)
         return sp
 
     def mark_state(self):
@@ -831,7 +994,8 @@ class Battle:
             c = cfg[i] or {}
             p = Pet(self.dex, n, iv=c.get("iv", 60),
                     nature=c.get("nature"),
-                    invest=c.get("invest"))
+                    invest=c.get("invest"),
+                    bloodline=c.get("bloodline"))
             if c.get("moves"):
                 # 技能：接受**id 或名字**，顺序 = 卡槽顺序。
                 # 真实玩家阵容（lineup_lib）给的是名字，UI 给的是 id，
@@ -839,18 +1003,35 @@ class Battle:
                 # ★ resolve 失败时用 desc_fx/authority_fx 的效果构造
                 #   虚拟技能条目（power=0），确保 heal/buff 等不丢——
                 #   氧循环 heal 回复 0 就是这条路径漏了。
+                # S8 血脉门控：blood 技能只有改到对应血脉才能学。
                 picked = []
                 import nrc_fx as _nfx
+                blood = self.dex.blood_skills(p.data["id"])
+                bl_id = _type_id_by_name(self.dex, p.bloodline) \
+                    if p.bloodline else None
+                # 本物种血脉技能名 -> type_id（同名多行：每个物种的
+                # 血脉技能行有独立 id，按名字匹配后要**换成本物种的行**）
+                blood_names = {}
+                for _tid, _sid in blood.items():
+                    _r = self.dex.resolve_skill(_sid)
+                    if _r:
+                        blood_names[_r["name"]] = _tid
                 for x in c["moves"]:
                     mv = self.dex.resolve_skill(x)
-                    if mv:
-                        picked.append(mv)
-                    else:
+                    if mv is None:
                         fx = _nfx.desc_effects(str(x))
                         if fx:
                             picked.append({"id": 0, "name": str(x),
                                            "power": 0, "cost": 0,
                                            "type": None})
+                        continue
+                    if mv["name"] in blood_names:
+                        if blood_names[mv["name"]] != bl_id:
+                            continue    # 血脉技能但血脉不符/未配置
+                        _bmv = self.dex.resolve_skill(blood[bl_id])
+                        if _bmv:
+                            mv = _bmv   # 换成本物种的血脉行（id 精确）
+                    picked.append(mv)
                 if picked:
                     p.moves = picked[:8]
             if c.get("max_hp"):
@@ -909,6 +1090,10 @@ class Battle:
         if self.ib >= len(self.b):
             self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
             return False
+        # S8 共鸣魔法冷却：每回合 -1
+        for st in self.magic_state.values():
+            if st["cd"] > 0:
+                st["cd"] -= 1
         # 特性：入场首回合的临时增益（`专注力` 这类）+ 倒下数动态增益
         # （悲悯/悼亡，timing=current，每次出手前重算）
         import trait_lib
@@ -984,7 +1169,12 @@ class Battle:
         """执行一个回合两边的动作，返回本回合的事件列表（给 UI 展示）。
 
         动作格式同 Policy.choose 的返回值 (kind, payload)，
-        kind ∈ {"skill","energy","switch","buff"}。
+        kind ∈ {"skill","energy","switch","buff","magic"}。
+
+        S8 "magic"：愿力强化（共鸣魔法）。payload = 0。
+        使用后**本回合**技能栏第一格替换为血脉系别的愿力冲击，
+        精灵当回合的动作就是用这个愿力冲击（游戏原文：使用后技能栏
+        第一个技能本回合被替换为愿力冲击）。冷却 3 回合、每场 2 次。
 
         结算用到的 battle_fx（场地/魔力）在方法里引入，别名 _bf。
         """
@@ -1017,10 +1207,63 @@ class Battle:
         enemy_cost_up = {"a": 0, "b": 0}
 
         # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
+        # S8 愿力强化："magic" 动作 → 本回合第一格替换为血脉愿力冲击。
+        # 替换发生在取技能对象**之前**，这样 nrc ON_USE_SKILL / 应对判定 /
+        # 出手全走愿力冲击这一招（与游戏语义一致）。
+        for side, kind, pet in (("a", ka, me), ("b", kb, foe)):
+            if kind != "magic":
+                continue
+            st = self.magic_state[side]
+            if st["used"] >= 2:
+                events.append("%s 愿力强化已用完 2 次" %
+                              ("我方" if side == "a" else "对方"))
+                continue
+            if st["cd"] > 0:
+                events.append("%s 愿力强化冷却中（还剩 %d 回合）" %
+                              ("我方" if side == "a" else "对方", st["cd"]))
+                continue
+            bl = getattr(pet, "bloodline", None)
+            tid = _type_id_by_name(self.dex, bl) if bl else None
+            ymv = self.dex.yuanli_move(tid) if tid is not None else None
+            if ymv is None:
+                events.append("%s 没有可用血脉，愿力强化落空" %
+                              ("我方" if side == "a" else "对方"))
+                continue
+            st["used"] += 1
+            st["cd"] = 3
+            pet._yuanli_turn = self.turn
+            pet._yuanli_mv = ymv
+            events.append("%s 愿力强化！本回合第一格替换为 %s系愿力冲击"
+                          % ("我方" if side == "a" else "对方",
+                             ymv.get("type") or "?"))
         skill_a = me.moves[pa] if (ka == "skill" and pa is not None
                                    and pa < len(me.moves)) else None
         skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
                                     and pb < len(foe.moves)) else None
+        # S8 裁决类特性：第一格持久替换为该系愿力冲击
+        # （优先级低于本回合的愿力强化替换——后者直接覆盖）
+        if ka == "skill" and pa == 0 and \
+                getattr(me, "_yuanli_turn", None) != self.turn:
+            _ot = getattr(me, "_yuanli_override", None)
+            if _ot is not None:
+                skill_a = self.dex.yuanli_move(_ot)
+        if kb == "skill" and pb == 0 and \
+                getattr(foe, "_yuanli_turn", None) != self.turn:
+            _ot = getattr(foe, "_yuanli_override", None)
+            if _ot is not None:
+                skill_b = self.dex.yuanli_move(_ot)
+        # 愿力强化替换：选了第一格（slot 1）且本回合被替换 → 用愿力冲击
+        if ka == "skill" and pa == 0 and \
+                getattr(me, "_yuanli_turn", None) == self.turn:
+            skill_a = me._yuanli_mv
+        if kb == "skill" and pb == 0 and \
+                getattr(foe, "_yuanli_turn", None) == self.turn:
+            skill_b = foe._yuanli_mv
+        # magic 动作本身：精灵当回合出手 = 第一格（已替换为愿力冲击）
+        if ka == "magic":
+            skill_a = getattr(me, "_yuanli_mv", None)
+        if kb == "magic":
+            skill_b = getattr(foe, "_yuanli_mv", None)
 
         # nrc-ai 手写的**技能效果**（139 个技能）与**特性 ON_USE_SKILL**。
         # 属性增益优先走官方数值（skill_buff），nrc 只补它没有的东西：
@@ -1177,6 +1420,9 @@ class Battle:
         # 打断（S6.8）：应对成功时，若我方技能带「打断」→ 敌方本回合
         # 技能作废（含 buff/状态效果）。
         counter_first = {"a": False, "b": False}
+        # S8 应对状态威力加成（愿力冲击：应对状态：本次威力+150%）。
+        # desc 里「应对…威力+N%」→ 应对成功的那一手威力 +N%。
+        counter_power_bonus = {"a": 0, "b": 0}
         for owner, other, mv, omv, side in (
                 (me, foe, skill_a, skill_b, "a"),
                 (foe, me, skill_b, skill_a, "b")):
@@ -1197,6 +1443,14 @@ class Battle:
                     _ctx["enemy_cost_up"]
             if hit:
                 counter_first[side] = True
+                # S8：应对状态威力加成（desc：应对状态：本次威力+150%）
+                import re as _re_cb
+                _mv_desc_cb = (_skill_desc(mv.get("id"))
+                               if mv.get("id") else "") or ""
+                m_cb = _re_cb.search(r"威力\s*[+＋]\s*(\d+)\s*%",
+                                     _mv_desc_cb)
+                if m_cb:
+                    counter_power_bonus[side] = int(m_cb.group(1))
                 # 打断：我方技能描述含「打断」→ 对方本回合效果作废
                 _desc_txt = (_skill_desc(mv.get("id"))
                              if mv.get("id") else "") or ""
@@ -1427,35 +1681,41 @@ class Battle:
                     events.append("奉献威力 +%d（累计 %d 次）"
                                   % (_bonus, _cnt))
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
-        if (not switched_a and not skip_act["a"] and ka == "skill"
-                and pa is not None and pa < len(me.moves)):
+        # S8：kind=="magic" 时精灵本回合出手 = 第一格（愿力冲击），
+        # 已在 skill_a/skill_b 处赋值，这里直接用。
+        if (not switched_a and not skip_act["a"] and ka in ("skill", "magic")):
             # 蓄力中的回合：只有正在释放蓄力完成技的才出手，其他技不上
             if getattr(me, "charging", 0) == 1 and not charge_release["a"]:
                 events.append("我方蓄力中（%s），本回合无法行动"
                               % getattr(me, "charge_skill", "?"))
             else:
-                mv = me.moves[pa]
-                cost = self.eff_cost("a", mv) + enemy_cost_up.get("a", 0)
-                if cost <= me.energy:
-                    me.energy -= cost
-                    acts.append((self.eff_spe("a", me), "a", me, foe, mv))
+                mv = skill_a
+                if mv is None:
+                    pass
                 else:
-                    events.append("我方能量不足（含能耗操纵 +%.0f），%s 没放出来"
-                                  % (enemy_cost_up.get("a", 0), mv["name"]))
-        if (not switched_b and not skip_act["b"] and kb == "skill"
-                and pb is not None and pb < len(foe.moves)):
+                    cost = self.eff_cost("a", mv) + enemy_cost_up.get("a", 0)
+                    if cost <= me.energy:
+                        me.energy -= cost
+                        acts.append((self.eff_spe("a", me), "a", me, foe, mv))
+                    else:
+                        events.append("我方能量不足（含能耗操纵 +%.0f），%s 没放出来"
+                                      % (enemy_cost_up.get("a", 0), mv["name"]))
+        if (not switched_b and not skip_act["b"] and kb in ("skill", "magic")):
             if getattr(foe, "charging", 0) == 1 and not charge_release["b"]:
                 events.append("对方蓄力中（%s），本回合无法行动"
                               % getattr(foe, "charge_skill", "?"))
             else:
-                mv = foe.moves[pb]
-                cost = self.eff_cost("b", mv) + enemy_cost_up.get("b", 0)
-                if cost <= foe.energy:
-                    foe.energy -= cost
-                    acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
+                mv = skill_b
+                if mv is None:
+                    pass
                 else:
-                    events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"
-                                  % (enemy_cost_up.get("b", 0), mv["name"]))
+                    cost = self.eff_cost("b", mv) + enemy_cost_up.get("b", 0)
+                    if cost <= foe.energy:
+                        foe.energy -= cost
+                        acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
+                    else:
+                        events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"
+                                      % (enemy_cost_up.get("b", 0), mv["name"]))
         # 迅捷技追加到 acts（优先于所有普通出手 —— 原文：入场立即使用）
         acts.extend(swift_acts)
         # （原文：先手度更高的技能忽略速度差异优先释放，可叠加），
@@ -1470,11 +1730,38 @@ class Battle:
         for idx, (_spe, who, atk, dfn, mv) in enumerate(acts):
             if not atk.alive or not dfn.alive:
                 continue
-            d = calc_damage(atk, dfn, mv, first=(idx == 0))
+            d = calc_damage(atk, dfn, mv, first=(idx == 0),
+                            extra_power_bonus=counter_power_bonus.get(
+                                who, 0))
             dfn.hp = max(0, dfn.hp - d)
             events.append("%s %s → %s -%d（剩 %d/%d）"
                           % ("我方" if who == "a" else "对方",
                              mv["name"], dfn.name, d, dfn.hp, dfn.max_hp))
+            # S8 应对状态威力加成播报（只在本回合应对成功的技能上）
+            if counter_power_bonus.get(who):
+                events.append("%s 应对状态威力 +%d%%"
+                              % ("我方" if who == "a" else "对方",
+                                 counter_power_bonus[who]))
+                counter_power_bonus[who] = 0    # 一次性的
+            # S8 裁决/滋养/点燃/净化：造成克制伤害后
+            #   攻防速 +20%/次（叠加）、回复 2 能量、
+            #   首个技能替换为该系愿力冲击。
+            _eff_now = getattr(calc_damage, "last_type_eff", 1.0)
+            _yl_tid = YUANLI_TRAITS.get(getattr(atk, "trait", ""))
+            if _eff_now > 1.0 and _yl_tid is not None:
+                atk._adv_stacks = getattr(atk, "_adv_stacks", 0) + 1
+                atk.trait_atk_buff = getattr(atk, "trait_atk_buff", 0.0) + 0.2
+                atk.trait_def_buff = getattr(atk, "trait_def_buff", 0.0) + 0.2
+                atk._adv_speed = 0.2 * atk._adv_stacks
+                atk.energy = min(ENERGY_CAP, atk.energy + 2)
+                atk._yuanli_override = _yl_tid
+                events.append("%s %s 生效（克制伤害 ×%d）：攻防速 +20%%"
+                              "（累计 %d 层）、能量 +2、"
+                              "第一格替换为%s系愿力冲击"
+                              % ("我方" if who == "a" else "对方",
+                                 atk.trait, atk._adv_stacks,
+                                 atk._adv_stacks,
+                                 _yl_tid_name(self.dex, _yl_tid)))
             # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
             gain = battle_fx.mark_on_skill(
                 self.marks.get(who) or {}, self.eff_cost(who, mv))

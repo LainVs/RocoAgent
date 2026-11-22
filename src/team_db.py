@@ -49,6 +49,12 @@ def connect(path=DB_PATH):
     db = sqlite3.connect(path)
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    # S8：血脉列（旧库迁移）。NULL = 未配置血脉。
+    try:
+        db.execute("ALTER TABLE my_team ADD COLUMN bloodline TEXT")
+        db.commit()
+    except sqlite3.OperationalError:
+        pass                      # 列已存在
     return db
 
 
@@ -165,14 +171,17 @@ def save_pet(slot, data, path=DB_PATH):
                 row[s] = data[s]
         if "moves" in data:
             row["moves"] = json.dumps(list(data["moves"] or []))
+        if "bloodline" in data:
+            row["bloodline"] = data["bloodline"]
         row["updated_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
         db.execute(
             "INSERT OR REPLACE INTO my_team(slot,species_id,level,nature_id,hp,atk,"
-            "spa,def,spd,spe,max_hp,moves,note,updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            "spa,def,spd,spe,max_hp,moves,note,updated_at,bloodline) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (slot, row["species_id"], row["level"], row["nature_id"], row["hp"],
              row["atk"], row["spa"], row["def"], row["spd"], row["spe"],
-             row["max_hp"], row["moves"], row["note"], row["updated_at"]))
+             row["max_hp"], row["moves"], row["note"], row["updated_at"],
+             row.get("bloodline")))
         db.commit()
         return dict(db.execute("SELECT * FROM my_team WHERE slot=?", (slot,)).fetchone())
     finally:
@@ -205,6 +214,7 @@ def dump_team(path=DB_PATH):
             "feature": feat.get("name"),
             "level": p.get("level") or 60,
             "nature_id": p.get("nature_id"),
+            "bloodline": p.get("bloodline"),
             "stats": {s: p.get(s) for s in STATS},
             "max_hp": p.get("max_hp"),
             "moves": p.get("moves") or [],
@@ -243,12 +253,15 @@ if __name__ == "__main__":
         if "--moves" in a:
             raw = a[a.index("--moves") + 1]
             data["moves"] = [m.strip() for m in raw.split(",") if m.strip()]
+        if "--bloodline" in a:
+            data["bloodline"] = a[a.index("--bloodline") + 1].strip()
         if "--level" in a:
             data["level"] = int(a[a.index("--level") + 1])
         if "--max-hp" in a:
             data["max_hp"] = int(a[a.index("--max-hp") + 1])
         if not data:
-            print("没有要改的字段。可用：--species --nature --moves --level --max-hp")
+            print("没有要改的字段。可用：--species --nature --moves "
+                  "--bloodline --level --max-hp")
             sys.exit(2)
         row = save_pet(slot, data)
         print(json.dumps(row, ensure_ascii=False, indent=1))
