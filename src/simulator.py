@@ -973,7 +973,14 @@ class Battle:
             #   ctx["_from_desc"]=True 让 _h_status 跳过 target=self 分支。
             dv = nrc_fx.desc_effects(mv.get("name") or "")
             target_of = foe if owner is me else me
-            st = dv.get("status") or {}
+            # 条件型状态施加（灵魂灼伤/溶解扩散/溶解腐蚀）：
+            # 按本次技能系别选状态，优先于无条件 status
+            import cond_fx
+            cond = cond_fx.cond_status_apply(mv.get("name") or "",
+                                             mv.get("type") or "")
+            st = dict(dv.get("status") or {})
+            if cond:
+                st = {k: n for k, n in cond}     # 覆盖无条件抽取
             for key, stacks in st.items():
                 ctx["_from_desc"] = True
                 ev2 = nrc_fx._bump_status(target_of, key, stacks)

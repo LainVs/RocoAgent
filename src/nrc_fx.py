@@ -59,6 +59,12 @@ STATUS_RULES = {
     "freeze": {"pct": 0.05, "immune": "冰", "halve": False, "leech": False,
                "lethal": True},
     "parasite": {"pct": 0.02, "immune": "草", "halve": False, "leech": True},
+    # 萌化（第 5 状态，游戏内原文）：退化到上一阶，种族资质相应降低
+    # （可退化的精灵才可以获得萌化，下场不会消失）
+    # 引擎行为：层数记录；每层 -10% 全属性近似（资质降低的公开量化缺，
+    # 但「化茧」的免疫致命、「自由自在」连击+2 可精确判定）
+    "moe": {"pct": 0.0, "immune": None, "halve": False, "leech": False,
+            "note": "层数作为标记；每层-10%全属性为近似（见 test 断言）"},
 }
 
 # 兼容旧名
