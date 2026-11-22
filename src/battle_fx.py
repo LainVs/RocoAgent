@@ -110,61 +110,205 @@ def weather_power_mult(weather_id, element):
     return 1.0
 
 
-def mark_mods(side_marks, skill_name, element=None, first_attack=False):
-    """印记给这一手的修正。
-
-    side_marks: {"attack_mark": 3, ...} 我方（施法者）身上的印记层数
-    返回 {"power_mult": float, "power_bonus": int, "combo_plus": int}
-
-    印记的条件有两种：
-      · `conditions[].mode`（如 burst / first_attack）：满足才生效
-      · 没有 conditions：只要层数 > 0 就生效
-    语义照抄 roco-cal 的 `will_power.resolve_mark_modifiers`。
-    """
-    out = {"power_mult": 1.0, "power_bonus": 0, "combo_plus": 0}
-    if not side_marks:
-        return out
-    for mk in marks():
-        field = mk.get("stack_field")
-        if not isinstance(field, str):
-            continue
-        try:
-            stacks = max(0, int(side_marks.get(field, 0) or 0))
-        except (TypeError, ValueError):
-            stacks = 0
-        if stacks <= 0:
-            continue
-        conds = mk.get("conditions") or []
-        if conds:
-            modes = {c.get("mode") for c in conds if isinstance(c, dict)}
-            if "first_attack" in modes and not first_attack:
-                continue
-            if "burst" in modes:
-                # 蓄力印记只在「爆发」技能上生效；我们没有爆发标记，
-                # 按技能名/属性判断不可靠，直接跳过（宁可少算）。
-                continue
-        for e in mk.get("effects") or []:
-            if e.get("kind") == "power_bonus":
-                out["power_bonus"] += int(float(
-                    e.get("value_per_stack") or 0) * stacks)
-            elif e.get("kind") == "power_multiplier":
-                out["power_mult"] *= 1.0 + float(
-                    e.get("value_per_stack") or 0) * stacks
-            elif e.get("kind") == "combo_plus":
-                out["combo_plus"] += int(float(
-                    e.get("value_per_stack") or 0) * stacks)
-    return out
-
-
 def mark_defs():
-    """给 UI 用的印记清单（id/label/说明/字段名）。"""
-    out = []
-    for mk in marks():
-        out.append({
-            "id": mk.get("id"),
-            "label": mk.get("label") or mk.get("id"),
-            "desc": mk.get("description") or "",
-            "field": mk.get("stack_field"),
-            "effects": mk.get("effects") or [],
-        })
+    """给 UI 用的印记清单。"""
+    return [{"id": m["id"], "label": m["label"], "desc": m["desc"],
+             "kind": m["kind"], "field": None, "effects": [m["effect"]]}
+            for m in MARK_TABLE]
+
+
+def mark_mods(side_marks, skill_name=None, element=None, first_attack=False,
+              is_attack=True):
+    """印记给这一手的修正（兼容旧签名）。
+
+    side_marks 是 {mark_id: 层数/1}；每类最多一个由 set_mark 保证。
+    """
+    return {"power_mult": mark_power_mult(side_marks, is_attack, first_attack),
+            "power_bonus": mark_power_bonus(side_marks, is_attack),
+            "combo_plus": 0}
+
+
+def normalize_marks(raw):
+    """把手填的层数字段（旧 UI 的 xxx_stacks）翻译成新印记 id。
+
+    旧：{"attack_mark_stacks": 3, "momentum_mark_stacks": 1}
+    新：{"attack_mark": 1, "momentum_mark": 1}
+    """
+    out = {}
+    for k, v in (raw or {}).items():
+        mid = k[:-7] if k.endswith("_stacks") else k
+        if mid in MARKS_BY_ID and int(v or 0) > 0:
+            out[mid] = 1
     return out
+
+
+# 印记全集（2026-11-22，抄自游戏内原文：rocokingdomtools / jinidex 术语表）
+#
+# 规则：「精灵最多同时拥有 1 种正面印记和 1 种负面印记」；换人不消失，
+# 新入场精灵继承（所以印记挂在**side**上，不是挂在宠物上）。
+#
+# 每条：id / 名称 / 正负面 / 效果(kind, value) / 触发时机
+MARK_TABLE = [
+    # ---- 正面 ----
+    {"id": "attack_mark", "label": "攻击印记", "kind": "positive",
+     "effect": ("power_mult", 0.10, "all"),
+     "desc": "全技能威力+10%"},
+    {"id": "momentum_mark", "label": "蓄势印记", "kind": "positive",
+     "effect": ("power_mult", 0.30, "attack"), "cost_delta": 1,
+     "desc": "全攻击技能威力+30%，且能耗+1"},
+    {"id": "wind_mark", "label": "风起印记", "kind": "positive",
+     "effect": ("power_mult", 0.20, "first"),
+     "desc": "先手攻击时，本次技能威力+20%"},
+    {"id": "wet_mark", "label": "湿润印记", "kind": "positive",
+     "effect": ("cost_delta", -1, "all"),
+     "desc": "全技能能耗-1"},
+    {"id": "photosyn_mark", "label": "光合印记", "kind": "positive",
+     "effect": ("energy_tick", 1, "turn_end"),
+     "desc": "回合结束时获得1能量"},
+    {"id": "dragon_mark", "label": "龙噬印记", "kind": "positive",
+     "effect": ("buff_on_cost3", 0.30, "attack"),
+     "desc": "释放3能耗技能后，获得双攻+30%"},
+    {"id": "charge_mark", "label": "蓄电印记", "kind": "positive",
+     "effect": ("power_bonus", 10, "attack"),
+     "desc": "攻击技能获得迸发：本次威力+10"},
+    {"id": "sprout_mark", "label": "萌芽印记", "kind": "positive",
+     "effect": ("buff_extra_layer", 1, "buff"),
+     "desc": "获得增益时，会额外获得1层"},
+    # ---- 负面 ----
+    {"id": "poison_mark", "label": "中毒印记", "kind": "negative",
+     "effect": ("dot", 0.03, "turn_end"),
+     "desc": "回合结束造成3%生命的毒系伤害"},
+    {"id": "thorn_mark", "label": "棘刺印记", "kind": "negative",
+     "effect": ("switch_in_hp", -0.06, "switch_in"),
+     "desc": "场上精灵离场后，更换入场的精灵失去6%生命"},
+    {"id": "dark_mark", "label": "暗涌印记", "kind": "negative",
+     "effect": ("switch_in_debuff", 5, "switch_in"),
+     "desc": "更换入场的精灵获得随机5层属性减益"},
+    {"id": "drain_mark", "label": "降灵印记", "kind": "negative",
+     "effect": ("switch_in_energy", -1, "switch_in"),
+     "desc": "场上精灵离场后，更换入场的精灵失去1能量"},
+    {"id": "slow_mark", "label": "减速印记", "kind": "negative",
+     "effect": ("speed_delta", -10, "always"),
+     "desc": "速度-10"},
+]
+
+MARKS_BY_ID = {m["id"]: m for m in MARK_TABLE}
+
+
+def mark_table():
+    return MARK_TABLE
+
+
+def mark_effect(side_marks, kind=None):
+    """取某一侧印记的某个 kind（找不到返回 0）。"""
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, scope = m["effect"]
+        if kind and mk != kind:
+            continue
+        return val
+    return 0
+
+
+def mark_power_mult(side_marks, is_attack, first=False):
+    """印记给的威力倍率（可叠加多个印记，但每类最多一个）。"""
+    mul = 1.0
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, scope = m["effect"]
+        if mk == "power_mult":
+            if scope == "all":
+                mul *= 1.0 + val
+            elif scope == "attack" and is_attack:
+                mul *= 1.0 + val
+            elif scope == "first" and first and is_attack:
+                mul *= 1.0 + val
+    return mul
+
+
+def mark_power_bonus(side_marks, is_attack):
+    if not is_attack:
+        return 0
+    return int(mark_effect(side_marks, "power_bonus") or 0)
+
+
+def mark_cost_delta(side_marks):
+    """能耗变化（湿润 -1、蓄势 +1）。"""
+    d = 0
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, scope = m["effect"]
+        if mk == "cost_delta":
+            d += val
+        d += m.get("cost_delta", 0)
+    return d
+
+
+def mark_switch_in(side_marks):
+    """换上新精灵时的印记结算：棘刺(-6%) / 降灵(-1 能量) / 暗涌(5 层减益)。"""
+    out = {"hp_pct": 0.0, "energy": 0, "debuff": 0}
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, _scope = m["effect"]
+        if mk == "switch_in_hp":
+            out["hp_pct"] += -val
+        elif mk == "switch_in_energy":
+            out["energy"] += val
+        elif mk == "switch_in_debuff":
+            out["debuff"] += int(val)
+    return out
+
+
+def mark_on_skill(side_marks, cost):
+    """用完技能后的印记反馈（龙噬：释放 3 能耗技能后双攻 +30%）。"""
+    gain = 0.0
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, _scope = m["effect"]
+        if mk == "buff_on_cost3" and int(cost or 0) == 3:
+            gain += val
+    return gain
+
+
+def mark_tick(side_marks):
+    """回合末印记结算：光合(+1 能量) / 中毒印记(3% 毒系伤害)。"""
+    out = {"energy": 0, "dot": 0.0}
+    for mid, m in MARKS_BY_ID.items():
+        if not side_marks.get(mid):
+            continue
+        mk, val, _scope = m["effect"]
+        if mk == "energy_tick":
+            out["energy"] += int(val)
+        elif mk == "dot":
+            out["dot"] += val
+    return out
+
+
+def mark_speed_delta(side_marks):
+    return int(mark_effect(side_marks, "speed_delta") or 0)
+
+
+def set_mark(side_marks, mark_id):
+    """施加一个印记：同类（正/负面）最多一个，新的顶掉旧的。
+
+    返回 (实际挂上的 id, 被顶掉的 id 或 None)。
+    """
+    m = MARKS_BY_ID.get(mark_id)
+    if not m:
+        return None, None
+    gone = None
+    for mid in list(side_marks):
+        other = MARKS_BY_ID.get(mid)
+        if not other:
+            continue
+        if other["kind"] == m["kind"] and mid != mark_id:
+            gone = mid
+            side_marks.pop(mid, None)
+    side_marks[mark_id] = int(side_marks.get(mark_id, 0) or 0) + 1
+    return mark_id, gone
+

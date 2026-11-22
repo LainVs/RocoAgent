@@ -472,7 +472,8 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
         side = getattr(attacker, "_side", None)
         mm = battle_fx.mark_mods(
             (getattr(battle, "marks", {}) or {}).get(side or "a") or {},
-            move.get("name") or "", elem, first_attack=first)
+            move.get("name") or "", elem, first_attack=first,
+            is_attack=int(move.get("power") or 0) > 0)
         power = max(0, int(power * wm * mm["power_mult"] + mm["power_bonus"]))
     # nrc-ai 手写特性的常驻威力修正（`目空` / `破空` 这类 PASSIVE）
     power = max(0, int(power * getattr(attacker, "nrc_power_mult", 1.0)
@@ -684,9 +685,33 @@ class Battle:
         return self.weather
 
     def set_marks(self, side, field, stacks):
-        """field 是 roco-cal 印记的 stack_field（如 attack_mark_stacks）。"""
-        self.marks.setdefault(side, {})[field] = max(0, int(stacks or 0))
+        """旧接口（手填层数）-> 新印记 id。保留兼容。"""
+        import battle_fx
+        mid = field[:-7] if str(field).endswith("_stacks") else field
+        if int(stacks or 0) > 0:
+            battle_fx.set_mark(self.marks.setdefault(side, {}), mid)
+        else:
+            self.marks.setdefault(side, {}).pop(mid, None)
         return self.marks[side]
+
+    def add_mark(self, side, mark_id):
+        """施加印记（自动顶掉同类），返回被顶掉的 id 或 None。"""
+        import battle_fx
+        _added, gone = battle_fx.set_mark(self.marks.setdefault(side, {}),
+                                          mark_id)
+        return gone
+
+    def eff_cost(self, side, move):
+        """技能的实际能耗（湿润 -1 / 蓄势 +1，最低 0）。"""
+        import battle_fx
+        base = int((move or {}).get("cost") or 0)
+        d = battle_fx.mark_cost_delta(self.marks.get(side) or {})
+        return max(0, base + d)
+
+    def eff_spe(self, side, pet):
+        """实际速度（减速印记 -10）。"""
+        import battle_fx
+        return pet.spe + battle_fx.mark_speed_delta(self.marks.get(side) or {})
 
     def mark_state(self):
         return {"weather": self.weather,
@@ -810,6 +835,7 @@ class Battle:
         kind ∈ {"skill","energy","switch","buff"}。
         """
         events = []
+        import battle_fx
         import trait_lib
         import nrc_fx
         me, foe = self.me, self.foe
@@ -893,6 +919,20 @@ class Battle:
             switched_a = True
             events.append("我方换下 %s（增益/减益已清除），换上 %s"
                           % (old, me.name))
+            sw = battle_fx.mark_switch_in(self.marks.get("a") or {})
+            if sw["hp_pct"]:
+                d = max(1, int(me.max_hp * sw["hp_pct"]))
+                me.hp = max(0, me.hp - d)
+                events.append("棘刺印记：%s 失去 %d（剩 %d/%d）"
+                              % (me.name, d, me.hp, me.max_hp))
+            if sw["energy"]:
+                me.energy = max(0, me.energy + sw["energy"])
+                events.append("降灵印记：%s 能量 %d" % (me.name, me.energy))
+            if sw["debuff"]:
+                me.atk_buff = max(0.0, me.atk_buff - 0.1 * sw["debuff"])
+                me.def_buff = max(0.0, me.def_buff - 0.1 * sw["debuff"])
+                events.append("暗涌印记：%s 获得 %d 层属性减益"
+                              % (me.name, sw["debuff"]))
         if kb == "switch" and bench_b:
             old = foe.name
             nrc_fx.clear_buffs(foe)
@@ -902,6 +942,20 @@ class Battle:
             switched_b = True
             events.append("对方换下 %s（增益/减益已清除），换上 %s"
                           % (old, foe.name))
+            sw = battle_fx.mark_switch_in(self.marks.get("b") or {})
+            if sw["hp_pct"]:
+                d = max(1, int(foe.max_hp * sw["hp_pct"]))
+                foe.hp = max(0, foe.hp - d)
+                events.append("棘刺印记：%s 失去 %d（剩 %d/%d）"
+                              % (foe.name, d, foe.hp, foe.max_hp))
+            if sw["energy"]:
+                foe.energy = max(0, foe.energy + sw["energy"])
+                events.append("降灵印记：%s 能量 %d" % (foe.name, foe.energy))
+            if sw["debuff"]:
+                foe.atk_buff = max(0.0, foe.atk_buff - 0.1 * sw["debuff"])
+                foe.def_buff = max(0.0, foe.def_buff - 0.1 * sw["debuff"])
+                events.append("暗涌印记：%s 获得 %d 层属性减益"
+                              % (foe.name, sw["debuff"]))
 
         # 处理 buff：官方精确值优先（skill_buff_pct），中位数兜底
         #
@@ -980,17 +1034,19 @@ class Battle:
         if (not switched_a and not skip_act["a"] and ka == "skill"
                 and pa is not None and pa < len(me.moves)):
             mv = me.moves[pa]
-            if mv["cost"] <= me.energy:
-                me.energy -= mv["cost"]
-                acts.append((me.spe, "a", me, foe, mv))
+            cost = self.eff_cost("a", mv)
+            if cost <= me.energy:
+                me.energy -= cost
+                acts.append((self.eff_spe("a", me), "a", me, foe, mv))
             else:
                 events.append("我方能量不足，%s 没放出来" % mv["name"])
         if (not switched_b and not skip_act["b"] and kb == "skill"
                 and pb is not None and pb < len(foe.moves)):
             mv = foe.moves[pb]
-            if mv["cost"] <= foe.energy:
-                foe.energy -= mv["cost"]
-                acts.append((foe.spe, "b", foe, me, mv))
+            cost = self.eff_cost("b", mv)
+            if cost <= foe.energy:
+                foe.energy -= cost
+                acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
             else:
                 events.append("对方能量不足，%s 没放出来" % mv["name"])
         # 出手顺序：**应对成功方必定先手**（无视速度），否则速度高的先打；
@@ -1009,6 +1065,14 @@ class Battle:
             events.append("%s %s → %s -%d（剩 %d/%d）"
                           % ("我方" if who == "a" else "对方",
                              mv["name"], dfn.name, d, dfn.hp, dfn.max_hp))
+            # 印记反馈：龙噬（释放 3 能耗技能后双攻 +30%）
+            gain = battle_fx.mark_on_skill(
+                self.marks.get(who) or {}, self.eff_cost(who, mv))
+            if gain > 0 and atk.alive:
+                add_buff(atk, gain, gain)
+                events.append("%s 龙噬印记生效（双攻 +%d%%）"
+                              % ("我方" if who == "a" else "对方",
+                                 round(100 * gain)))
             # 吸血（`渴求` 入场 30% / `先机虹吸` 先手 30%）：按**实际造成**
             # 的伤害回血，上限自身最大血量。idx==0 表示这一手是先手。
             ls = trait_lib.attack_mods(
@@ -1031,10 +1095,24 @@ class Battle:
             p.trait_tmp_atk = 0.0
             p.trait_tmp_def = 0.0
 
-        # 回合末：异常状态结算 + 特性 ON_TURN_END（回血/回能）
-        for p, other in ((me, foe), (foe, me)):
+        # 回合末：印记（光合 +1 能量 / 中毒印记 3%）+ 异常状态 + 特性 ON_TURN_END
+        for p, other, side in ((me, foe, "a"), (foe, me, "b")):
             if p is None:
                 continue
+            tick = battle_fx.mark_tick(self.marks.get(side) or {})
+            if tick["energy"] and p.alive:
+                before = p.energy
+                p.energy = min(ENERGY_CAP, p.energy + tick["energy"])
+                if p.energy > before:
+                    events.append("%s 光合印记回能 +%d（%d）"
+                                  % ("我方" if side == "a" else "对方",
+                                     p.energy - before, p.energy))
+            if tick["dot"] and p.alive:
+                d2 = max(1, int(p.max_hp * tick["dot"]))
+                p.hp = max(0, p.hp - d2)
+                events.append("%s 中毒印记 -%d（剩 %d/%d）"
+                              % ("我方" if side == "a" else "对方",
+                                 d2, p.hp, p.max_hp))
             for e in nrc_fx.status_tick(p, other):
                 events.append(e)
             if not trait_lib.supported_rules(getattr(p, "trait", None)):
