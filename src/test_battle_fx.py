@@ -121,6 +121,30 @@ check(abs(battle_fx.weather_power_mult("rain", "火") - 1.0) < 1e-9,
 check(len(battle_fx.weathers()) == 5, "5 种天气")
 
 print()
+print("--- 5. 技能关键词（S4）---")
+# 吸血：蝙蝠（65 威力，吸血 100%）
+mv_bat = dex.resolve_skill("蝙蝠")
+check(battle_fx.parse_lifesteal(SIM._skill_desc(mv_bat["id"])) == 1.0,
+      "「蝙蝠」描述吸血 100%")
+mv_j = dex.resolve_skill("汲取")
+check(battle_fx.parse_lifesteal(SIM._skill_desc(mv_j["id"])) == 1.0,
+      "「汲取」描述吸血 100%")
+# 先手：先发制人 +1
+mv_fm = dex.resolve_skill("先发制人")
+check(battle_fx.parse_priority(SIM._skill_desc(mv_fm["id"])) == 1,
+      "「先发制人」先手 +1")
+# 排序键：先手度 > 速度
+p_a = SIM.Pet(dex, "黑猫巫师", iv=60)      # 低速 170
+p_b = SIM.Pet(dex, "音速犬", iv=60)        # 高速 225
+import random as _r
+acts = [(p_b.spe, "b", p_b, p_a, dex.resolve_skill("升龙咆哮")),
+        (p_a.spe, "a", p_a, p_b, mv_fm)]
+pri = {"a": 1, "b": 0}
+acts.sort(key=lambda x: (-pri[x[1]], -x[0], _r.Random(0).random()))
+check(acts[0][1] == "a",
+      "低速方带先手+1 先出手（排序键 先手度>速度）")
+
+print()
 if bad:
     print("FAILED %d" % bad)
     sys.exit(1)

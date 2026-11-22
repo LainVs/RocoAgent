@@ -57,6 +57,26 @@ ENERGY_CAP = 10
 # 聚能一次的回能（2026-11-22 用户实测纠正：游戏里是 **+5**，原来写的 2）
 ENERGY_GAIN = 5
 
+# 技能 id -> 描述（懒加载）。技能对象（moves）里没有 desc 字段，
+# 但「吸血」「先手」这些关键词在描述里，需要的时候查一下。
+_SKILL_DESC = None
+
+
+def _skill_desc(skill_id):
+    global _SKILL_DESC
+    if _SKILL_DESC is None:
+        try:
+            import sqlite3
+            db = sqlite3.connect(str(paths.DB))
+            try:
+                _SKILL_DESC = {r[0]: (r[1] or "") for r in db.execute(
+                    "SELECT id, desc FROM skills")}
+            finally:
+                db.close()
+        except Exception:
+            _SKILL_DESC = {}
+    return _SKILL_DESC.get(int(skill_id)) or ""
+
 # 一次 buff 技能的攻击增益。
 #
 # ★ 2026-11-22 升级：官方精确值优先，中位数兜底（抄作业 S1）
@@ -429,7 +449,7 @@ class Pet:
 
 def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
                 first=False):
-    """用真实的 roco-cal 引擎算伤害（含特性修正）。
+    """用真实的 roco-cal 引擎算伤害（含特性/印记修正）。
 
     增益按 roco-cal 的真实公式处理（damresult.py）：
         buff_numerator = 1 + atk_up + enemy_def_down
@@ -881,7 +901,7 @@ class Battle:
                                             "ON_USE", ctx))
         # 应对（counter）：两边技能都定了才判得出。谁应对成功谁吃收益。
         # 游戏内原文：**应对成功时无视速度差，必定先手**。所以这里记一个
-        # 标记，后面排出手顺序时优先。
+        # 标记，后面排出手顺序时优先。另外「先手 +N」的技能也提优先级。
         counter_first = {"a": False, "b": False}
         for owner, other, mv, omv, side in (
                 (me, foe, skill_a, skill_b, "a"),
@@ -899,7 +919,6 @@ class Battle:
                     for e in nrc_fx.trait_fire(owner, other,
                                                "ON_COUNTER_SUCCESS"):
                         events.append(e)
-
         # 处理聚能
         if ka == "energy":
             me.energy = min(ENERGY_CAP, me.energy + ENERGY_GAIN)
@@ -1031,6 +1050,10 @@ class Battle:
 
         # 出手（速度快的先打）。换人方这回合不攻击。
         acts = []
+        pri_a = battle_fx.parse_priority(
+            (skill_a or {}).get("desc") or "") if skill_a else 0
+        pri_b = battle_fx.parse_priority(
+            (skill_b or {}).get("desc") or "") if skill_b else 0
         if (not switched_a and not skip_act["a"] and ka == "skill"
                 and pa is not None and pa < len(me.moves)):
             mv = me.moves[pa]
@@ -1049,12 +1072,14 @@ class Battle:
                 acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
             else:
                 events.append("对方能量不足，%s 没放出来" % mv["name"])
-        # 出手顺序：**应对成功方必定先手**（无视速度），否则速度高的先打；
-        # 速度相同则随机（不能固定偏向 A 方，否则同队自对弈 100% 偏向 A）。
+        # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
+        # （原文：先手度更高的技能忽略速度差异优先释放，可叠加），
+        # 再按速度；速度相同则随机（不能固定偏向 A，否则自对弈 100% 偏 A）。
         #
         # ⚠ rnd.random() 的调用次数（= acts 的元素个数）是整个引擎唯一的
         # 随机源，改排序写法会改变 data/fixtures/sim_baseline.json 的基线。
         acts.sort(key=lambda x: (-(1 if counter_first.get(x[1]) else 0),
+                                 -(pri_a if x[1] == "a" else pri_b),
                                  -x[0], self.rnd.random()))
 
         for idx, (_spe, who, atk, dfn, mv) in enumerate(acts):
@@ -1073,12 +1098,16 @@ class Battle:
                 events.append("%s 龙噬印记生效（双攻 +%d%%）"
                               % ("我方" if who == "a" else "对方",
                                  round(100 * gain)))
-            # 吸血（`渴求` 入场 30% / `先机虹吸` 先手 30%）：按**实际造成**
-            # 的伤害回血，上限自身最大血量。idx==0 表示这一手是先手。
+            # 吸血：先按特性规则（渴求/先机虹吸），再按**技能描述里的吸血**。
+            # 原文：「造成伤害时，根据吸血比例和造成伤害值，回复生命」。
             ls = trait_lib.attack_mods(
                 atk, mv, first=(idx == 0),
                 foe_total_cost=sum(int(m.get("cost") or 0)
                                    for m in dfn.moves))["lifesteal"]
+            sk_ls = battle_fx.parse_lifesteal(
+                (mv.get("desc") or "") or _skill_desc(mv.get("id")))
+            if sk_ls:
+                ls += sk_ls
             if ls > 0 and d > 0 and atk.alive:
                 before = atk.hp
                 atk.hp = min(atk.max_hp, atk.hp + max(1, int(d * ls)))

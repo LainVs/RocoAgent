@@ -40,6 +40,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIR = os.path.join(ROOT, "data", "external", "roco-cal", "data",
@@ -291,6 +292,46 @@ def mark_tick(side_marks):
 
 def mark_speed_delta(side_marks):
     return int(mark_effect(side_marks, "speed_delta") or 0)
+
+
+# ------------------------------------------------------------- 技能关键词
+# 游戏内原文定义（rocokingdomtools / jinidex 术语表），S4 用：
+#   先手：行动优先级，先手度更高的技能忽略双方速度差异优先释放，可叠加
+#   迸发：入场后的首次行动，会获得额外效果
+#   蓄力：需先蓄力 1 回合，下回合才能释放；蓄力期间免疫所有离场效果
+#   打断：使敌方本次无法释放对应技能
+#   吸血：造成伤害时，根据吸血比例和造成伤害值，回复生命
+#   过载：本回合所选技能释放 2 次，随后消耗 1 层过载
+#   积蓄：可继续蓄力一回合，最终技能释放次数+1
+PRI_RE = re.compile(r"先手\s*([+-]?\d+)")
+
+
+def parse_priority(desc):
+    """从技能描述解析先手度（+1/-1…），没有就是 0。"""
+    if not desc:
+        return 0
+    m = PRI_RE.search(desc)
+    if m:
+        try:
+            return int(m.group(1))
+        except ValueError:
+            return 0
+    if "先手" in desc:
+        return 1
+    return 0
+
+
+def parse_lifesteal(desc):
+    """从描述解析吸血比例（0~1）。例：「吸血30%」-> 0.30。
+
+    描述里也可能写作「并吸血100%」「吸血:100%」，都按同一个正则吃。
+    """
+    if not desc:
+        return 0.0
+    m = re.search(r"吸血[:：]?\s*(\d+)\s*%", desc)
+    if m:
+        return min(1.0, int(m.group(1)) / 100.0)
+    return 0.0
 
 
 def set_mark(side_marks, mark_id):
