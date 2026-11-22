@@ -102,6 +102,20 @@ if os.path.exists(str(p2)):
     check(d.get("count", 0) > 30, "含 %d 个变化技能的增益" % d.get("count", 0))
 
 print()
+print("--- 6. 强化等级 / 属性克制（官方口径）---")
+check(abs(S.level_mult(1) - 1.5) < 1e-9,
+      "强化 +1 级 = 1.5 倍（实际 %.2f）" % S.level_mult(1))
+check(abs(S.level_mult(2) - 2.0) < 1e-9,
+      "强化 +2 级 = 2.0 倍（实际 %.2f）" % S.level_mult(2))
+check(abs(S.level_mult(-1) - 2.0 / 3) < 1e-9,
+      "弱化 -1 级 = 2/3（实际 %.3f）" % S.level_mult(-1))
+check(abs(S.type_effect("火", ["草", "虫"]) - 3.0) < 1e-9,
+      "双克制是**加算** 1+1+1 = 3（实际 %.2f）" % S.type_effect("火", ["草", "虫"]))
+check(abs(S.type_effect("火", ["水", "龙"]) - 0.25) < 1e-9,
+      "双抵抗是乘算 0.5*0.5 = 0.25（实际 %.2f）"
+      % S.type_effect("火", ["水", "龙"]))
+
+print()
 if bad:
     print("FAILED %d" % bad)
     sys.exit(1)

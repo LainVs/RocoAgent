@@ -75,9 +75,11 @@ def main():
     assert S.star_power(3) == 3 * 3 + 24 * 3 - 24
     assert S.star_power(0) == -24
 
-    # 等级系数：+1 → 1.1，-1 → 1/1.1
-    assert abs(S.level_mult(1) - 1.1) < 1e-9
-    assert abs(S.level_mult(-1) - 1 / 1.1) < 1e-9
+    # 强化等级倍率：官方 (2+n)/2（+1 = 1.5，-1 = 2/3）。
+    # 2026-11-22 修正：这里原来断言 1.1 / 1/1.1，那是移植时带进来的错公式；
+    # 证据见 statmodel.level_mult 的 docstring（PVP助手 dl() + 官方百科）。
+    assert abs(S.level_mult(1) - 1.5) < 1e-9
+    assert abs(S.level_mult(-1) - 2 / 3.0) < 1e-9
 
     # 性格表：31 项，且 +20/-10
     nat = S.natures()

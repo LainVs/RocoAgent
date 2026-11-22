@@ -30,6 +30,26 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "data", "nrc_effects.json")
 
 # 异常状态：名字 -> 每回合末按最大血量百分比扣血
+#
+# ⚠ 这几个百分比是我们自己的近似值。洛克PVP助手的运行时里**没有**状态
+#   伤害公式 —— 它的持续性伤害是服务端下发的「伤害来源」，运行时只认 id：
+#
+#       function qkDamageSourceMeta(id) {
+#         const n = {20050010: "寄生", 20070010: "中毒",
+#                    20070011: "中毒印记", 20070020: "灼烧"};
+#         ...
+#       }
+#
+#   所以「有哪些状态会造成持续伤害」是权威的，「每层扣多少」只能按社区
+#   公式（灼烧 = 敌方最大生命 × 层数 × 2%，上限按 1000 血算）去近似。
+#   真要精确，得从实盘日志里反推（见 docs/NIGHT_REPORT 的方法）。
+STATUS_SOURCES = {
+    20050010: "寄生",
+    20070010: "中毒",
+    20070011: "中毒印记",
+    20070020: "灼烧",
+}
+
 STATUS_DOT = {"poison": 0.05, "burn": 0.08}
 
 _CACHE = {"data": None}

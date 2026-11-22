@@ -100,9 +100,23 @@ def calc_real_stat(sv, iv=0, nature=1.0, is_hp=False):
 
 
 def level_mult(lv):
-    """能力等级 -> 倍率（原样移植 levelMult）。"""
+    """能力等级 -> 倍率（**官方公式**）。
+
+    ★ 2026-11-22 修正：原来写的是 `1 + 0.1*lv`（+1 级 = 1.1 倍），是错的。
+      官方是 `(2+n)/2`：+1 = **1.5**、+2 = **2.0**、-1 = 2/3。
+
+    两处独立证据：
+      · 洛克PVP助手 `producer-session-runtime.js` 里的 `dl()`：
+            function dl(a){return a>=0?(2+a)/2:2/(2+Math.abs(a))}
+        它的伤害函数 `Sr()` 就是这么用的：
+            atk = round(baseAtk * dl(atkStage) * (1 + pct/100) * (1 - 退化层*0.08))
+      · 官方论坛/百科：「物攻强化等级为 1 级，能力值变为 (1+2)/2 = 1.5 倍」
+
+    注意：本模拟器目前用扁平的 atk_buff/def_buff 表达增益，还没接「强化等级」，
+    所以这个函数暂时没有调用方 —— 但它之前是错的，留着迟早会坑到人。
+    """
     lv = int(lv)
-    return 1 + lv * 0.1 if lv >= 0 else 1.0 / (1 + abs(lv) * 0.1)
+    return (2 + lv) / 2.0 if lv >= 0 else 2.0 / (2 + abs(lv))
 
 
 def panel(base, ivs=None, nature="neutral"):
