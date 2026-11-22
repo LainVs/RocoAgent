@@ -1627,6 +1627,8 @@ const REFRESH = {
   // 图鉴是静态数据，进页面拉一次就够，不轮询
   dex: [['dex', () => refreshDex($('dexSearch').value.trim()), 0]],
   turns: [['turns', refreshTurns, 10000]],
+  // 模拟器不轮询 —— 点击"开始模拟"才请求（一次 10~60 秒）
+  sim: [],
   // 标注页不轮询 —— 标注过程中刷新会把输入框清掉
   label: [['label', refreshLabel, 0]],
 };
@@ -1659,11 +1661,91 @@ function goto(p) {
 }
 
 /* ================================================================
+   模拟器（POST /api/sim/run，子进程隔离）
+   ================================================================ */
+async function runSim() {
+  const btn = $('btnSimRun');
+  const st = $('simStatus');
+  const parseTeam = (id) => $(id).value.split(/[,，\n]/)
+    .map((s) => s.trim()).filter(Boolean);
+  const body = {
+    team_a: parseTeam('simTeamA'),
+    team_b: parseTeam('simTeamB'),
+    policy_a: $('simPolA').value,
+    policy_b: $('simPolB').value,
+    games: Math.max(1, Math.min(200, parseInt($('simGames').value, 10) || 20)),
+    seed: 0,
+  };
+  if (!body.team_a.length || !body.team_b.length) {
+    st.textContent = '两边队伍都要填精灵名';
+    return;
+  }
+  btn.disabled = true;
+  st.textContent = `模拟中（${body.games} 局，约 5~30 秒）…`;
+  try {
+    const r = await fetch(API + '/api/sim/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8' },
+      body: JSON.stringify(body),
+    });
+    const o = await r.json();
+    if (o.error) {
+      st.textContent = '失败：' + o.error;
+      return;
+    }
+    st.textContent = `完成（${(o.games)} 局）`;
+    $('simResultCard').hidden = false;
+    $('simResultSub').textContent =
+      `${o.team_a.join('/')} (${o.policy_a}) vs ${o.team_b.join('/')} (${o.policy_b})`;
+    $('simMetrics').innerHTML =
+      metricHtml('A 胜率', `${o.win_rate_a}%`, '', '', 
+        o.win_rate_a >= 55 ? 'win' : o.win_rate_a >= 45 ? 'warn' : 'lose') +
+      metricHtml('A 胜 / B 胜', `${o.wins_a} / ${o.wins_b}`, '', '', '') +
+      metricHtml('平局', o.draws, '', '', '') +
+      metricHtml('平均回合', o.avg_turns, '', '', '') +
+      metricHtml('中位回合', o.median_turns, '', '', '');
+    const tb = $('simTbl').querySelector('tbody');
+    tb.innerHTML = (o.examples || []).map((x) => `
+      <tr>
+        <td>${x.game}</td>
+        <td>${x.winner === 'a' ? '我方' : x.winner === 'b' ? '对方' : '平'}</td>
+        <td>${x.turns}</td>
+        <td>${x.hp_a}</td>
+        <td>${x.hp_b}</td>
+      </tr>`).join('');
+  } catch (e) {
+    st.textContent = '请求失败：' + e;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function loadSimPool() {
+  // 预热：把 my_team 填进输入框（一键）
+  $('btnSimMine').addEventListener('click', async () => {
+    try {
+      const r = await fetch(API + '/api/team', { cache: 'no-store' });
+      const o = await r.json();
+      const names = (o.slots || []).map((s) => s.name).filter(Boolean);
+      $('simTeamA').value = names.join(',');
+      $('simStatus').textContent = `已填入 my_team ${names.length} 只`;
+    } catch (e) {
+      $('simStatus').textContent = 'my_team 拉取失败：' + e;
+    }
+  });
+}
+
+
+/* ================================================================
    事件绑定
    ================================================================ */
 document.querySelectorAll('.nav-item').forEach((b) => {
   b.addEventListener('click', () => goto(b.dataset.page));
 });
+
+// 模拟器：按钮 + my_team 一键填入（进页面时绑定一次）
+loadSimPool();
+$('btnSimRun').addEventListener('click', runSim);
 
 $('btnStart').addEventListener('click', async () => {
   const btn = $('btnStart');

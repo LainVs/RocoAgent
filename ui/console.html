@@ -94,6 +94,13 @@
         </svg>
         <span>回合明细</span>
       </button>
+      <button class="nav-item" data-page="sim">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <rect x="1.4" y="2.4" width="11.2" height="9.2" rx="1.6" stroke="currentColor" stroke-width="1.2"/>
+          <path d="M4.6 5.4L6.4 7l-1.8 1.6M7.6 8.8h2.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>模拟器</span>
+      </button>
       <button class="nav-item" data-page="label">
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M1.6 2.4h5.2l5.6 5.6-5.2 5.2L1.6 7.6z" stroke="currentColor"
@@ -272,6 +279,60 @@
           </div>
           <div class="label-grid" id="labelGrid"></div>
           <div class="label-pager" id="labelPager" hidden></div>
+        </div>
+      </section>
+
+      <!-- ══════════ 模拟器 ══════════ -->
+      <section class="page" id="page-sim">
+        <div class="card">
+          <div class="card-head">
+            <span class="card-title">对战模拟器</span>
+            <span class="card-sub" id="simSub">官方公式 + 官方 buff 精确值，子进程隔离跑</span>
+          </div>
+          <div class="sim-form" style="display:grid;gap:10px;margin-bottom:4px">
+            <div>
+              <label style="font-size:11px;color:var(--ink-3)">我方队伍（逗号分隔精灵名）</label>
+              <textarea id="simTeamA" rows="2" style="width:100%" placeholder="音速犬,恶魔狼,银月狼王"></textarea>
+              <button class="btn" id="btnSimMine" style="padding:4px 9px;font-size:11px;margin-top:4px">填入 my_team</button>
+            </div>
+            <div>
+              <label style="font-size:11px;color:var(--ink-3)">对方队伍</label>
+              <textarea id="simTeamB" rows="2" style="width:100%" placeholder="白发路路,寂灭骨龙,水灵"></textarea>
+            </div>
+            <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:11px;color:var(--ink-2)">
+              <span>我方策略</span>
+              <select id="simPolA">
+                <option value="smart">smart（击杀/换人判断）</option>
+                <option value="greedy">greedy（贪心最高伤）</option>
+                <option value="buff">buff（先增益）</option>
+              </select>
+              <span>对方策略</span>
+              <select id="simPolB">
+                <option value="greedy">greedy</option>
+                <option value="smart">smart</option>
+                <option value="buff">buff</option>
+              </select>
+              <span>局数</span>
+              <input id="simGames" type="number" value="20" min="1" max="200" style="width:64px">
+            </div>
+            <div style="display:flex;gap:10px;align-items:center">
+              <button class="btn primary" id="btnSimRun">开始模拟</button>
+              <span style="font-size:11px;color:var(--ink-3)" id="simStatus"></span>
+            </div>
+          </div>
+        </div>
+        <div class="card" id="simResultCard" hidden>
+          <div class="card-head">
+            <span class="card-title">模拟结果</span>
+            <span class="card-sub" id="simResultSub"></span>
+          </div>
+          <div class="metrics" id="simMetrics"></div>
+          <div class="tbl-wrap">
+            <table class="tbl" id="simTbl">
+              <thead><tr><th>局</th><th>胜方</th><th>回合</th><th>我方余血</th><th>对方余血</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
         </div>
       </section>
 

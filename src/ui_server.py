@@ -1150,6 +1150,68 @@ def team():
         return {"error": str(e), "slots": []}
 
 
+# ============================================================ 模拟器
+def sim_species_pool():
+    """图鉴池（implemented=1 的精灵名列表，供前端选队）。"""
+    try:
+        db = _db()
+    except Exception as e:
+        return {"error": str(e), "items": []}
+    try:
+        rows = db.execute(
+            "SELECT name FROM species WHERE implemented=1 AND name IS NOT NULL "
+            "GROUP BY name ORDER BY total DESC").fetchall()
+        return {"items": [r["name"] for r in rows]}
+    except Exception as e:
+        return {"error": str(e), "items": []}
+
+
+def sim_run(body):
+    """跑一场模拟对局（POST /api/sim/run）。
+
+    请求：{"team_a": [名...], "team_b": [名...], "policy_a": "smart",
+           "policy_b": "greedy", "games": 20, "seed": 0}
+
+    返回：{"games": N, "wins_a": x, "wins_b": y, "draws": z,
+           "avg_turns": f, "median_turns": f, "examples": [每局摘要]}
+
+    为什么走子进程而不是进程内调用：
+    simulator 导入时要建 sqlite 连接和缓存；HTTP 线程里反复跑
+    会放大任何一次线程安全问题。子进程隔离 + 每次新 seed，
+    崩了也不影响 ui_server 本体。
+    """
+    import subprocess
+    sys_exe = sys.executable or "python"
+    team_a = [str(x) for x in (body.get("team_a") or [])][:6]
+    team_b = [str(x) for x in (body.get("team_b") or [])][:6]
+    if not team_a or not team_b:
+        return {"error": "team_a/team_b 不能为空"}
+    games = max(1, min(int(body.get("games") or 20), 500))
+    seed = int(body.get("seed") or 0)
+    pol_a = body.get("policy_a") or "smart"
+    pol_b = body.get("policy_b") or "greedy"
+
+    cmd = [sys_exe, "-W", "ignore", "-X", "utf8",
+           os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "sim_runner.py"),
+           "--team-a", ",".join(team_a),
+           "--team-b", ",".join(team_b),
+           "--policy-a", pol_a, "--policy-b", pol_b,
+           "--games", str(games), "--seed", str(seed)]
+    try:
+        p = subprocess.run(cmd, capture_output=True, timeout=180)
+        out = p.stdout.decode("utf-8", errors="replace")
+        if p.returncode != 0:
+            return {"error": "sim_runner failed rc=%d: %s"
+                    % (p.returncode, p.stderr.decode("utf-8",
+                                                    errors="replace")[-400:])}
+        return json.loads(out)
+    except subprocess.TimeoutExpired:
+        return {"error": "模拟超时（>180s）"}
+    except Exception as e:
+        return {"error": "%s: %s" % (type(e).__name__, e)}
+
+
 # ============================================================ 日志增量
 def log_chunk(offset=0, max_bytes=48 * 1024):
     """按字节 offset 返回新增日志。前端带着上次的 offset 来拉。
@@ -1932,6 +1994,13 @@ class Handler(SimpleHTTPRequestHandler):
         if path == "/api/team":
             return self._json(team())
 
+        if path == "/api/sim/pool":
+            return self._json(sim_species_pool())
+
+        if path == "/api/sim/run":
+            # POST only；GET 到这里给个提示
+            return self._json({"error": "use POST /api/sim/run"})
+
         if path == "/api/portraits":
             return self._json(portraits_pending(
                 q.get("side") or "foe",
@@ -1977,6 +2046,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self._json({"ok": False, "msg": "缺 stems 或 species"})
             return self._json(
                 portrait_label_group(side, stems, species, variant))
+
+        if path == "/api/sim/run":
+            return self._json(sim_run(body))
 
         if path == "/api/portrait/skip":
             return self._json(portrait_skip(
