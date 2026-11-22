@@ -114,15 +114,21 @@ def best_damage_from(name, foe_name):
 def _incoming(foe_name, my_name, my_max):
     """Damage the opponent can land on us this turn.
 
-    If the opponent is unidentified (no OCR yet, or a pet missing from the
-    dataset) worst_incoming() returns nothing - and an EV model that reads that
-    as "zero damage taken" will happily stand still and die. Fall back to a
-    conservative fraction of our own max HP instead, and let the caller record
-    that the number is assumed rather than observed.
+    ★ 2026-11-22：改为概率加权承伤（pvp_engine.weighted_incoming）
+    ----------------------------------------------------------------
+    旧实现 worst_incoming(top=1) 对对面**整个可学技能池**取 max，
+    实测高估真实承伤 1.5~3 倍（详见 docs/PLAN_POLICY_INCOMING.md 的
+    12 组对位对照）—— EV 模型因此过度保守，明明能站桩输出却频繁换人。
+
+    新实现：max(学习分布的期望, 0.75×最坏)。地板保留"最坏情况也扛得住"
+    的安全语义（绝不在必死范围里站桩），常见对位的高估被拉回现实。
+    source 字段进 detail，turns.jsonl 可追踪新旧差。
     """
-    rows = E.worst_incoming(foe_name, my_name, top=1)
-    if rows:
-        return rows[0]["dmg"], "model"
+    dmg, src = E.weighted_incoming(
+        foe_name, my_name,
+        blend=weights().get("incoming_blend", 0.75))
+    if dmg:
+        return dmg, src
     pct = weights().get("unknown_incoming_pct", 0.35)
     return int(max(1, round(my_max * pct))), "assumed"
 

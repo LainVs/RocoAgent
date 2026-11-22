@@ -177,6 +177,42 @@ def move_pool(name):
     return out
 
 
+def weighted_incoming(foe_name, my_name, blend=0.75, top=6):
+    """概率加权承伤：学习到的技能分布 × 单技能伤害，再对最坏值取底。
+
+    为什么不是纯期望（2026-11-22 实测，见 docs/PLAN_POLICY_INCOMING.md）
+    ----------------------------------------------------------------
+    对 12 组真实对位统计（opponent_actions.jsonl 的实际掉血）：
+
+        worst_incoming 高估实伤 1.5~3 倍（对面整池取 max，池里大半技能
+        实际不带）—— 机器人过度保守，不敢站桩输出；
+        纯期望会**漏掉致命技能**（叮叮卯 exp/obs=0.29，学习分布还没
+        收敛时漏掉它带的大招 = 站在必死范围里）。
+
+    所以取两者混合：max(期望, blend × 最坏)。地板保住"最坏情况也扛得住"
+    的安全语义；blend 系数让常见对位不再被 3 倍高估锁死。
+
+    返回 (dmg, source)，source ∈ {"weighted", "worst", "assumed"}。
+    """
+    rows = worst_incoming(foe_name, my_name, top=1)
+    worst = rows[0]["dmg"] if rows else 0
+    if worst <= 0:
+        return 0, "worst"
+    try:
+        import foe_moves
+        exp = 0.0
+        for name, p, _pw, _tid in foe_moves.distribution(foe_name, top=top):
+            d = expected_incoming(foe_name, my_name, skill_name=name)
+            if d:
+                exp += p * d
+        exp = int(exp)
+    except Exception:
+        exp = 0
+    if exp <= 0:
+        return worst, "worst"
+    return int(max(exp, round(worst * blend))), "weighted"
+
+
 def worst_incoming(foe_name, my_name, top=5):
     """Biggest hits the opponent *could* land on us, as (skill, dmg, pct_of_my_hp).
 
