@@ -116,3 +116,16 @@ def burst_bonus(desc):
     if m2:
         out["power_mult"] = float(m2.group(1))
     return out
+
+
+# 迅捷技集合（desc 含「迅捷」，懒加载；8 个）
+_SWIFT_SET = None
+
+
+def swift_skills(dex):
+    global _SWIFT_SET
+    if _SWIFT_SET is None:
+        rows = dex.db.execute(
+            "SELECT name FROM skills WHERE desc LIKE '%迅捷%'").fetchall()
+        _SWIFT_SET = {r[0] for r in rows}
+    return _SWIFT_SET

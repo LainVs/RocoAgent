@@ -966,6 +966,9 @@ class Battle:
                               % (who, 100 * ta, 100 * td))
         bench_a, bench_b = self.bench("a"), self.bench("b")
 
+        # 打断标记（应对判定在下面，这里先声明）
+        interrupted = {"a": False, "b": False}
+
         # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
         skill_a = me.moves[pa] if (ka == "skill" and pa is not None
                                    and pa < len(me.moves)) else None
@@ -990,10 +993,6 @@ class Battle:
                                             "PRE_USE", ctx))
             events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
                                             "ON_USE", ctx))
-            # 技能描述抽取效果（204 技能长尾）：施加异常状态/印记、
-            # 回能/吸能。吸血和先手在下方各自的结算路径里消费。
-            # ★ 描述效果默认 target=对手（power=0 状态技几乎全是控场）；
-            #   ctx["_from_desc"]=True 让 _h_status 跳过 target=self 分支。
             import cond_fx
             dv = nrc_fx.desc_effects(mv.get("name") or "")
             target_of = foe if owner is me else me
@@ -1047,6 +1046,9 @@ class Battle:
         # 应对（counter）：两边技能都定了才判得出。谁应对成功谁吃收益。
         # 游戏内原文：**应对成功时无视速度差，必定先手**。所以这里记一个
         # 标记，后面排出手顺序时优先。另外「先手 +N」的技能也提优先级。
+        #
+        # 打断（S6.8）：应对成功时，若我方技能带「打断」→ 敌方本回合
+        # 技能作废（含 buff/状态效果）。
         counter_first = {"a": False, "b": False}
         for owner, other, mv, omv, side in (
                 (me, foe, skill_a, skill_b, "a"),
@@ -1059,6 +1061,16 @@ class Battle:
                 events.append(e)
             if hit:
                 counter_first[side] = True
+                # 打断：我方技能描述含「打断」→ 对方本回合效果作废
+                _desc_txt = (_skill_desc(mv.get("id"))
+                             if mv.get("id") else "") or ""
+                import cond_fx as _cf
+                if (mv.get("name") in _cf.interrupt_skills(self.dex)
+                        or "打断" in _desc_txt):
+                    interrupted["b" if side == "a" else "a"] = True
+                    events.append("%s 打断了对方的 %s！"
+                                  % ("我方" if side == "a" else "对方",
+                                     omv.get("name", "技能")))
                 if not trait_lib.supported_rules(
                         getattr(owner, "trait", None)):
                     for e in nrc_fx.trait_fire(owner, other,
@@ -1073,7 +1085,10 @@ class Battle:
             events.append("对方聚能（能量 %d）" % foe.energy)
 
         # 处理换人（换人回合不攻击，换上新精灵）
+        # 迅捷（S6.9）：主动换人入场时，使用第一个能量满足且带迅捷的技能
+        # —— 追加一次出手（原文：入场时使用迅捷技）
         switched_a = switched_b = False
+        swift_acts = []
         if ka == "switch" and bench_a:
             old = me.name
             nrc_fx.clear_buffs(me)          # 换人清增益/减益，印记保留
@@ -1097,6 +1112,14 @@ class Battle:
                 me.def_buff = max(0.0, me.def_buff - 0.1 * sw["debuff"])
                 events.append("暗涌印记：%s 获得 %d 层属性减益"
                               % (me.name, sw["debuff"]))
+            # 迅捷：换人入场 → 自动出第一个能量满足且带迅捷的技能
+            import cond_fx as _cf
+            for m in me.moves:
+                if m["name"] in _cf.swift_skills(self.dex) and m["cost"] <= me.energy:
+                    swift_acts.append((me.spe + 999, "a", me, foe, m))
+                    events.append("迅捷：%s 入场立即使用 %s"
+                                  % (me.name, m["name"]))
+                    break
         if kb == "switch" and bench_b:
             old = foe.name
             nrc_fx.clear_buffs(foe)
@@ -1120,6 +1143,13 @@ class Battle:
                 foe.def_buff = max(0.0, foe.def_buff - 0.1 * sw["debuff"])
                 events.append("暗涌印记：%s 获得 %d 层属性减益"
                               % (foe.name, sw["debuff"]))
+            # 迅捷（对方换人入场）
+            for m in foe.moves:
+                if m["name"] in _cf.swift_skills(self.dex) and m["cost"] <= foe.energy:
+                    swift_acts.append((foe.spe + 999, "b", foe, me, m))
+                    events.append("迅捷：%s 入场立即使用 %s"
+                                  % (foe.name, m["name"]))
+                    break
 
         # 处理 buff：官方精确值优先（skill_buff_pct），中位数兜底
         #
@@ -1161,10 +1191,17 @@ class Battle:
         # 本模拟器只建模了**攻击增益**（skill_buff_pct 的官方精确值）；
         # 加防/回血/印记没建模，就按「无伤害」处理并明确说明，
         # 而不是像原来那样让 calc_damage 的 max(1, ...) 假装打 1 点。
+        # ★ 打断（S6.8）：被打断的技能在这里 continue（效果作废）
         skip_act = {"a": False, "b": False}
         for who, mv, owner, kind in (("a", skill_a, me, ka),
                                      ("b", skill_b, foe, kb)):
             if kind != "skill" or mv is None or mv["power"] > 0:
+                continue
+            side_key = "a" if who == "a" else "b"
+            if interrupted.get(side_key):
+                events.append("%s 的 %s 被打断，效果无效"
+                              % ("我方" if who == "a" else "对方",
+                                 mv["name"]))
                 continue
             skip_act[who] = True
             if mv["cost"] <= owner.energy:
@@ -1247,6 +1284,8 @@ class Battle:
                     acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
                 else:
                     events.append("对方能量不足，%s 没放出来" % mv["name"])
+        # 迅捷技追加到 acts（优先于所有普通出手 —— 原文：入场立即使用）
+        acts.extend(swift_acts)
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
         # （原文：先手度更高的技能忽略速度差异优先释放，可叠加），
         # 再按速度；速度相同则随机（不能固定偏向 A，否则自对弈 100% 偏 A）。
