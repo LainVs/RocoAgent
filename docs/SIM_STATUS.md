@@ -3,6 +3,15 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S17 手操 UI 接入（2026-11-23，commit 2a4aa38）
+
+- [x] **evolve 动作**：act({"kind":"evolve","i":N})——leader_forms
+      血脉分支校验，payload 技能照常出手
+- [x] **state 展示**：evolution {used, usable}、magic.usable 排除
+      首领血脉、_pet_json 加 bloodline/allowed_slots/cond_mods
+- 测试：`src/test_s17_ui.py`（10 断言）；基线 15/15 零变化
+- 计划：docs/PLAN_S17_UI.md
+
 ## S16 条件型效果迷你引擎（2026-11-23，commit 43e4aa0）
 
 - [x] link 层解析 HP 阈值条件：云行雨施（hp>50% 伤害+30% / hp<50%
