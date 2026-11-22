@@ -212,11 +212,21 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     if img is None or getattr(img, "size", 0) == 0:
         return None, 0.0
-    # SKILL_BOX 在 2560 基准客户区坐标 (250,480,780,1520)；
-    # pill_box 是技能栏裁图内的坐标，平移回整帧。
+    # ★ 2026-11-22 实机标定（bar_partial_204511.png，docs/LIVE_FINDINGS）
+    # 名字在胶囊下缘 +5..+95、左右各扩 90 的区域里（实测 OCR 出
+    # 「力量增效」「跌落」「火云车」，conf 1.00）。
+    #
+    # 坐标系自适应：skill_pill_boxes 返回**整帧坐标**（已含 SKILL_BOX
+    # 偏移）；测试假数据可能传裁图内坐标。判定标准：x0/y0 已经大于
+    # SKILL_BOX 偏移 → 是整帧坐标，不再二次平移。
     sx, sy = 250, 480
-    roi = img[sy + y1:sy + y1 + 40, sx + max(0, x0 - 70):sx + x1 + 70]
-    if roi.size == 0 or roi.shape[0] < 14:
+    if x0 >= sx and y0 >= sy:
+        fx0, fy0, fx1, fy1 = x0, y0, x1, y1
+    else:
+        fx0, fy0, fx1, fy1 = sx + x0, sy + y0, sx + x1, sy + y1
+    roi = img[fy0 + 5:fy1 + 95,
+              max(0, fx0 - 90):min(2560, fx1 + 90)]
+    if roi.size == 0 or roi.shape[0] < 20:
         return None, 0.0
 
     import cv2
