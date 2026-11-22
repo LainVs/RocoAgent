@@ -145,6 +145,16 @@ check(acts[0][1] == "a",
       "低速方带先手+1 先出手（排序键 先手度>速度）")
 
 print()
+print("--- 6. 场地亲和 / 4 格生命制 ---")
+p_fire = SIM.Pet(dex, "音速犬", iv=60)
+p_grass = SIM.Pet(dex, "卡瓦重", iv=60)
+check(battle_fx.field_speed_bonus(p_grass, "草") == 50,
+      "草系精灵在草场地 亲和【强】+50")
+check(battle_fx.field_speed_bonus(p_fire, "水") == -50,
+      "火系精灵在水场地 抵触【强】-50")
+check(battle_fx.MAGIC_LIVES == 4, "魔力 4 格（每倒下一只 -1，归 0 判负）")
+
+print()
 if bad:
     print("FAILED %d" % bad)
     sys.exit(1)

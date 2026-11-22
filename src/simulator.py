@@ -679,7 +679,7 @@ class Battle:
     """
 
     def __init__(self, dex, team_a, team_b, cfg_a=None, cfg_b=None,
-                 seed=None):
+                 seed=None, magic_a=None, magic_b=None):
         self.dex = dex
         self.rnd = random.Random(seed)
         self.a = self._build(team_a, cfg_a)
@@ -688,6 +688,12 @@ class Battle:
         self.turn = 0
         self.done = None            # None / "a" / "b"
         self.hp_a = self.hp_b = 0
+        # 魔力（4 格生命制）：每倒下一只 -1，归 0 判负
+        import battle_fx as _bf
+        self.magic = {"a": int(magic_a if magic_a is not None
+                               else _bf.MAGIC_LIVES),
+                      "b": int(magic_b if magic_b is not None
+                               else _bf.MAGIC_LIVES)}
         # 天气 / 印记（2026-11-22，数据来自 roco-cal battle_effects）
         import battle_fx
         self.weather = "none"
@@ -853,7 +859,10 @@ class Battle:
 
         动作格式同 Policy.choose 的返回值 (kind, payload)，
         kind ∈ {"skill","energy","switch","buff"}。
+
+        结算用到的 battle_fx（场地/魔力）在方法里引入，别名 _bf。
         """
+        import battle_fx as _bf
         events = []
         import battle_fx
         import trait_lib
@@ -1149,8 +1158,17 @@ class Battle:
                     events.append(e)
 
         if not any(p.alive for p in self.a):
+            self.magic["a"] = max(0, self.magic.get("a", _bf.MAGIC_LIVES) - 1)
+            events.append("魔力 -1（我方剩 %d 格）" % self.magic["a"])
             self._finish("b", self.turn, 0, sum(p.hp for p in self.b))
         elif not any(p.alive for p in self.b):
+            self.magic["b"] = max(0, self.magic.get("b", _bf.MAGIC_LIVES) - 1)
+            events.append("魔力 -1（对方剩 %d 格）" % self.magic["b"])
+            self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
+        # 魔力归 0 判负（原文：魔力降至零即战败）
+        if self.magic["a"] <= 0:
+            self._finish("b", self.turn, 0, sum(p.hp for p in self.b))
+        elif self.magic["b"] <= 0:
             self._finish("a", self.turn, sum(p.hp for p in self.a), 0)
         return events
 

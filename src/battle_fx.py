@@ -306,6 +306,52 @@ def mark_speed_delta(side_marks):
 PRI_RE = re.compile(r"先手\s*([+-]?\d+)")
 
 
+# ---------------------------------------------------------------- 场地
+# 原文（rocokingdomtools / jinidex）：
+#   亲和【强】速度增加 50 点；亲和【弱】+25；抵触【弱】-25；抵触【强】-50
+#   「无畏」特长把抵触转为亲和
+# 数据在 species 表没有专门字段，roco-cal 的 pets json 也只有 elements ——
+# 场地映射表来自游戏内「场地相性」图鉴（按属性给每只精灵的亲和/抵触）。
+# 这里先按**属性**建模：精灵的第一属性决定场地类型。
+FIELD_ELEMENTS = ("草", "水", "火", "地", "冰", "电", "光", "幽", "龙", "虫",
+                  "武", "翼", "萌", "毒", "恶", "机械", "幻", "普通")
+
+
+def field_affinity(pet_types, field_element):
+    """场地亲和：返回速度修正（+50/+25/0/-25/-50）。
+
+    判定：精灵属性里有场地属性 -> 亲和【强】+50；
+          属性里没有、但场地属性克制它 -> 抵触【强】-50；
+          其余 0（【弱】档没有可靠的公开数据，先不硬造）。
+    原文还提到「无畏」特长会把抵触转为亲和，特性名带「无畏」时生效。
+    """
+    if not field_element or field_element not in FIELD_ELEMENTS:
+        return 0
+    types = set(pet_types or [])
+    if field_element in types:
+        return 50
+    # 抵触判定：场地属性被该精灵的属性克制（粗略：场地属性克它 -> 它抵触）
+    import statmodel as _S
+    eff = _S.type_effect(field_element, list(types))
+    if eff >= 2.0:
+        return -50
+    return 0
+
+
+def field_speed_bonus(pet, field_element):
+    """含「无畏」特长的换算。"""
+    base = field_affinity(getattr(pet, "types", None), field_element)
+    if base < 0 and "无畏" in (getattr(pet, "trait", "") or ""):
+        return -base
+    return base
+
+
+# ---------------------------------------------------------------- 胜负
+# 原文：「每倒下一只精灵，就损耗一点魔力」「魔力降至零即战败」
+# rocom-data 的模拟器口径：4 格生命制。
+MAGIC_LIVES = 4
+
+
 def parse_priority(desc):
     """从技能描述解析先手度（+1/-1…），没有就是 0。"""
     if not desc:
