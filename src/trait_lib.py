@@ -48,6 +48,9 @@ SUPPORTED = {
     # 按当前倒下数动态计算（悲悯/悼亡：每只力竭精灵双攻+30%，原文
     # timing=current —— 是**持续状态**，不是入场一次性；倒下数变化立即生效）
     ("current", "pets_dead_count"): {"stat_buff"},
+    # 持续状态类（timing=current）：条件可判定的，每次出手前重算
+    ("current", "bonus_count"): {"stat_buff"},
+    ("current", "starfall_marks"): {"stat_buff"},
     # 吸血（文本推导）
     ("entrance", "always"): {"lifesteal"},
     ("usage", "firsthand"): {"lifesteal"},
@@ -198,7 +201,10 @@ def first_turn_buffs(pet):
 
 
 def carrier_buffs(pet):
-    """「携带的技能都 <4 耗能」这类整队条件 -> (atk_buff, def_buff)。"""
+    """「携带的技能都 <4 耗能」这类整队条件 -> (atk_buff, def_buff)。
+
+    双面向口径见下方注释块：atk/mag 是同一份加成取 atk，def/res 取 def。
+    """
     atk = dfn = 0.0
     for r in supported_rules(getattr(pet, "trait", None)):
         if (r.get("timing"), r.get("mode")) != ("carried",
@@ -210,53 +216,70 @@ def carrier_buffs(pet):
         if not costs or any(c >= 4 for c in costs):
             continue
         vals = r.get("values") or {}
-        atk += float(vals.get("atk") or 0) + float(vals.get("mag") or 0)
-        dfn += float(vals.get("def") or 0) + float(vals.get("res") or 0)
+        atk += _dual_stat(vals.get("atk"), vals.get("mag"),
+                          vals.get("def"), vals.get("res"),
+                          vals.get("spd"), vals.get("spd_flat"))[0]
+        dfn += _dual_stat(vals.get("atk"), vals.get("mag"),
+                          vals.get("def"), vals.get("res"),
+                          vals.get("spd"), vals.get("spd_flat"))[1]
     return atk, dfn
 
 
-def dead_buffs(pet):
-    """按**当前**倒下数计算的增益（悲悯/悼亡）。
+# ★ 双面向数值的口径（2026-11-22 悲悯/悼亡事故后定死）
+# ------------------------------------------------------------------
+# 「双攻+30%」= 物攻+30% 和 魔攻+30% —— 是**同一份加成的两个面向**
+# （物理打物攻、魔法打魔攻），不是相加成 60%。
+# `values` 里 atk/mag 同时出现 -> 模型单槽取 **atk**（magic 用 matk
+# 时模型也走这个槽）；def/res 同理取 def。
+# 这是"一条规则覆盖双面向"的语义（roco-cal 没有 filter 区分物理/魔法）。
+def _dual_stat(atk, mag, dfn, res, spd, spd_flat):
+    """把 roco-cal 的多面向数值折算成模型的 (atk, dfn) 两槽。"""
+    a = float(atk or 0)                 # 物攻/魔攻共用一份加成
+    d = float(dfn or 0)                 # 物防/魔防共用一份加成
+    return a, d
 
-    原文：「己方队伍中每有 1 只力竭的精灵，自己获得双攻 +30%」（悲悯）
-          「双方队伍中每有 1 只力竭的精灵，自己获得双攻 +30%」（悼亡）
 
-    roco-cal 标 timing=current —— **持续状态**，倒下数变化立即生效；
-    不是入场一次性（nrc-ai 把它标成 ON_ENTER，是它的简化，别照抄）。
-    mode=pets_dead_count，scope 用特性名区分（悼亡数双方，悲悯只数己方）。
+def dynamic_buffs(pet):
+    """timing=current 的**持续状态**特性 -> (atk_buff, def_buff)。
 
-    返回 (atk_buff, def_buff)；双攻=物攻+魔攻，合并进一个槽，
-    每只力竭 +30% 就是 atk +0.3（不是 0.6）。
+    每回合开始时重算（Battle.begin_turn），倒下数/印记等条件取当前值。
+    只处理条件可判定的 mode；不可判定的在 build_s5 时就已跳过并计数。
+
+    返回 (atk, dfn)；pet 上需要 _battle/_side。
     """
     trait = getattr(pet, "trait", "") or ""
-    out = []
-    for r in supported_rules(trait):
-        if r.get("mode") != "pets_dead_count" or r.get("kind") != "stat_buff":
-            continue
-        out.append(r)
-    if not out:
-        return 0.0, 0.0
     battle = getattr(pet, "_battle", None)
     side = getattr(pet, "_side", "a")
     if battle is None:
         return 0.0, 0.0
+    total_a = total_d = 0.0
+    for r in supported_rules(trait):
+        if r.get("timing") != "current" or r.get("kind") != "stat_buff":
+            continue
+        mode = r.get("mode")
+        # 数值可能在 values（一次性）或 values_per_stack（按层数/计数乘）
+        vals = r.get("values") or r.get("values_per_stack") or {}
+        a, d = _dual_stat(vals.get("atk"), vals.get("mag"),
+                          vals.get("def"), vals.get("res"),
+                          vals.get("spd"), vals.get("spd_flat"))
+        if mode == "pets_dead_count":
+            dead = _dead_count(pet, battle, side, trait)
+            total_a += a * dead
+            total_d += d * dead
+        # bonus_count / starfall_marks 的参数在 values 里为空
+        # （roco-cal 没写数值），没有可靠数字就不硬造 —— 跳过
+    return total_a, total_d
+
+
+def _dead_count(pet, battle, side, trait):
     if "悼亡" in trait:
-        dead = sum(1 for p in battle.a if not p.alive) + \
+        return sum(1 for p in battle.a if not p.alive) + \
             sum(1 for p in battle.b if not p.alive)
-    else:                                   # 悲悯：只数己方
-        dead = sum(1 for p in battle.a if side == "a" and not p.alive) + \
-            sum(1 for p in battle.b if side == "b" and not p.alive)
-    if dead <= 0:
-        return 0.0, 0.0
-    total_atk = total_dfn = 0.0
-    for r in out:
-        per = r.get("values_per_stack") or {}
-        # ★ 双攻 +30% = 物攻+30% 和 魔攻+30%，但它们是**同一份加成的两个
-        #   面向**（物理用物攻、魔法用魔攻），不是相加成 +60%。模型里
-        #   atk_buff 一个槽同时作用双攻，所以每只力竭只加 0.3。
-        total_atk += float(per.get("atk") or 0)
-        total_dfn += float(per.get("def") or 0) + float(per.get("res") or 0)
-    return total_atk * dead, total_dfn * dead
+    return sum(1 for p in battle.a if side == "a" and not p.alive) + \
+        sum(1 for p in battle.b if side == "b" and not p.alive)
+
+
+def carrier_buffs(pet):
     """「携带的技能都 <4 耗能」这类整队条件 -> (atk_buff, def_buff)。"""
     atk = dfn = 0.0
     for r in supported_rules(getattr(pet, "trait", None)):
@@ -269,8 +292,9 @@ def dead_buffs(pet):
         if not costs or any(c >= 4 for c in costs):
             continue
         vals = r.get("values") or {}
-        atk += float(vals.get("atk") or 0) + float(vals.get("mag") or 0)
-        dfn += float(vals.get("def") or 0) + float(vals.get("res") or 0)
+        # 双面向口径：atk/mag 是同一份加成，取 atk；def/res 取 def
+        atk += float(vals.get("atk") or 0)
+        dfn += float(vals.get("def") or 0)
     return atk, dfn
 
 
