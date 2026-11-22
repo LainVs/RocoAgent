@@ -1179,7 +1179,7 @@ input:focus-visible,
 
 
 
-/* ¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T Ä£ÄâÆ÷£¨Ðü¸¡´°¿¨Æ¬·ç£©¨T¨T¨T¨T¨T¨T¨T¨T¨T¨T */
+/* ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T Ä£ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Æ¬ï¿½ç£©ï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½Tï¿½T */
 .sim-bench {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
@@ -1236,7 +1236,7 @@ input:focus-visible,
 .sim-lab { font-size: 11px; color: var(--ink-2); }
 .sim-status { font-size: 11px; color: var(--ink-3); }
 
-/* ±à¼­µ¯²ã£ºÐü¸¡´°Ãæ°åÍ¬¿î£¨Ô²½Ç´ó¿¨ + Í·Ïñ + ÃûÅÆÐÐ£© */
+/* ï¿½à¼­ï¿½ï¿½ï¿½ã£ºï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Í¬ï¿½î£¨Ô²ï¿½Ç´ï¿½ + Í·ï¿½ï¿½ + ï¿½ï¿½ï¿½ï¿½ï¿½Ð£ï¿½ */
 .sim-ed {
   position: fixed; inset: 0; z-index: 50;
   background: rgba(31,30,29,.45);
@@ -1283,7 +1283,29 @@ input:focus-visible,
   background: #fff; color: #1F1E1D; border: 1px solid rgba(31,30,29,.14);
   border-radius: 7px; padding: 6px 8px; font-size: 12px;
 }
-.sim-ed-seclab { font-size: 10px; color: #8A877F; margin-bottom: 6px; }
+.sim-ed-seclab { font-size: 10px; color: #8A877F; margin: 10px 0 6px; }
+.sim-ed-invest { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+.iv-chip {
+  display: flex; gap: 5px; align-items: center;
+  padding: 5px 10px; border-radius: 8px;
+  background: #F1EFE9; border: 1px solid rgba(31,30,29,.08);
+  font-size: 12px; cursor: pointer; color: #55524C;
+}
+.iv-chip:hover { border-color: var(--accent-soft); }
+.iv-chip input:checked + span { color: #884027; font-weight: 600; }
+.sim-ed-panel {
+  display: grid; grid-template-columns: repeat(6, 1fr); gap: 6px;
+  margin-bottom: 6px;
+}
+.pp-item {
+  background: #F1EFE9; border-radius: 8px; padding: 7px 9px;
+  text-align: center;
+}
+.pp-item em {
+  display: block; font-style: normal; font-size: 9px; color: #8A877F;
+  margin-bottom: 3px;
+}
+.pp-item b { font-size: 14px; color: #1F1E1D; font-variant-numeric: tabular-nums; }
 .sim-ed-moves {
   display: grid; grid-template-columns: 1fr 1fr; gap: 5px;
   margin-bottom: 16px;

@@ -188,18 +188,24 @@ class Dex:
 class Pet:
     """场上的一只精灵。"""
 
-    def __init__(self, dex, name, iv=60, nature_hp=1.0, nature=None):
-        """iv：个体值（PvP 基准 60）；nature：完整性格名（config/nature_table.json）。
+    def __init__(self, dex, name, iv=60, nature_hp=1.0, nature=None,
+                 invest=None):
+        """iv/nature/invest：PvP 真实建模（2026-11-22 修正，用户指出）。
 
-        ★ 2026-11-22 支持完整性格（UI 模拟器需求）
+        ★ 个体值正确建模：**选三项投 60，其余 0**
         ------------------------------------------
-        原来只有 `nature_hp`（HP 倍率），其它五项固定 1.0 ——
-        意味着模拟器里「固执」（物攻+20%）和「平和」（HP+20%）只差一项，
-        无法模拟性格对速度/物攻的真实影响。
+        之前六项都填 60 是错的。用 my_team 5 只精灵的实测面板反推：
 
-        现在 nature 传入性格名后，六项倍率全部走
-        `statmodel.nature_mult()`（31 种性格官方表）。
-        nature_hp 保留兼容旧调用方（它等价于 nature 的 hp 倍率）。
+            音速犬   hp/atk/speed=60, spa/def/spd=0, 开朗 -> 6/6 面板命中
+            冰钻布鲁斯 hp/atk/speed=60, spa/def/spd=0, 固执 -> 6/6 命中
+            恶魔狼   hp/atk/speed=60, spa/def/spd=0, 开朗 -> 6/6 命中
+
+        官方 800 只使用率数据同样印证：每只精灵只有 2~3 项有投资
+        （音速犬：物攻 82.8% / 速度 81.7% / 精力 62.5%，后三项都 <32%）。
+
+        invest：[项名...] 要投 60 的项（"hp"/"atk"/"spa"/"def"/"spd"/"spe"），
+                缺省 ["hp","atk","spe"]（天梯最常见的攻速体三投资）。
+        nature：完整性格名（31 种官方表），决定六项倍率。
         """
         self.name = name
         self.data = dex.species(name)
@@ -207,18 +213,26 @@ class Pet:
             raise ValueError("未知精灵: %s" % name)
         import statmodel as S
         b = self.data["base"]
+        inv = set(invest or ["hp", "atk", "spe"])
         mult = S.nature_mult(nature) if nature else {
             "hp": nature_hp, "patk": 1.0, "matk": 1.0,
             "pdef": 1.0, "mdef": 1.0, "spd": 1.0}
         self.nature = nature
         self.iv = iv
-        self.max_hp = S.calc_real_stat(b[0], iv, mult["hp"], is_hp=True)
+        self.invest = sorted(inv)
+        self.max_hp = S.calc_real_stat(b[0], iv if "hp" in inv else 0,
+                                       mult["hp"], is_hp=True)
         self.hp = self.max_hp
-        self.atk = S.calc_real_stat(b[1], iv, mult["patk"])
-        self.spa = S.calc_real_stat(b[2], iv, mult["matk"])
-        self.dfn = S.calc_real_stat(b[3], iv, mult["pdef"])
-        self.spd = S.calc_real_stat(b[4], iv, mult["mdef"])
-        self.spe = S.calc_real_stat(b[5], iv, mult["spd"])
+        self.atk = S.calc_real_stat(b[1], iv if "atk" in inv else 0,
+                                    mult["patk"])
+        self.spa = S.calc_real_stat(b[2], iv if "spa" in inv else 0,
+                                    mult["matk"])
+        self.dfn = S.calc_real_stat(b[3], iv if "def" in inv else 0,
+                                    mult["pdef"])
+        self.spd = S.calc_real_stat(b[4], iv if "spd" in inv else 0,
+                                    mult["mdef"])
+        self.spe = S.calc_real_stat(b[5], iv if "spe" in inv else 0,
+                                    mult["spd"])
         self.types = self.data["types"]
         self.trait = self.data["trait"]
         self.energy = ENERGY_CAP
@@ -235,6 +249,11 @@ class Pet:
         self.atk_buff = 0.0     # 攻击增益比例，例如 0.70 = +70%
         self.def_buff = 0.0     # 防御增益比例
         self.buffed = False     # 是否已经用过 buff 技能（不再叠）
+
+    def panel(self):
+        """六项面板（UI 展示用）。"""
+        return {"hp": self.max_hp, "atk": self.atk, "spa": self.spa,
+                "def": self.dfn, "spd": self.spd, "spe": self.spe}
 
     @property
     def alive(self):
@@ -427,7 +446,8 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
         for i, n in enumerate(team):
             c = (cfg or [None] * len(team))[i] or {}
             p = Pet(dex, n, iv=c.get("iv", 60),
-                    nature=c.get("nature"))
+                    nature=c.get("nature"),
+                    invest=c.get("invest"))
             if c.get("moves"):
                 # UI 指定的技能：按 id 从 Dex 学法表里挑（保持顺序）
                 want = [int(x) for x in c["moves"]]

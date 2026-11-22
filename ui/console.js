@@ -1729,11 +1729,98 @@ async function openSimEditor(slot) {
       nats.map((n) => `<option>${n}</option>`).join('');
     $('simDexList').innerHTML = (simDexPool || []).map((n) =>
       `<option value="${n}">`).join('');
+    // 三项投资 checkbox（PvP 规则：只选三项投满，其余 0）
+    $('simEdInvest').innerHTML =
+      ['hp', 'atk', 'spa', 'def', 'spd', 'spe'].map((k) => `
+        <label class="iv-chip"><input type="checkbox" data-stat="${k}">
+          ${({ hp: '精力', atk: '物攻', spa: '魔攻',
+              def: '物防', spd: '魔防', spe: '速度' })[k]}</label>`).join('');
+    $('simEdInvest').querySelectorAll('input').forEach((c) =>
+      c.addEventListener('change', () => { simEnforceThree(); simUpdatePanel(); }));
+    ['simEdIv', 'simEdHp'].forEach((id) =>
+      $(id).addEventListener('input', simUpdatePanel));
+    $('simEdNature').addEventListener('change', simUpdatePanel);
   }
   simRenderEditor();
   $('simEditor').hidden = false;
   const cur = simTeams[simSide][slot];
-  if (cur && cur.name) await simLoadMoves(cur.name, cur.moves || []);
+  if (cur && cur.name) {
+    await simLoadMoves(cur.name, cur.moves || []);
+    simUpdatePanel();
+  }
+}
+
+/* 三项60 + 性格 -> 六项面板（前端镜像 simulator.Pet 公式，实时预览） */
+function simCalcPanel(base, iv, invest, nature) {
+  const NAT = {
+    专注: { patk: 1.0, matk: 1.2, pdef: 0.9, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    偏执: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 0.9, spd: 1.0, hp: 1.0 },
+    冷静: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.0 },
+    勇敢: { patk: 1.2, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.0 },
+    固执: { patk: 1.2, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    坦率: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 0.9 },
+    大胆: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    天真: { patk: 1.0, matk: 0.9, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    害羞: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    平和: { patk: 1.0, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.2 },
+    开朗: { patk: 1.0, matk: 0.9, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
+    忧郁: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.0, spd: 1.0, hp: 1.2 },
+    急躁: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.0, spd: 1.2, hp: 1.0 },
+    胆小: { patk: 0.9, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
+    莽撞: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 1.0 },
+    热情: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.2, hp: 0.9 },
+    沉默: { patk: 0.9, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.2 },
+    慎重: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.2, spd: 0.9, hp: 1.0 },
+    懒散: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 0.9, spd: 1.0, hp: 1.0 },
+    温顺: { patk: 1.0, matk: 1.0, pdef: 0.9, mdef: 1.2, spd: 1.0, hp: 1.0 },
+    焦虑: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.2, spd: 1.0, hp: 0.9 },
+    理性: { patk: 1.0, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 0.9 },
+    稳重: { patk: 0.9, matk: 1.0, pdef: 1.2, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    粗心: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 0.9, spd: 1.0, hp: 1.2 },
+    聪明: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    警惕: { patk: 0.9, matk: 1.2, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 },
+    调皮: { patk: 1.0, matk: 1.0, pdef: 1.2, mdef: 0.9, spd: 1.0, hp: 1.0 },
+    踏实: { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 0.9, hp: 1.2 },
+    逞强: { patk: 1.2, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 0.9 },
+  };
+  const m = (nature && NAT[nature]) ||
+    { patk: 1.0, matk: 1.0, pdef: 1.0, mdef: 1.0, spd: 1.0, hp: 1.0 };
+  const inv = new Set(invest || []);
+  const rh = (x) => Math.floor(x + 0.5);
+  const stat = (sv, has, nm, isHp) => {
+    const i = has ? iv : 0;
+    return isHp
+      ? rh(rh((sv * 1.7 + i * 0.85 + 70) * m.hp) + 100)
+      : rh(rh(rh(sv * 1.1 + i * 0.55 + 10) * m[nm]) + 50);
+  };
+  return {
+    HP: stat(base.hp, inv.has('hp'), 'hp', true),
+    物攻: stat(base.patk, inv.has('atk'), 'patk', false),
+    魔攻: stat(base.matk, inv.has('spa'), 'matk', false),
+    物防: stat(base.pdef, inv.has('def'), 'pdef', false),
+    魔防: stat(base.mdef, inv.has('spd'), 'mdef', false),
+    速度: stat(base.spd, inv.has('spe'), 'spd', false),
+  };
+}
+
+let simEdBase = null;
+
+function simEnforceThree() {
+  const boxes = $('simEdInvest').querySelectorAll('input:checked');
+  if (boxes.length > 3) boxes[0].checked = false;
+}
+
+function simUpdatePanel() {
+  if (!simEdBase) return;
+  const invest = Array.from(
+    $('simEdInvest').querySelectorAll('input:checked')).map((c) => c.dataset.stat);
+  const iv = Math.max(0, Math.min(100, parseInt($('simEdIv').value, 10) || 60));
+  const nature = $('simEdNature').value || null;
+  const hpOv = parseInt($('simEdHp').value, 10) || null;
+  const p = simCalcPanel(simEdBase, iv, invest, nature);
+  if (hpOv) p.HP = hpOv;
+  $('simEdPanel').innerHTML = Object.entries(p).map(([k, v]) => `
+    <div class="pp-item"><em>${k}</em><b>${v}</b></div>`).join('');
 }
 
 async function simLoadMoves(name, checked) {
@@ -1745,8 +1832,10 @@ async function simLoadMoves(name, checked) {
     if (o.error) {
       mvWrap.innerHTML = `<span style="font-size:11px;color:#B04A3A">${o.error}</span>`;
       $('simEdInfo').textContent = '—';
+      simEdBase = null;
       return;
     }
+    simEdBase = o.base;
     $('simEdInfo').innerHTML =
       `属性 <b>${o.types.join('/')}</b> · 特性 <b>${o.trait}</b> · ` +
       `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
@@ -1757,6 +1846,13 @@ async function simLoadMoves(name, checked) {
         ${want.has(m.id) ? 'checked' : ''}>
         ${m.name}<span class="mv-pow">${m.power || 0}/${m.cost}</span>
       </label>`).join('');
+    // 默认三项投资：攻/速/体（天梯最常见），已配置的优先
+    if (!$('simEdInvest').querySelectorAll('input:checked').length) {
+      $('simEdInvest').querySelectorAll('input').forEach((c) => {
+        c.checked = ['hp', 'atk', 'spe'].includes(c.dataset.stat);
+      });
+    }
+    simUpdatePanel();
   } catch (e) {
     mvWrap.innerHTML = '拉取失败：' + e;
   }
@@ -1783,10 +1879,13 @@ function bindSimUI() {
     if (!nm) { $('simEdMsg').textContent = '先填精灵名'; return; }
     const moves = Array.from(
       $('simEdMoves').querySelectorAll('input:checked')).map((c) => +c.dataset.mid);
+    const invest = Array.from(
+      $('simEdInvest').querySelectorAll('input:checked')).map((c) => c.dataset.stat);
     simTeams[simSide][simEditorSlot] = {
       name: nm,
       iv: Math.max(0, Math.min(100, parseInt($('simEdIv').value, 10) || 60)),
       nature: $('simEdNature').value || null,
+      invest,
       moves,
       max_hp: parseInt($('simEdHp').value, 10) || null,
     };

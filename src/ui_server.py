@@ -1215,8 +1215,7 @@ def sim_preset_delete(body):
 
 
 def sim_species_detail(name):
-    """单只精灵的完整资料：种族值/特性/可学技能/官方性格表。
-    UI 选完精灵后拉这一条来填个体/性格/技能。"""
+    """单只精灵的完整资料：种族值/特性/可学技能/性格表/三项60默认面板。"""
     import simulator as _SIM
     dex = _SIM.Dex()
     s = dex.species(name or "")
@@ -1227,12 +1226,16 @@ def sim_species_detail(name):
     panel_std = _S.panel({k: base[i] for i, k in enumerate(
         ("hp", "patk", "matk", "pdef", "mdef", "spd"))},
         {k: 60 for k in ("hp", "patk", "matk", "pdef", "mdef", "spd")})
+    # 三项60建模的默认面板（PvP 真实建模，见 simulator.Pet docstring）：
+    # 音速犬 -> hp366/atk221/mat97/def171/mdef150/spe260
+    p = _SIM.Pet(dex, name, iv=60, invest=["hp", "atk", "spe"])
     return {
         "name": s["name"], "id": s["id"], "types": s["types"],
         "trait": s["trait"],
         "base": {"hp": base[0], "patk": base[1], "matk": base[2],
                  "pdef": base[3], "mdef": base[4], "spd": base[5]},
         "panel_iv60": panel_std,
+        "panel_default": p.panel(),
         "moves": dex.moves(s["id"]),
         "natures": sorted(k for k in _S.natures().keys() if k != "neutral"),
     }
@@ -1272,10 +1275,10 @@ def sim_run(body):
            "--games", str(games), "--seed", str(seed)]
     ca = body.get("cfg_a")
     cb = body.get("cfg_b")
-    if ca:
-        cmd += ["--cfg-a", json.dumps(ca, ensure_ascii=False)]
-    if cb:
-        cmd += ["--cfg-b", json.dumps(cb, ensure_ascii=False)]
+    # cfg 里的 invest（三项60 的投资项）要透传
+    for tag, cfg in (("cfg-a", ca), ("cfg-b", cb)):
+        if cfg:
+            cmd += ["--" + tag, json.dumps(cfg, ensure_ascii=False)]
     try:
         p = subprocess.run(cmd, capture_output=True, timeout=180)
         out = p.stdout.decode("utf-8", errors="replace")
