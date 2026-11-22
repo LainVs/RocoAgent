@@ -126,7 +126,19 @@ def _classify_raw(raw):
     effects = _effects_of(raw)
     dr = _parse_dr(raw.get("damage_reduction"))
 
-    # 有伤害就是伤害技能，即使附带 debuff（例如寒风吹：魔伤 + 魔防-50%）
+    # ---- 官方效果链优先（2026-11-22，rkpp-official 数据）
+    #
+    # 原来这里 `power>0 -> 直接 KIND_DAMAGE`，会把"攻击+附带增益/减益"
+    # 的技能一刀切成纯伤害卡。官方数据证实这类技能真实存在且不少：
+    #
+    #     丢冰块  power=90 + 敌方速度等级降低  -> enemy_debuff 语义
+    #     吞噬    power=150 + 击杀回能量       -> 能量收益
+    #     睡眠/尾随/逃跑  priority 10/11    -> 控制技
+    #
+    # 但也不能反向一刀切：攻击技的主要价值仍是伤害，附带 debuff 只是加分。
+    # 所以 policy_v2 评估时**主类仍是 damage**，附带语义放进 skill_kind 的
+    # 细分（官方分类在 KIND_DAMAGE 之上再给一个"附带效果"标签，
+    # 通过 official_kind 单独查询，见 skill_kind_official.py）。
     if power > 0:
         return KIND_DAMAGE
 
