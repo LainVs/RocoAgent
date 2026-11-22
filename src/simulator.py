@@ -832,6 +832,20 @@ class Battle:
                                             "PRE_USE", ctx))
             events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
                                             "ON_USE", ctx))
+        # 应对（counter）：两边技能都定了才判得出。谁应对成功谁吃收益。
+        for owner, other, mv, omv in ((me, foe, skill_a, skill_b),
+                                      (foe, me, skill_b, skill_a)):
+            if mv is None or omv is None:
+                continue
+            evs, hit = nrc_fx.counter_fire(owner, other,
+                                           mv.get("name") or "", omv)
+            for e in evs:
+                events.append(e)
+            if hit and not trait_lib.supported_rules(
+                    getattr(owner, "trait", None)):
+                for e in nrc_fx.trait_fire(owner, other,
+                                           "ON_COUNTER_SUCCESS"):
+                    events.append(e)
 
         # 处理聚能
         if ka == "energy":

@@ -193,11 +193,82 @@ HANDLERS = {
     "DAMAGE_MOD_NON_LIGHT": _h_power_mod,
     "FIRST_STRIKE_POWER_BONUS": _h_power_mod,
     "ENTRY_BUFF_PER_SKILL_COUNT": _h_entry_per_skill,
+    # `DAMAGE` 在原表里是「这招会打伤害」的标记（params 全空），
+    # 实际伤害由技能自身的威力算，所以这里是个显式的空操作，
+    # 不能算「未实现」（否则 58 条永远顶着 skipped）。
+    "DAMAGE": lambda pet, foe, params, ctx: None,
 }
+
+
+# ---------------------------------------------------------------- 应对（counter）
+def skill_category(move):
+    """把技能归到 应对 的三个类别：attack / defense / status。
+
+    判定依据（本作没有官方字段，只能按数据特征分）：
+      威力 > 0                        -> attack
+      威力 = 0 且给自身加**防御**     -> defense（防御 / 有效预防 这类）
+      其余威力 = 0                    -> status（力量增幅 / 上状态 / 上印记）
+
+    `防御` 的判定复用官方数值表（`simulator.skill_buff`），不是拍脑袋。
+    """
+    if not move:
+        return None
+    if int(move.get("power") or 0) > 0:
+        return "attack"
+    try:
+        import simulator as _S
+        v = _S.skill_buff(move.get("name") or "")
+    except Exception:
+        v = None
+    if v and (v.get("def") or 0) > 0:
+        return "defense"
+    # 有些防御技能在官方数值表里没有条目（例如「有效预防」），
+    # 但 nrc-ai 的效果链里有「减伤」—— 据此判成 defense。
+    for r in skill_rows(move.get("name") or ""):
+        for e in r.get("effects") or []:
+            if e.get("type") == "DAMAGE_REDUCTION":
+                return "defense"
+    return "status"
+
+
+def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
+    """我方这一招**应对**对方的 `foe_move`：命中类别就触发。
+
+    nrc-ai 的 ON_COUNTER 组带 `filters={"category": ...}`，正是被应对方
+    的技能类别。返回 (事件列表, 是否应对成功)。
+    """
+    ctx = ctx if ctx is not None else {}
+    cat = skill_category(foe_move)
+    if not cat:
+        return [], False
+    hit = False
+    out = []
+    for r in skill_rows(skill_name):
+        if r.get("timing") != "ON_COUNTER":
+            continue
+        want = (r.get("filters") or {}).get("category")
+        if want and want != cat:
+            continue
+        hit = True
+        for e in r.get("effects") or []:
+            fn = HANDLERS.get(e["type"])
+            if fn is None:
+                _SKIP[e["type"]] += 1
+                continue
+            _APPLIED[e["type"]] += 1
+            msg = fn(pet, foe, e.get("params") or {}, ctx)
+            if msg:
+                out.append(msg)
+    if hit:
+        out.insert(0, "%s 应对成功（对方是%s技能）"
+                   % (pet.name, {"attack": "攻击", "defense": "防御",
+                                 "status": "状态"}[cat]))
+    return out, hit
 
 # 允许的技能/特性时机
 TRAIT_TIMINGS = {"ON_ENTER", "ON_BATTLE_START", "ON_TURN_START",
-                 "ON_USE_SKILL", "ON_TURN_END", "PASSIVE", "ON_TAKE_HIT"}
+                 "ON_USE_SKILL", "ON_TURN_END", "PASSIVE", "ON_TAKE_HIT",
+                 "ON_COUNTER_SUCCESS"}
 SKILL_TIMINGS = {"ON_USE", "PRE_USE", "POST_USE"}
 
 

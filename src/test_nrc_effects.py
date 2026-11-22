@@ -80,6 +80,24 @@ check(n_after > n_before,
       "未实现的原语被计入 skipped（%d -> %d）" % (n_before, n_after))
 
 print()
+print("--- 4. 应对（counter）---")
+mv_status = dex.resolve_skill("力量增效")     # 状态技能
+mv_atk = dex.resolve_skill("升龙咆哮")        # 攻击技能
+p4 = SIM.Pet(dex, "音速犬", iv=60)
+check(nrc_fx.skill_category(mv_status) == "status",
+      "「力量增效」归类为状态技能")
+check(nrc_fx.skill_category(mv_atk) == "attack", "「升龙咆哮」归类为攻击技能")
+check(nrc_fx.skill_category(dex.resolve_skill("防御")) == "defense",
+      "「防御」归类为防御技能")
+evs, hit = nrc_fx.counter_fire(p4, q, "崩拳", mv_status)
+check(hit and p4.atk_buff >= 1.0,
+      "崩拳应对状态 -> 物攻 +%.0f%%（%s）"
+      % (100 * p4.atk_buff, evs[0] if evs else ""))
+p4.atk_buff = 0.0
+_, hit2 = nrc_fx.counter_fire(p4, q, "崩拳", mv_atk)
+check(not hit2, "崩拳对攻击技能不触发应对")
+
+print()
 if bad:
     print("FAILED %d" % bad)
     sys.exit(1)
