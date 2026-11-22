@@ -427,3 +427,45 @@ def leave_skills(dex):
                 out.add(r["name"])
         _LEAVE_SET = out
     return _LEAVE_SET
+
+
+# ------------------------------------------------------------- 传动
+# 原文：「回合开始时，带有传动X的技能会向下移动X个位置，可叠加」
+# 位置相关威力按**当前槽位**判定（1号位=索引0）。
+_TRANS_CACHE = {}
+
+
+def trans_pos_bonus(dex, skill_name, slot_index):
+    """传动技在当前槽位下的威力加成（0 = 无）。
+
+    例：械斗「本技能位于1号位时威力+60」→ slot_index=0 时返回 60。
+    """
+    if skill_name not in _TRANS_CACHE:
+        r = dex.db.execute(
+            "SELECT desc FROM skills WHERE name=? LIMIT 1",
+            (skill_name,)).fetchone()
+        desc = (r["desc"] or "") if r else ""
+        conds = []
+        for m2 in re.finditer(
+                r"本技能位于(\d)号(?:或(\d)号)?位时威[力荗]\+?(\d+)",
+                desc):
+            ps = [int(m2.group(1)) - 1]
+            if m2.group(2):
+                ps.append(int(m2.group(2)) - 1)
+            conds.append((ps, int(m2.group(3))))
+        _TRANS_CACHE[skill_name] = conds
+    for ps, bonus in _TRANS_CACHE[skill_name]:
+        if slot_index in ps:
+            return bonus
+    return 0
+
+
+# ------------------------------------------------------------- 奉献
+# 原文：虫系队伍层 buff，影响「啃咬」「虫群」系技能。
+# 每次奉献：威力+20（飞断）、连击+1（虫群过境）、能耗-1（啃咬）
+# 引擎简化：威力+20/次（最常见数值），连击和能耗变更待细化。
+
+
+def devotion_power_bonus(count):
+    """奉献 N 次 → 威力加成（+20/次）。"""
+    return int(count) * 20

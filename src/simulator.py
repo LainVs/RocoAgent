@@ -759,6 +759,8 @@ class Battle:
         self.marks = {"a": {}, "b": {}}
         self.pending = []          # begin_turn 里产生的待播报事件
         self._nrc_entered = set()  # (side, id(pet)) 已触发过入场效果的
+        # 奉献（S6.13）：己方队伍计数器，影响啃咬/虫群系技能
+        self.devotion = {"a": 0, "b": 0}
         self._first_turn_done = set()  # 首回合增益已触发（可轮转重置）
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
@@ -1099,6 +1101,17 @@ class Battle:
                 suffix = "（顶掉 {}）".format(gone) if gone else ""
                 events.append("{} 施加印记 {}{}".format(mv["name"], mid,
                                                         suffix))
+            # 奉献（S6.13）：desc 含「获得N次奉献」→ 队伍计数+N
+            import re as _re_d
+            _dev_txt = (dv.get("desc") or "") or                 _skill_desc(mv.get("id")) or ""
+            m_dev = _re_d.search(r"获得\s*(\d+)\s*次奉献", _dev_txt)
+            if m_dev:
+                n_dev = int(m_dev.group(1))
+                side_d = "a" if owner is me else "b"
+                self.devotion[side_d] = self.devotion.get(side_d, 0) + n_dev
+                events.append("%s 获得奉献 %d 次（累计 %d）"
+                              % ("我方" if owner is me else "对方",
+                                 n_dev, self.devotion[side_d]))
             eg = dv.get("energy_gain")
             if eg and owner.alive:
                 before = owner.energy
@@ -1373,6 +1386,19 @@ class Battle:
                 else:
                     events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"
                                   % (enemy_cost_up.get("b", 0), mv["name"]))
+        # 听桥威力镜像（S6.13）：应对攻击成功 → 威力=对方技能威力
+        for _side, _my, _foe in (("a", me, foe), ("b", foe, me)):
+            if not counter_first.get(_side):
+                continue
+            _mv = skill_a if _side == "a" else skill_b
+            if _mv and _mv.get("name") == "听桥":
+                _omv = skill_b if _side == "a" else skill_a
+                if _omv and (_omv.get("power") or 0) > 0:
+                    _mv["power"] = _omv["power"]     # 威力镜像
+                    _mv["type"] = _omv.get("type") or _mv.get("type")
+                    events.append("%s 听桥镜像 %s（威力 %d）"
+                                  % ("我方" if _side == "a" else "对方",
+                                     _omv["name"], _omv["power"]))
         # 迅捷技追加到 acts（优先于所有普通出手 —— 原文：入场立即使用）
         acts.extend(swift_acts)
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度
