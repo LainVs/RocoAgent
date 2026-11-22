@@ -131,6 +131,13 @@
   · status_buffs 状态类 buff 的 id/desc 清单
   · 数据入库（445 KB），后续引擎消费不需要 Downloads 目录
 
+## 本轮（S6.14）
+
+- [x] **星陨印记**补入 MARK_TABLE（14 种全集）
+- [x] **龙噬印记**双攻 +30% → **+40%**（authority 权威值修正）
+- [x] **引电/禁足**补入 STATUS_RULES（authority 权威定义）
+- [x] test_battle_fx 印记数和龙噬数值断言对齐
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
