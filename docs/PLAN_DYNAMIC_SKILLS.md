@@ -70,11 +70,33 @@
 - 4 张卡的 ROI 几何还没标定成常量（当前探针用 pill box 相对偏移，
   已在三帧上稳定）。
 
-## 五、实施清单（更新 PLAN_DYNAMIC_SKILLS 的顺序）
+## 五、实施清单（2026-11-22 深夜，全部落地）
 
-1. ~~耗能胶囊读法~~ → **改为名字带读法**（本文件 §一）。
-2. `perceive.new`: `read_skill_name_band(screen, slot) -> (name, conf)`，
-   ROI 相对 pill box（`dx=-70..+70, dy=yb..yb+40`）。
-3. `src/session_moves.py`：会话缓存 + 落盘 + 校验环。
-4. `_skill_meta` / `my_card_costs` 改为走 resolver（my_team 降到第三层）。
-5. 指标：turns.jsonl 加 `skill_source` 字段。
+1. ~~耗能胶囊读法~~ → **证伪**：卡面没有耗能徽章（黄色圆盘里是装饰纹路）。
+   改为名字带读法（§一）。✅
+2. `session_moves.read_band(screen, slot, pill_box)`：名字带 OCR，
+   ROI 相对 pill box（`dx=-70..+70, dy=yb..yb+40`）。✅ 74df4ce
+3. `src/session_moves.py`：会话缓存 + 落盘 + 校验环 veto。✅ 74df4ce
+4. `_skill_meta` / `my_card_costs` 接入三层降级链（my_team 降到第三层，
+   stale 自动打标）。✅ 15b7e3a（含 dash_costs 缩进回归修复）
+5. 播报敌我分流：我方出招播报确认槽位（`_last_pressed_slot` 6s 窗口，
+   `_name_close` 编辑距离 1 判敌我）。✅ 2f58e81
+6. 指标：turns.jsonl 加 `skill_source` 字段。⬜ 未做（meta["sources"]
+   已备好，只差落盘）
+7. 名字带的线上触发：换精灵后对缓存 miss 的槽位调 read_band。
+   ⬜ 未做（模块已就绪）
+
+## 六、当前状态
+
+| 层 | 证据源 | 状态 |
+|---|---|---|
+| session | 我方播报（每回合自动） | ✅ 已接（robot._cast_ocr） |
+| band | 卡面名字带 OCR | ✅ 模块就绪，未在线上触发 |
+| team_db | my_team 表 | ✅ 降为兜底，过期自动 TEAM STALE |
+
+换精灵后第一回合：team_db 兜底出招 → 播报逐个确认槽位 →
+第二回合起全部来自 session。表过期自动暴露（TEAM STALE 日志），
+不再需要人工维护每个队伍。
+
+剩余两步都是低风险增量：⑥ 只加一个日志字段；⑦ 要挑触发时机
+（换人后动画期，参照 _maybe_scan_foe 的窗口逻辑）避免占用决策窗口。
