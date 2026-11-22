@@ -901,20 +901,31 @@ def _skill_meta(my_name):
                 if row:
                     meta["powers"][i] = row[0] or 0
                     meta["names"][i] = row[1]
-                    # 先发制人/守住这类技能 priority > 0，出手顺序在速度之前。
+                    # 先手技能：出手顺序在速度之前。
                     #
-                    # ⚠ 2026-11-22 实测：`priority` 列**大面积是脏数据** ——
-                    # 918 个技能是 5（含「火云车」「诋毁」这种普通攻击），
-                    # 只有 9 个是 0。真实带先手的只有「先发制人」
-                    # （priority=6，描述写「先手+1」）。
+                    # ★ 2026-11-22 官方语义修正（rkpp-official 数据证实）
+                    # ------------------------------------------------
+                    # 之前把 `priority=5`（918 个）当成脏数据，是**误判**：
+                    # 洛克PVP助手 从游戏 PAK 解包的官方数据里，
+                    # `skill_priority` 分布是 {5: 1111, 1: 520, 6: 6, 10: 3, ...}，
+                    # 「火云车」「诋毁」「吞噬」这些普通攻击**官方就是 5**。
                     #
-                    # 判据：priority 必须 > 1 **且** 描述明确提到先手/优先。
-                    # 这样既排除 918 个脏的 5，也能覆盖将来补充的真数据。
+                    # 所以 5 是**官方基准值**（normal speed），不是脏数据：
+                    #     priority > 5  -> 先手（先发制人=6、尾随/睡眠=10、逃跑=11）
+                    #     priority = 5  -> 正常速度
+                    #     priority < 5  -> 后手（后发制人=1、风隐=1、马步=1）
+                    #
+                    # 出手顺序只与「是否 ≠ 5」及方向有关，与描述无关。
+                    # （描述判据会漏掉「尾随/睡眠/逃跑」这类没有"先手"字样的先手技。）
                     _pri = row[2] or 0
-                    _desc = row[3] or ""
-                    _real = (_pri > 1
-                             and ("先手" in _desc or "优先" in _desc))
-                    meta["priorities"][i] = _pri if _real else 0
+                    if _pri == 5:
+                        meta["priorities"][i] = 0        # 正常速度
+                    elif _pri > 5:
+                        meta["priorities"][i] = _pri - 5  # 先手 +N
+                    elif _pri > 0:
+                        meta["priorities"][i] = -1        # 后手
+                    else:
+                        meta["priorities"][i] = 0
             if not meta["moves"]:
                 # 队伍没配 -> 只知道这只精灵所有变化技能的耗能，用于路线 2
                 row = db.execute(
