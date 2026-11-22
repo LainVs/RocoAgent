@@ -261,6 +261,33 @@ def _link_fx():
                 m = _re.search(r"\u56de\u590d(\d+)%\u751f\u547d", own)
                 if m:
                     dv["heal_pct"] = int(m.group(1)) / 100.0
+                # S16 HP 阈值条件（云行雨施/入梦类）：
+                # 生命高于X%造成伤害提升/+P%；低于X%受到伤害减少/Q%；
+                # 全属性提升/R%
+                cond = {}
+                m = _re.search(r"\u751f\u547d\u9ad8\u4e8e(\d+)%.*?"
+                               r"\u9020\u6210\u4f24\u5bb3(?:\u63d0\u5347|"
+                               r"\+)(\d+)%", own)
+                if m:
+                    cond["hp_gt"] = int(m.group(1))
+                    cond["dmg_dealt_pct"] = int(m.group(2)) / 100.0
+                m = _re.search(r"\u751f\u547d(?:\u503c?)\u4f4e\u4e8e(\d+)%"
+                               r".*?\u53d7\u5230\u4f24\u5bb3(?:\u51cf\u5c11|"
+                               r"-)(\d+)%", own)
+                if m:
+                    cond["hp_lt"] = int(m.group(1))
+                    cond["dmg_taken_pct"] = int(m.group(2)) / 100.0
+                m = _re.search(r"\u751f\u547d\u503c?\u4f4e\u4e8e(\d+)%"
+                               r".*?\u5168\u5c5e\u6027(?:\u63d0\u5347|"
+                               r"\+)(\d+)%", own)
+                if m:
+                    cond["hp_lt"] = int(m.group(1))
+                    cond["all_stats_pct"] = int(m.group(2)) / 100.0
+                # buff_desc 里的旧口径（20%/低30%）也解析（两个来源并存）
+                if "cond" not in dv:
+                    pass
+                if cond:
+                    dv["cond_mods"] = cond
             if dv:
                 out[name] = dict(dv, source="link")
     except Exception:

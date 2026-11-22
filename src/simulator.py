@@ -745,6 +745,12 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
         _pct = _spmods.get(move.get("name") or "")
         if _pct:
             power = max(0, int(power * (1.0 + float(_pct))))
+    # S16 HP 阈值条件（云行雨施类）：攻方 hp 高于阈值 → 伤害 +pct
+    _cond = getattr(attacker, "_cond_mods", None) or {}
+    if _cond.get("hp_gt") is not None and attacker.max_hp:
+        if 100.0 * attacker.hp / attacker.max_hp > _cond["hp_gt"]:
+            _p = float(_cond.get("dmg_dealt_pct") or 0)
+            power = max(0, int(power * (1.0 + _p)))
     # S11 坠星/观星：守方身上每层星陨印记威力 +pct
     _mpct = float(getattr(attacker, "_meteor_pct", 0) or 0)
     if _mpct and battle is not None:
@@ -805,6 +811,22 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
                      type_eff=eff, stab=stab)
     dmg *= trait_lib.incoming_mult(defender, move)
     dmg *= getattr(defender, "taken_mult", 1.0)
+    # S16 HP 阈值条件（云行雨施类）：守方 hp 低于阈值 → 受伤 -pct
+    _dc = getattr(defender, "_cond_mods", None) or {}
+    if _dc.get("hp_lt") is not None and defender.max_hp:
+        if 100.0 * defender.hp / defender.max_hp < _dc["hp_lt"]:
+            _t = float(_dc.get("dmg_taken_pct") or 0)
+            dmg *= (1.0 - abs(_t))
+    # S16 入梦类全属性：守方攻防增益动态加成（hp 低于阈值）
+    if _dc.get("all_stats_pct") and _dc.get("hp_lt") is not None \
+            and defender.max_hp:
+        if 100.0 * defender.hp / defender.max_hp < _dc["hp_lt"]:
+            _as = float(_dc["all_stats_pct"])
+            _eff_atk = (1.0 + defender.atk_buff + _as) / \
+                (1.0 + defender.atk_buff)
+            _eff_dfn = (1.0 + defender.def_buff + _as) / \
+                (1.0 + defender.def_buff)
+            dmg /= _eff_atk / max(0.01, _eff_dfn)  # 全属性：攻防同幅影响小
     calc_damage.last_self_damage_pct = self_damage_pct
     calc_damage._last_burst = burst_applied
     calc_damage.last_type_eff = eff          # S8：裁决类特性要读克制倍率
@@ -1647,6 +1669,13 @@ class Battle:
                 events.append("%s %s 属性提升（%s）"
                               % ("我方" if owner is me else "对方",
                                  mv["name"], "、".join(_bits)))
+            # S16 HP 阈值条件规则（云行雨施/入梦类）：增益技使用后
+            # 挂 pet._cond_mods，calc_damage 按 hp 比例动态消费
+            if dv.get("cond_mods"):
+                owner._cond_mods = dv["cond_mods"]
+                events.append("%s %s 条件规则挂载：%s"
+                              % ("我方" if owner is me else "对方",
+                                 mv["name"], dv["cond_mods"]))
             # 蓄力：选了蓄力技 → 本回合蓄力（不攻击），下回合才能释放
             is_charge = mv.get("name") in cond_fx.charge_skills(self.dex)
             if is_charge and getattr(owner, "charging", 0) == 0:
