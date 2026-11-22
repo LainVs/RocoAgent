@@ -88,45 +88,42 @@ def buff_calc_map():
     return _BUFF_CALC
 
 
-# 技能名 -> 官方百分比增益（首次用到时从 authority/skill.json 建）
-_SKILL_BUFF_PCT = None
+# 技能名 -> 官方增益（首次用到时读本地 data/external/.../skill_buff_calc.json）
+_SKILL_BUFF = None
+
+
+def skill_buff(skill_name):
+    """变化技能给自身的官方增益：{"atk","def","taken"}（0~1 小数）。
+
+    查不到返回 None。
+
+    ★ 2026-11-22 两处修正
+    ---------------------
+    1. 原来读的是 `C:/Users/Lenovo/Downloads/.../authority/skill.json`
+       这个**绝对路径**。目录一挪/删，所有增益会静默退化成
+       ATK_BUFF_MEDIAN 兜底，数值全错还没有任何报错。现在改成读
+       `data/external/rkpp-official/skill_buff_calc.json`（入库的固定资产，
+       由 scripts/build_skill_buffs.py 生成）。
+    2. 原来只取攻击（phyAtkPercent/magAtkPercent），
+       **防御增益和减伤直接丢了** —— 于是「防御」这类技能在模拟器里毫无作用。
+       现在 atk / def / taken 三样都取。
+    """
+    global _SKILL_BUFF
+    if _SKILL_BUFF is None:
+        p = os.path.join(ROOT, "data", "external", "rkpp-official",
+                         "skill_buff_calc.json")
+        try:
+            with io.open(p, encoding="utf-8") as fh:
+                _SKILL_BUFF = json.load(fh).get("skills") or {}
+        except Exception:
+            _SKILL_BUFF = {}
+    return _SKILL_BUFF.get(skill_name)
 
 
 def skill_buff_pct(skill_name):
-    """查一个技能给自身的官方增益（0~1 的小数），查不到返回 None。
-
-    链路：authority/skill.json 的 skill_result[].effect_id
-          -> roco_buff_calc_map（group_id -> phyAtkPercent 等）
-    """
-    global _SKILL_BUFF_PCT
-    if _SKILL_BUFF_PCT is None:
-        out = {}
-        try:
-            p = os.path.join(
-                r"C:/Users/Lenovo/Downloads/洛克PVP助手/洛克PVP助手/app/wwwroot/native-data/authority/skill.json")
-            with io.open(p, encoding="utf-8") as fh:
-                auth = json.load(fh)
-        except Exception:
-            auth = {}
-        for s in auth.values():
-            dp = s.get("dam_para") or [0]
-            if (dp[0] or 0) > 0:
-                continue          # 有伤害的主卡不在 buff 技能之列
-            pct = {}
-            for e in (s.get("skill_result") or []):
-                g = buff_calc_map().get(str(e.get("effect_id")))
-                if not g:
-                    continue
-                for f in ("phyAtkPercent", "magAtkPercent"):
-                    if g.get(f):
-                        pct[f] = max(pct.get(f, 0), g[f])
-            if pct:
-                # 双攻取 max（模拟器只有一个 atk_buff 槽）
-                out[s.get("name")] = max(
-                    pct.get("phyAtkPercent", 0),
-                    pct.get("magAtkPercent", 0)) / 100.0
-        _SKILL_BUFF_PCT = out
-    return _SKILL_BUFF_PCT.get(skill_name)
+    """兼容旧调用：只要攻击增益（0~1 小数），查不到返回 None。"""
+    v = skill_buff(skill_name)
+    return v.get("atk") if v else None
 
 
 # ---------------------------------------------------------------- 数据
@@ -364,6 +361,7 @@ class Pet:
         # 数值上接近真实单次 buff，但机制是虚构的（同时加攻防 + 可叠层）。
         self.atk_buff = 0.0     # 攻击增益比例，例如 0.70 = +70%
         self.def_buff = 0.0     # 防御增益比例
+        self.taken_mult = 1.0   # 受到的伤害倍率（减伤技能/特性，<1 表示减伤）
         self.buffed = False     # 是否已经用过 buff 技能（不再叠）
         # ---- 特性（2026-11-22）
         #
@@ -402,7 +400,8 @@ class Pet:
 
 # ---------------------------------------------------------------- 伤害
 
-def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None):
+def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
+                first=False):
     """用真实的 roco-cal 引擎算伤害（含特性修正）。
 
     增益按 roco-cal 的真实公式处理（damresult.py）：
@@ -434,6 +433,20 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None):
         power_bonus = mods["power_bonus"]
     power = max(0, int(int(move["power"]) * float(power_mult)
                        + int(power_bonus)))
+    # 天气 + 印记（2026-11-22）：两者都作用在**威力**上，和 roco-cal 的
+    # effective_power 一致。天气/印记挂在 Battle 上，通过 pet._battle 取；
+    # 拿不到就当没有（策略单独调用 calc_damage 时也是这个行为）。
+    import battle_fx
+    battle = getattr(attacker, "_battle", None)
+    if battle is not None:
+        elem = move.get("type")
+        wm = battle_fx.weather_power_mult(getattr(battle, "weather", "none"),
+                                          elem)
+        side = getattr(attacker, "_side", None)
+        mm = battle_fx.mark_mods(
+            (getattr(battle, "marks", {}) or {}).get(side or "a") or {},
+            move.get("name") or "", elem, first_attack=first)
+        power = max(0, int(power * wm * mm["power_mult"] + mm["power_bonus"]))
     atk = attacker.atk * (1.0 + attacker.atk_buff
                           + getattr(attacker, "trait_atk_buff", 0.0)
                           + getattr(attacker, "trait_tmp_atk", 0.0))
@@ -443,6 +456,7 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None):
     dmg = DMG.damage(int(atk), int(dfn), power,
                      type_eff=eff, stab=stab)
     dmg *= trait_lib.incoming_mult(defender, move)
+    dmg *= getattr(defender, "taken_mult", 1.0)
     return max(1, int(dmg))
 
 
@@ -623,6 +637,31 @@ class Battle:
         self.turn = 0
         self.done = None            # None / "a" / "b"
         self.hp_a = self.hp_b = 0
+        # 天气 / 印记（2026-11-22，数据来自 roco-cal battle_effects）
+        import battle_fx
+        self.weather = "none"
+        self.marks = {"a": {}, "b": {}}
+        for side, team in (("a", self.a), ("b", self.b)):
+            for p in team:
+                p._battle = self
+                p._side = side
+
+    def set_weather(self, weather_id):
+        import battle_fx
+        if weather_id in battle_fx.weather_ids() or weather_id == "none":
+            self.weather = weather_id
+        return self.weather
+
+    def set_marks(self, side, field, stacks):
+        """field 是 roco-cal 印记的 stack_field（如 attack_mark_stacks）。"""
+        self.marks.setdefault(side, {})[field] = max(0, int(stacks or 0))
+        return self.marks[side]
+
+    def mark_state(self):
+        return {"weather": self.weather,
+                "weather_label": __import__("battle_fx").weather_label(
+                    self.weather),
+                "marks": self.marks}
 
     # ---------------------------------------------------------- 构建
     def _build(self, team, cfg):
@@ -764,21 +803,34 @@ class Battle:
         # 但 roco-cal 的 607 个技能里**没有叠层机制**，且攻/防 buff
         # 是不同技能，一个技能不会同时加两者。
         if ka == "buff":
-            _p = skill_buff_pct((skill_a or {}).get("name", "")) \
-                if skill_a else None
-            me.atk_buff = max(me.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
+            _v = skill_buff((skill_a or {}).get("name", "")) if skill_a else None
+            if _v:
+                # 有官方数值就按官方的来：只加它真的给的那几项
+                me.atk_buff = max(me.atk_buff, _v.get("atk") or 0.0)
+                me.def_buff = max(me.def_buff, _v.get("def") or 0.0)
+                if _v.get("taken"):
+                    me.taken_mult = min(me.taken_mult, 1.0 - _v["taken"])
+            else:
+                # 查不到才用中位数兜底（原来 0.0 也会掉进兜底，是错的：
+                # 「防御」这种纯防御技能会被当成 +70% 攻击）
+                me.atk_buff = max(me.atk_buff, ATK_BUFF_MEDIAN)
             me.buffed = True
-            events.append("我方使用 %s（攻击 +%.0f%%）"
+            events.append("我方使用 %s（攻击 +%.0f%% 防御 +%.0f%%）"
                           % ((skill_a or {}).get("name", "蓄力"),
-                             100 * me.atk_buff))
+                             100 * me.atk_buff, 100 * me.def_buff))
         if kb == "buff":
-            _p = skill_buff_pct((skill_b or {}).get("name", "")) \
-                if skill_b else None
-            foe.atk_buff = max(foe.atk_buff, _p if _p else ATK_BUFF_MEDIAN)
+            _v = skill_buff((skill_b or {}).get("name", "")) if skill_b else None
+            if _v:
+                foe.atk_buff = max(foe.atk_buff, _v.get("atk") or 0.0)
+                foe.def_buff = max(foe.def_buff, _v.get("def") or 0.0)
+                if _v.get("taken"):
+                    foe.taken_mult = min(foe.taken_mult, 1.0 - _v["taken"])
+            else:
+                foe.atk_buff = max(foe.atk_buff, ATK_BUFF_MEDIAN)
             foe.buffed = True
-            events.append("对方使用 %s（攻击 +%.0f%%）"
+            events.append("对方使用 %s（攻击 +%.0f%% 防御 +%.0f%%）"
                           % ((skill_b or {}).get("name", "蓄力"),
-                             100 * foe.atk_buff))
+                             100 * foe.atk_buff, 100 * foe.def_buff))
 
         # 变化技能（power=0）：批量策略不会选（伤害最低 1 点），
         # 但**手操窗口玩家会点**，所以必须正确处理。
@@ -795,13 +847,23 @@ class Battle:
             skip_act[who] = True
             if mv["cost"] <= owner.energy:
                 owner.energy -= mv["cost"]
-            pct = skill_buff_pct(mv["name"])
-            if pct:
-                owner.atk_buff = max(owner.atk_buff, pct)
+            v = skill_buff(mv["name"])
+            if v and (v.get("atk") or v.get("def") or v.get("taken")):
+                bits = []
+                if v.get("atk"):
+                    owner.atk_buff = max(owner.atk_buff, v["atk"])
+                    bits.append("攻击 +%d%%" % round(100 * v["atk"]))
+                if v.get("def"):
+                    owner.def_buff = max(owner.def_buff, v["def"])
+                    bits.append("防御 +%d%%" % round(100 * v["def"]))
+                if v.get("taken"):
+                    owner.taken_mult = min(owner.taken_mult,
+                                           1.0 - v["taken"])
+                    bits.append("受到伤害 -%d%%" % round(100 * v["taken"]))
                 owner.buffed = True
-                events.append("%s 使用 %s（攻击 +%.0f%%）"
+                events.append("%s 使用 %s（%s）"
                               % ("我方" if who == "a" else "对方",
-                                 mv["name"], 100 * pct))
+                                 mv["name"], "、".join(bits)))
             else:
                 events.append("%s 使用 %s（变化技能，本模拟器未建模）"
                               % ("我方" if who == "a" else "对方",
@@ -836,7 +898,7 @@ class Battle:
         for idx, (_spe, who, atk, dfn, mv) in enumerate(acts):
             if not atk.alive or not dfn.alive:
                 continue
-            d = calc_damage(atk, dfn, mv)
+            d = calc_damage(atk, dfn, mv, first=(idx == 0))
             dfn.hp = max(0, dfn.hp - d)
             events.append("%s %s → %s -%d（剩 %d/%d）"
                           % ("我方" if who == "a" else "对方",
@@ -887,7 +949,7 @@ class Battle:
 
 
 def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
-              cfg_a=None, cfg_b=None):
+              cfg_a=None, cfg_b=None, weather=None):
     """跑一局。返回 (winner, turns, hp_a, hp_b)。
 
     cfg_a/cfg_b（2026-11-22，UI 模拟器）：
@@ -898,6 +960,8 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
     实现：两边都交给策略，循环推进 `Battle`。手操窗口走同一个 Battle。
     """
     bt = Battle(dex, team_a, team_b, cfg_a=cfg_a, cfg_b=cfg_b, seed=seed)
+    if weather:
+        bt.set_weather(weather)
     while bt.begin_turn():
         bt.auto_step(pol_a, pol_b)
     return bt.result()

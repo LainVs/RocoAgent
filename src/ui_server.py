@@ -1315,6 +1315,20 @@ def sim_lineup_list():
     return {"items": items, "stats": flat}
 
 
+def sim_battlefx():
+    """天气 / 印记的清单（给手操窗口和模拟器的下拉用）。
+
+    数据来自 roco-cal 的 `data/battle_effects/{weather,marks}.json`，
+    见 `src/battle_fx.py` 顶部关于「官方字面伤害怎么算」的查证笔记。
+    """
+    import battle_fx
+    return {"weathers": [{"id": w.get("id"),
+                          "label": w.get("label") or w.get("id")}
+                         for w in battle_fx.weathers()],
+            "marks": battle_fx.mark_defs(),
+            "level_term": battle_fx.LEVEL_TERM}
+
+
 def sim_traits_info(name=""):
     """特性信息：不传 name 就给覆盖率；传了就给这一条特性的规则明细。
 
@@ -1428,7 +1442,10 @@ def sim_manual_new(body):
         opponent_mode=body.get("opponent_mode") or "lineups",
         team_b=body.get("team_b"), cfg_b=body.get("cfg_b"),
         policy_b=body.get("policy_b") or "smart",
-        seed=int(body.get("seed") or 0))
+        seed=int(body.get("seed") or 0),
+        weather=body.get("weather") or "none",
+        marks=body.get("marks") or {},
+        marks_b=body.get("marks_b") or {})
 
 
 def sim_manual_act(body):
@@ -1527,6 +1544,7 @@ def sim_run(body):
            "--team-b", ",".join(team_b),
            "--opponent-mode", mode,
            "--policy-a", pol_a, "--policy-b", pol_b,
+           "--weather", str(body.get("weather") or "none"),
            "--games", str(games), "--seed", str(seed)]
     ca = body.get("cfg_a")
     cb = body.get("cfg_b")
@@ -2462,6 +2480,9 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/traits":
             return self._json(sim_traits_info(q.get("name") or ""))
+
+        if path == "/api/sim/battlefx":
+            return self._json(sim_battlefx())
 
         if path == "/api/sim/presets":
             return self._json(sim_preset_list())

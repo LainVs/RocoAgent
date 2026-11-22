@@ -2146,6 +2146,7 @@ function playActsHtml(st) {
       title="${m.type || ''}">
       <div class="an">${m.name}</div>
       <div class="am"><span>威力 ${m.power || '—'}</span><span>耗能 ${m.cost}</span></div>
+      ${m.dmg ? `<div class="ad">伤害 ${m.dmg}</div>` : ''}
     </button>`).join('');
   h += `<button class="act-btn" data-kind="energy">
       <div class="an">聚能</div>
@@ -2192,6 +2193,14 @@ function playRender(st) {
   $('playSrc').textContent = meta.opponent
     ? `${meta.opponent}${meta.author ? ' / ' + meta.author : ''}`
     : '';
+  const fx = st.fx || {};
+  const markBits = Object.entries(fx.marks || {})
+    .filter(([k, v]) => k.indexOf('_stacks') >= 0 && v)
+    .map(([k, v]) => `${k.replace('_stacks', '')} ${v}`);
+  $('playFx').textContent = [
+    fx.weather && fx.weather !== 'none' ? fx.weather_label : '',
+    markBits.length ? '印记 ' + markBits.join(' / ') : '',
+  ].filter(Boolean).join(' · ');
   $('playActs').innerHTML = st.done ? '' : playActsHtml(st);
   const logEl = $('playLog');
   logEl.innerHTML = playLogHtml(st.log);
@@ -2234,6 +2243,11 @@ async function playStart() {
     return;
   }
   const foeSrc = $('playFoeSrc').value;
+  const marks = {};
+  const nAtk = parseInt($('playMarkAtk').value, 10) || 0;
+  const nMom = parseInt($('playMarkMom').value, 10) || 0;
+  if (nAtk > 0) marks.attack_mark_stacks = nAtk;
+  if (nMom > 0) marks.momentum_mark_stacks = nMom;
   const body = {
     team_a: teamA,
     cfg_a: cfgA,
@@ -2242,6 +2256,8 @@ async function playStart() {
     cfg_b: simTeams.b.filter(Boolean),
     policy_b: $('playPolB').value,
     seed: parseInt($('playSeed').value, 10) || 0,
+    weather: $('playWeather').value || 'none',
+    marks: marks,
   };
   stEl.textContent = '开局中…';
   try {
@@ -2291,6 +2307,13 @@ async function loadPlayTeams() {
     });
   } catch (e) { /* 拉不到就只留当前队伍 */ }
   sel.innerHTML = opts.join('');
+  // 天气清单（roco-cal 的 battle_effects/weather.json）
+  try {
+    const r = await fetch(API + '/api/sim/battlefx', { cache: 'no-store' });
+    const o = await r.json();
+    $('playWeather').innerHTML = (o.weathers || []).map((w) =>
+      `<option value="${w.id}">${w.label}</option>`).join('');
+  } catch (e) { /* 拉不到就只有 none */ }
 }
 
 async function loadPlayHistory() {

@@ -139,11 +139,16 @@ def attack_mods(pet, move, first=False, foe_total_cost=None):
 
     返回 {"power_mult": float, "power_bonus": int, "lifesteal": float}
     `first` 表示本回合我方是否先手（先机虹吸要用）。
-    `foe_total_cost` 对方携带技能的总耗能（`冰钻`/`烈冰狱` 这类特性要比较）。
+    `foe_total_cost` 对方携带技能的总耗能（`冰钻`/`烈冰狱` 这类特性要它）。
 
-    ⚠ 2026-11-22 修正：`skills_total_cost` 的语义是「敌方总耗能**每高**
-    1 点」，也就是要和**自己的**总耗能比较取差值；一开始按敌方总耗能
-    绝对值算，等于凭空多出 3 倍威力（实测冰雹打出 1074）。
+    ★ `冰钻` 的正确语义（2026-11-22 用户当面纠正）
+    ------------------------------------------------
+    游戏内原文是「敌方携带技能总能耗**每有** 1 点，自己攻击时威力 +10%」，
+    也就是**直接按敌方的总耗能点数**算，不是「敌方比自己高多少点」。
+    roco-cal 的 JSON 描述写成了「每高1点」，我照着它实现成差值，是错的；
+    用户对着游戏文本指出后改回绝对值。
+
+        敌方 4 个技能总耗能 20 -> 威力 x(1 + 0.1*20) = x3.0
     """
     out = {"power_mult": 1.0, "power_bonus": 0, "lifesteal": 0.0}
     if not move:
@@ -160,11 +165,11 @@ def attack_mods(pet, move, first=False, foe_total_cost=None):
             continue
         if timing == "carried" and mode == "skills_total_cost":
             per = float(r.get("value_per_stack") or r.get("value") or 0)
-            diff = max(0, int(foe_total_cost or 0) - _total_cost(pet))
+            points = max(0, int(foe_total_cost or 0))
             if kind == "power_multiplier":
-                out["power_mult"] *= 1.0 + per * diff
+                out["power_mult"] *= 1.0 + per * points
             elif kind == "power_bonus":
-                out["power_bonus"] += int(per * diff)
+                out["power_bonus"] += int(per * points)
             continue
         if not _mode_match(mode, move, pet):
             continue

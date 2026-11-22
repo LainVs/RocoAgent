@@ -35,6 +35,8 @@ def main(argv=None):
                     choices=("greedy", "smart", "buff"))
     ap.add_argument("--games", type=int, default=20)
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--weather", default="none",
+                    help="天气 id（none/rain/sandstorm/blizzard/thunder）")
     args = ap.parse_args(argv)
 
     # simulator 依赖 src 在 sys.path，用本文件位置锚定
@@ -113,7 +115,8 @@ def main(argv=None):
         pa, pb = pa_cls(), pb_cls()
         w, t, ha, hb = SIM.run_match(dex, ta, tb_i, pa, pb,
                                      seed=(args.seed or 0) + i,
-                                     cfg_a=ca, cfg_b=cb_i)
+                                     cfg_a=ca, cfg_b=cb_i,
+                                     weather=args.weather)
         wins[w if w in ("a", "b") else "draw"] += 1
         turns.append(t)
         if len(examples) < 5:

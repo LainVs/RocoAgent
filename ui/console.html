@@ -391,6 +391,14 @@
             </select>
             <span class="sim-lab">seed</span>
             <input id="playSeed" type="number" value="0" class="sim-input" style="width:64px">
+            <span class="sim-lab">天气</span>
+            <select id="playWeather" class="sim-select"></select>
+            <span class="sim-lab">攻击印记</span>
+            <input id="playMarkAtk" type="number" value="0" min="0" max="20"
+                   class="sim-input" style="width:56px">
+            <span class="sim-lab">蓄势印记</span>
+            <input id="playMarkMom" type="number" value="0" min="0" max="20"
+                   class="sim-input" style="width:56px">
             <button class="btn primary" id="btnPlayNew">开始新对局</button>
           </div>
 
@@ -400,6 +408,7 @@
               <div class="pw-turn" id="playTurn">第 1 回合</div>
               <div class="pw-vs">VS</div>
               <div class="pw-src" id="playSrc"></div>
+              <div class="pw-fx" id="playFx"></div>
             </div>
             <div class="pw-card" id="playFoe"></div>
           </div>

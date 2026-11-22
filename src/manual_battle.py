@@ -37,7 +37,7 @@ POLICIES = {"smart": SIM.SmartPolicy, "greedy": SIM.GreedyPolicy,
 MAX_LOG = 400          # 只保留最近 N 条事件给前端
 
 
-def _pet_json(p, with_moves=False):
+def _pet_json(p, with_moves=False, foe=None):
     if p is None:
         return None
     out = {
@@ -52,15 +52,29 @@ def _pet_json(p, with_moves=False):
         "invest": list(getattr(p, "invest", []) or []),
         "alive": bool(p.alive),
         "atk_buff": round(getattr(p, "atk_buff", 0.0), 3),
+        "def_buff": round(getattr(p, "def_buff", 0.0), 3),
+        "taken_mult": round(getattr(p, "taken_mult", 1.0), 3),
     }
     if with_moves:
-        out["moves"] = [{
-            "name": m["name"],
-            "power": int(m["power"]),
-            "cost": int(m["cost"]),
-            "type": m.get("type"),
-            "usable": int(m["cost"]) <= p.energy,
-        } for m in p.moves]
+        out["moves"] = []
+        for m in p.moves:
+            # dmg = **字面伤害**：游戏技能卡上显示的那个数字。
+            # 公式和结算完全同源（calc_damage），所以卡面值 = 真打出去的伤害
+            # （本作 PVP 无伤害浮动、卡面不含暴击）。
+            dmg = 0
+            if foe is not None and int(m.get("power") or 0) > 0:
+                try:
+                    dmg = int(SIM.calc_damage(p, foe, m))
+                except Exception:
+                    dmg = 0
+            out["moves"].append({
+                "name": m["name"],
+                "power": int(m["power"]),
+                "cost": int(m["cost"]),
+                "type": m.get("type"),
+                "usable": int(m["cost"]) <= p.energy,
+                "dmg": dmg,
+            })
     return out
 
 
@@ -78,7 +92,7 @@ class Session:
     # ---------------------------------------------------------- 开局
     def new(self, team_a, cfg_a=None, opponent_mode="lineups",
             team_b=None, cfg_b=None, policy_b="smart", seed=0,
-            dex=None):
+            weather="none", marks=None, marks_b=None, dex=None):
         with self.lock:
             dex = dex or SIM.Dex()
             ta = [str(x) for x in (team_a or [])][:6]
@@ -110,11 +124,19 @@ class Session:
             self.bt = SIM.Battle(dex, ta, tb, cfg_a=cfg_a, cfg_b=cb,
                                  seed=self.seed)
             self.pol_b = POLICIES.get(policy_b, SIM.SmartPolicy)()
+            # 天气 / 印记（2026-11-22）：开局时设定，整局有效
+            self.bt.set_weather(str(weather or "none"))
+            for field, stacks in (marks or {}).items():
+                self.bt.set_marks("a", field, stacks)
+            for field, stacks in (marks_b or {}).items():
+                self.bt.set_marks("b", field, stacks)
             self.log = []
             self.actions = []
-            self._say("对局开始：我方 %s vs %s（%s，对手策略 %s）"
+            self._say("对局开始：我方 %s vs %s（%s，对手策略 %s%s）"
                       % ("/".join(ta), "/".join(tb),
-                         self.meta.get("opponent") or "固定", policy_b))
+                         self.meta.get("opponent") or "固定", policy_b,
+                         ("，天气 " + str(weather))
+                         if weather and weather != "none" else ""))
             if not self.bt.begin_turn():
                 self._record()
             return self.state()
@@ -198,7 +220,7 @@ class Session:
                 "done": bt.done,
                 "result": ("win" if bt.done == "a"
                            else "lose" if bt.done == "b" else None),
-                "me": _pet_json(bt.me, with_moves=True),
+                "me": _pet_json(bt.me, with_moves=True, foe=bt.foe),
                 "foe": _pet_json(bt.foe),
                 # 可换的只有「活着且不是当前出战」的精灵，顺序必须和
                 # Battle.bench("a") 完全一致 —— act 里的 switch 下标
@@ -217,6 +239,7 @@ class Session:
                 "meta": self.meta,
                 "events": events or [],
                 "log": self.log[-MAX_LOG:],
+                "fx": (self.bt.mark_state() if self.bt else {}),
             }
 
     # ---------------------------------------------------------- 记录

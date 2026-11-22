@@ -1452,6 +1452,12 @@ input:focus-visible,
   font-size: 10px; color: var(--ink-3); margin-top: 4px;
   display: flex; justify-content: space-between; gap: 8px;
 }
+/* 字面伤害：游戏技能卡上显示的那个数字（无浮动、不含暴击） */
+.act-btn .ad {
+  font-size: 11px; color: var(--ink-1); margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+}
+.pw-fx { font-size: 9px; color: #9AC56B; text-align: center; line-height: 1.45; }
 
 .play-log {
   max-height: 220px; overflow-y: auto; background: var(--bg-1);
