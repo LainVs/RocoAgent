@@ -242,8 +242,15 @@ def _h_heal_energy(pet, foe, params, ctx):
 
 
 def _h_status(key):
+    """施加异常状态。
+
+    ★ 默认目标是**对手**（2026-11-22 用户冒烟抓到的方向 bug：
+      「灵魂灼伤：使敌方获得4层灼烧」此前上到了自己身上）。
+      nrc 数据里 target="self" 才给自身；描述抽取的 status 一律给对手。
+    """
     def fn(pet, foe, params, ctx):
-        if params.get("target") == "self":
+        from_desc = ctx.get("_from_desc", False)
+        if params.get("target") == "self" and not from_desc:
             return _bump_status(pet, key, int(params.get("stacks") or 1))
         stacks = params.get("stacks")
         if stacks is None:

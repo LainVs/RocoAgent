@@ -959,7 +959,7 @@ class Battle:
         for owner, other, mv in ((me, foe, skill_a), (foe, me, skill_b)):
             if mv is None:
                 continue
-            ctx = {}
+            ctx = {"_from_desc": False}
             if not trait_lib.supported_rules(getattr(owner, "trait", None)):
                 events.extend(nrc_fx.trait_fire(owner, other, "ON_USE_SKILL",
                                                 ctx))
@@ -967,12 +967,15 @@ class Battle:
                                             "PRE_USE", ctx))
             events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
                                             "ON_USE", ctx))
-            # 技能描述抽取效果（202 技能长尾）：施加异常状态/印记、
+            # 技能描述抽取效果（204 技能长尾）：施加异常状态/印记、
             # 回能/吸能。吸血和先手在下方各自的结算路径里消费。
+            # ★ 描述效果默认 target=对手（power=0 状态技几乎全是控场）；
+            #   ctx["_from_desc"]=True 让 _h_status 跳过 target=self 分支。
             dv = nrc_fx.desc_effects(mv.get("name") or "")
             target_of = foe if owner is me else me
             st = dv.get("status") or {}
             for key, stacks in st.items():
+                ctx["_from_desc"] = True
                 ev2 = nrc_fx._bump_status(target_of, key, stacks)
                 if ev2:
                     events.append("%s（%s 描述）" % (ev2, mv["name"]))
