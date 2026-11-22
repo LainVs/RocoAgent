@@ -700,6 +700,10 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
             getattr(attacker, "_fire_burst_turn", None) == \
             getattr(_battle, "turn", -1):
         _fire_mult = 2.5
+    # S15 应对威力乘法（吹炎/偷袭：本次技能威力变为N倍）
+    if getattr(attacker, "_counter_mult_turn", None) == \
+            getattr(_battle, "turn", -1) and _battle is not None:
+        _fire_mult *= float(getattr(attacker, "_counter_mult", 1) or 1)
     if power_mult is None or power_bonus is None:
         try:
             foe_cost = sum(int(m.get("cost") or 0) for m in defender.moves)
@@ -1782,6 +1786,67 @@ class Battle:
                     for e in nrc_fx.trait_fire(owner, other,
                                                "ON_COUNTER_SUCCESS", _ctx):
                         events.append(e)
+                # S15：应对效果子句 ctx 原语消费
+                _sb = _ctx.get("self_buff")
+                if _sb and owner.alive:
+                    add_buff(owner, _sb[0], _sb[1])
+                    events.append("%s 应对增益：攻 +%.0f%% 防 +%.0f%%"
+                                  % ("我方" if side == "a" else "对方",
+                                     100 * _sb[0], 100 * _sb[1]))
+                _ed = _ctx.get("enemy_debuff")
+                if _ed and other.alive:
+                    other.atk_buff = min(BUFF_CAP, other.atk_buff + _ed[0])
+                    other.def_buff = min(BUFF_CAP, other.def_buff + _ed[1])
+                    events.append("%s 应对减益：敌方攻 %+.0f%% 防 %+.0f%%"
+                                  % ("我方" if side == "a" else "对方",
+                                     100 * _ed[0], 100 * _ed[1]))
+                if _ctx.get("power_mult"):
+                    owner._counter_mult = _ctx["power_mult"]
+                    owner._counter_mult_turn = self.turn
+                    events.append("%s 应对威力 ×%s"
+                                  % ("我方" if side == "a" else "对方",
+                                     _ctx["power_mult"]))
+                if _ctx.get("perm_power"):
+                    owner._perm_power_delta = \
+                        getattr(owner, "_perm_power_delta", 0) + \
+                        _ctx["perm_power"]
+                    events.append("%s 永久威力 +%d"
+                                  % ("我方" if side == "a" else "对方",
+                                     _ctx["perm_power"]))
+                if _ctx.get("enemy_energy_loss") and other.alive:
+                    before = other.energy
+                    other.energy = max(0, other.energy -
+                                       _ctx["enemy_energy_loss"])
+                    events.append("%s 敌方能量 -%d（剩 %d）"
+                                  % ("我方" if side == "a" else "对方",
+                                     before - other.energy, other.energy))
+                if _ctx.get("refund_cost"):
+                    owner._refund_cost = True
+                    owner._refund_turn = self.turn
+                if _ctx.get("interrupt"):
+                    interrupted["b" if side == "a" else "a"] = True
+                    events.append("%s 打断了对方的 %s！"
+                                  % ("我方" if side == "a" else "对方",
+                                     omv.get("name", "技能")))
+                if _ctx.get("force_enemy_leave") and other.alive:
+                    _eside = "b" if side == "a" else "a"
+                    _ebench = self.bench(_eside)
+                    if _ebench:
+                        _old_e = other.name
+                        nrc_fx.clear_buffs(other)
+                        if side == "a":
+                            self.ib = _ebench[0]
+                            self.b[self.ib].energy = ENERGY_CAP
+                            foe = self.b[self.ib]
+                            switched_b = True
+                        else:
+                            self.ia = _ebench[0]
+                            self.a[self.ia].energy = ENERGY_CAP
+                            me = self.a[self.ia]
+                            switched_a = True
+                        events.append("%s 被应对脱离，%s 换上 %s"
+                                      % ("我方" if side == "a" else "对方",
+                                         _old_e, other.name))
         # 处理聚能
         if ka == "energy":
             me.energy = min(ENERGY_CAP, me.energy + ENERGY_GAIN)
@@ -2018,6 +2083,14 @@ class Battle:
                         cost = 0
                     if cost <= me.energy:
                         me.energy -= cost
+                        # S15 应对技「自身不失去能量」：出手后返还
+                        if getattr(me, "_refund_cost", False) and \
+                                getattr(me, "_refund_turn", None) == \
+                                self.turn:
+                            me.energy = min(ENERGY_CAP,
+                                            me.energy + cost)
+                            events.append("应对成功：%s 能量返还 +%d"
+                                          % (me.name, cost))
                         acts.append((self.eff_spe("a", me), "a", me, foe, mv))
                     else:
                         events.append("我方能量不足（含能耗操纵 +%.0f），%s 没放出来"
@@ -2038,6 +2111,14 @@ class Battle:
                         cost = 0
                     if cost <= foe.energy:
                         foe.energy -= cost
+                        # S15 应对技「自身不失去能量」：出手后返还
+                        if getattr(foe, "_refund_cost", False) and \
+                                getattr(foe, "_refund_turn", None) == \
+                                self.turn:
+                            foe.energy = min(ENERGY_CAP,
+                                             foe.energy + cost)
+                            events.append("应对成功：%s 能量返还 +%d"
+                                          % (foe.name, cost))
                         acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
                     else:
                         events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"

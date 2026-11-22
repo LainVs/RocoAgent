@@ -1008,6 +1008,82 @@ def skill_category(move):
     return "status"
 
 
+def _counter_effect_parse(cat_cn, desc):
+    """S15：解析「应对<类别>：<效果>」子句 → ctx 原语 dict。
+
+    只解析**命中类别**的子句（desc 可能有多个应对子句，如
+    "光系技能威力永久+50%，应对防御：改为永久+100%" —— 应对防御命中时
+    只取"改为永久+100%"，避免子句间串扰）。
+    返回 {key: value}：
+      self_buff (atk, dfn) / enemy_debuff (atk, dfn) /
+      power_mult (float) / perm_power (int) /
+      enemy_energy_loss (int) / force_enemy_leave (bool) /
+      refund_cost (bool) / interrupt (bool) / enemy_cost_up (int)
+    """
+    out = {}
+    if not desc or not cat_cn:
+        return out
+    m = re.search(r"\u5e94\u5bf9" + cat_cn + r"\uff1a(.*?)(?=\uff0c?"
+                  r"\u5e94\u5bf9(?:\u653b\u51fb|\u9632\u5fa1|\u72b6\u6001)"
+                  r"\uff1a|$)", desc)
+    if not m:
+        return out
+    clause = m.group(1)
+
+    def _num(pat):
+        return re.search(pat, clause)
+
+    # 敌方属性减益：敌方获得物攻-70% / 敌方物攻-30%
+    m = _num(r"\u654c\u65b9(?:\u83b7\u5f97)?\u7269\u653b-(\d+)%")
+    if m:
+        a, d2 = out.get("enemy_debuff", (0, 0))
+        out["enemy_debuff"] = (-int(m.group(1)) / 100.0, d2)
+    m = _num(r"\u654c\u65b9(?:\u83b7\u5f97)?\u9632\u5fa1-(\d+)%")
+    if m:
+        a, d2 = out.get("enemy_debuff", (0, 0))
+        out["enemy_debuff"] = (a, -int(m.group(1)) / 100.0)
+    # 自身增益：物攻提高100% / 提高自身80%魔防
+    m = _num(r"\u7269\u653b\u63d0\u9ad8(\d+)%")
+    if m:
+        a, d2 = out.get("self_buff", (0, 0))
+        out["self_buff"] = (int(m.group(1)) / 100.0, d2)
+    m = _num(r"\u63d0\u9ad8\u81ea\u8eab(\d+)%\u9b54\u9632|\u81ea\u8eab"
+             r"\u9b54\u9632\+?(\d+)%")
+    if m:
+        a, d2 = out.get("self_buff", (0, 0))
+        out["self_buff"] = (a, int(m.group(1) or m.group(2)) / 100.0)
+    # 威力乘法：威力变为N倍 / 威力翻倍
+    m = _num(r"\u5a01\u529b\u53d8\u4e3a(\d+)\u500d")
+    if m:
+        out["power_mult"] = int(m.group(1))
+    elif "\u5a01\u529b\u7ffb\u500d" in clause:
+        out["power_mult"] = 2
+    # 永久威力：改为永久+100% / 威力永久+N%
+    m = _num(r"\u6539\u4e3a\u6c38\u4e45\+(\d+)%")
+    if not m:
+        m = _num(r"\u5a01\u529b\u6c38\u4e45\+?(\d+)%")
+    if m:
+        out["perm_power"] = int(m.group(1))
+    # 敌方失去N能量：改为敌方失去6能量
+    m = _num(r"\u654c\u65b9\u5931\u53bb(\d+)\u80fd\u91cf")
+    if m:
+        out["enemy_energy_loss"] = int(m.group(1))
+    # 自身不失去能量
+    if "\u81ea\u8eab\u4e0d\u5931\u53bb\u80fd\u91cf" in clause:
+        out["refund_cost"] = True
+    # 敌方脱离
+    if "\u654c\u65b9\u8131\u79bb" in clause:
+        out["force_enemy_leave"] = True
+    # 打断（额外造成打断）
+    if "\u6253\u65ad" in clause:
+        out["interrupt"] = True
+    # 敌方能耗+N（被应对技能能耗+3 / 敌方释放技能能耗+2 / 全技能能耗+N）
+    m = _num(r"\u80fd\u8017\+?(\d+)")
+    if m and ("\u654c\u65b9" in clause or "\u88ab\u5e94\u5bf9" in clause):
+        out["enemy_cost_up"] = int(m.group(1))
+    return out
+
+
 def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
     """我方这一招**应对**对方的 `foe_move`：命中类别就触发。
 
@@ -1042,6 +1118,10 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
             m = _re.search(r"能耗\s*\+\s*(\d+)", desc)
             if m:
                 ctx["enemy_cost_up"] = int(m.group(1))
+            # S15：效果子句解析（按命中类别取子句）
+            _cat_cn = {"attack": "攻击", "defense": "防御",
+                       "status": "状态"}[cat]
+            ctx.update(_counter_effect_parse(_cat_cn, desc))
         return out, hit
     for r in rows:
         if r.get("timing") != "ON_COUNTER":
@@ -1063,6 +1143,12 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
         out.insert(0, "%s 应对成功（对方是%s技能）"
                    % (pet.name, {"attack": "攻击", "defense": "防御",
                                  "status": "状态"}[cat]))
+        # S15：效果子句解析对两条路径都生效（按命中类别取子句）
+        import simulator as _S
+        _cat_cn = {"attack": "攻击", "defense": "防御",
+                   "status": "状态"}[cat]
+        ctx.update(_counter_effect_parse(
+            _cat_cn, _S._skill_desc_by_name(skill_name) or ""))
     return out, hit
 
 # 允许的技能/特性时机
