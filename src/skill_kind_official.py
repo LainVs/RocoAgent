@@ -82,10 +82,24 @@ def official_kind(skill_name):
         return "enemy_debuff"
     if energy:
         return "energy_gain"
-    # 有效果链但都不是上面几类（如「击杀获得6能量」已被 energy 命中；
-    # 剩下的是控制/异常类），标 control
+    # ---- 效果链存在但判不出类别（2026-11-22 复查）
+    #
+    # ⚠ 这里不能返回 "control"！
+    #
+    # 之前标 control 的理由是"剩下的是控制/异常类"。复查发现是错的：
+    # 有相当一部分技能的效果链**在 rkpp 数据里没有对应实体**
+    # （effect_id 查不到 buff_group），例如岩脉崩毁的 1079002。
+    # 它们的"效果链"只是个空壳 id，语义完全未知 ——
+    # 这类技能（skill_feature=4 一族：不动如山/丢冰块/乘胜追击/主轴…）
+    # 规则各不相同，标成同一个 control 是脑补。
+    #
+    # 返回 "unknown_chain"：调用方（classify_official_first）只认
+    # 三类明确的，这个值天然被忽略 —— 但它让"数据不完整"这件事
+    # 显式可见，而不是伪装成一个看似有意义的类别。
     if v.get("effects"):
-        return "control"
+        has_name = any(e.get("group_name") or e.get("buffs")
+                       for e in v["effects"])
+        return "unknown_chain" if not has_name else "control"
     return None
 
 
