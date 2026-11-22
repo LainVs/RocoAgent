@@ -183,20 +183,113 @@ def skill_rows(name):
     return (_load().get("skills") or {}).get(name) or []
 
 
-def desc_effects(name):
-    """技能效果合并查询：desc 抽取表（176）+ authority 消费表（180）。
+def _link_fx():
+    """S14 authority 链路层缓存：skill_links[name].results → dv dict。
 
-    返回合并后的效果 dict（authority 优先，desc 补充）。
-    两表加起来覆盖约 340 技的效果。
+    解析 buff_name/buff_desc 结构化文本到现有 dv 键（buff_atk/buff_def/
+    status/energy_gain/energy_drain），Battle 的消费点全部已有。
+    """
+    global _LINK_CACHE
+    if _LINK_CACHE is not None:
+        return _LINK_CACHE
+    import io as _io
+    import os as _os
+    import json as _json
+    import re as _re
+    p = _os.path.join(ROOT, "data", "authority_effects.json")
+    out = {}
+    try:
+        data = _json.load(_io.open(p, encoding="utf-8"))
+        links = data.get("skill_links") or {}
+
+        _strip = _re.compile(r"<[^>]+>")
+        _pct = _re.compile(
+            r"([\u7269\u9b54\u653b\u9632\u901f\u5ea6\u751f\u547d]+)"
+            r"(\+|-)(\d+(?:\.\d+)?)%")
+
+        for name, link in links.items():
+            dv = {}
+            for res in link.get("results") or []:
+                bn = res.get("buff_name") or ""
+                bd = _strip.sub("", res.get("buff_desc") or "")
+                text = bn + bd
+                if not text:
+                    continue                # 状态类（STATUS_RULES 全集）
+                for st_key, st_kw in (("freeze", "\u51bb\u7ed3"),
+                                      ("poison", "\u4e2d\u6bd2"),
+                                      ("burn", "\u707c\u70e7")):
+                    if st_kw in text:
+                        st = dv.setdefault("status", {})
+                        if not st.get(st_key):
+                            st[st_key] = 1
+                # 能量
+                m = _re.search(r"\u56de\u590d(\d+)\u80fd\u91cf", text)
+                if m:
+                    dv["energy_gain"] = dv.get("energy_gain", 0) + \
+                        int(m.group(1))
+                m = _re.search(r"(\u5077\u53d6|\u5438\u53d6|\u5931\u53bb)"
+                               r"(\d+)\u80fd\u91cf", text)
+                if m:
+                    dv["energy_drain"] = dv.get("energy_drain", 0) + \
+                        int(m.group(2))
+                # 属性增益/减益（max 合并，S10 教训：单槽勿叠加）
+                atk = 0.0
+                dfn = 0.0
+                for mm in _pct.finditer(text):
+                    stat, sign, val = (mm.group(1), mm.group(2),
+                                       float(mm.group(3)) / 100.0)
+                    if sign == "-":
+                        val = -val
+                    if "\u653b" in stat and "\u9632" not in stat:
+                        atk = val if abs(val) > abs(atk) else atk
+                    elif "\u9632" in stat:
+                        dfn = val if abs(val) > abs(dfn) else dfn
+                if atk or dfn:
+                    dv["buff_atk"] = round(atk, 3)
+                    dv["buff_def"] = round(dfn, 3)
+            # S14 补充：results 为空但技能自身 desc 有直接效果的
+            # （徒长=自己回复10能量），同一套模式解析 link["desc"]
+            if not dv:
+                own = _strip.sub("", link.get("desc") or "")
+                m = _re.search(r"\u56de\u590d(\d+)\u80fd\u91cf", own)
+                if m:
+                    dv["energy_gain"] = int(m.group(1))
+                m = _re.search(r"(\u5077\u53d6|\u5438\u53d6)(\d+)\u80fd\u91cf",
+                               own)
+                if m:
+                    dv["energy_drain"] = int(m.group(2))
+                m = _re.search(r"\u56de\u590d(\d+)%\u751f\u547d", own)
+                if m:
+                    dv["heal_pct"] = int(m.group(1)) / 100.0
+            if dv:
+                out[name] = dict(dv, source="link")
+    except Exception:
+        out = {}
+    _LINK_CACHE = out
+    return out
+
+
+_LINK_CACHE = None
+
+
+def desc_effects(name):
+    """技能效果合并查询：desc 抽取表（176）+ authority 消费表（180）
+    + S14 link 层（skill_links→buff_desc 解析）。
+
+    返回合并后的效果 dict（高优先层覆盖低优先层的同名键）。
     """
     desc = _desc_fx().get(name) or {}
     auth = _authority_fx().get(name) or {}
-    if not auth:
-        return desc
-    if not desc:
-        return auth
     out = dict(desc)
     for k, v in auth.items():
+        if k == "source":
+            continue
+        if k not in out:
+            out[k] = v
+    # S14 第 4 层：authority link 链（buff_desc 结构化解析）——
+    # 只补前两层都没有的键
+    link = _link_fx().get(name) or {}
+    for k, v in link.items():
         if k == "source":
             continue
         if k not in out:
