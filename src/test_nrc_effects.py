@@ -47,14 +47,50 @@ check(p.def_buff > 0 or p.atk_buff > 0,
       % (p.atk_buff, p.def_buff, evs))
 
 print()
-print("--- 2. 异常状态回合末扣血 ---")
+print("--- 2. 异常状态回合末扣血（游戏内原文数值）---")
 p2 = SIM.Pet(dex, "上岸蛙", iv=60)
 p2.hp = p2.max_hp
 p2.status = {"poison": 2}
 before = p2.hp
 ev = nrc_fx.status_tick(p2)
-check(p2.hp < before, "中毒 2 层后 %d -> %d（%s）"
-      % (before, p2.hp, ev[0] if ev else "无事件"))
+# 中毒：回合末 3% 生命（毒系免疫，上岸蛙不是毒系）
+want = int(p2.max_hp * 0.03 * 2)
+check(p2.hp == before - want,
+      "中毒 2 层：%d -> %d（应扣 %d = 3%%x2 层）"
+      % (before, p2.hp, want))
+
+# 灼烧：2% + 层数减半（向上取整）
+p3 = SIM.Pet(dex, "冰钻布鲁斯", iv=60)
+p3.hp = p3.max_hp
+p3.status = {"burn": 5}
+ev = nrc_fx.status_tick(p3)
+check(p3.status.get("burn") == 3, "灼烧 5 层结算后剩 3 层（向上取整改一半）")
+check(p3.hp < p3.max_hp, "灼烧造成伤害 %d -> %d" % (p3.max_hp, p3.hp))
+
+# 免疫：火系精灵不吃灼烧
+p4 = SIM.Pet(dex, "音速犬", iv=60)
+p4.status = {"burn": 3}
+nrc_fx.status_tick(p4)
+check(p4.hp == p4.max_hp, "火系精灵免疫灼烧（血量没掉）")
+
+# 寄生：伤害转给对手
+p5 = SIM.Pet(dex, "冰钻布鲁斯", iv=60)
+q5 = SIM.Pet(dex, "卡瓦重", iv=60)
+p5.hp = p5.max_hp - 100
+q5.hp = q5.max_hp - 100
+p5.status = {"parasite": 2}
+qh = q5.hp
+nrc_fx.status_tick(p5, q5)
+check(q5.hp > qh, "寄生把伤害回给对手（对手 %d -> %d）" % (qh, q5.hp))
+
+# 换人清增益/减益
+p6 = SIM.Pet(dex, "音速犬", iv=60)
+p6.atk_buff = 0.5
+p6.def_buff = 0.3
+p6.status = {"poison": 3}
+nrc_fx.clear_buffs(p6)
+check(p6.atk_buff == 0 and p6.def_buff == 0 and not p6.status,
+      "换人后增益/减益/异常状态清空")
 
 print()
 print("--- 3. 未实现原语要能看到 ---")

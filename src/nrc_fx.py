@@ -29,20 +29,20 @@ from collections import Counter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(ROOT, "data", "nrc_effects.json")
 
-# 异常状态：名字 -> 每回合末按最大血量百分比扣血
+# 异常状态（2026-11-22 按游戏内原文重写）
 #
-# ⚠ 这几个百分比是我们自己的近似值。洛克PVP助手的运行时里**没有**状态
-#   伤害公式 —— 它的持续性伤害是服务端下发的「伤害来源」，运行时只认 id：
+#   rocokingdomtools.dev / jinidex 引的是**游戏内原文**：
+#       中毒  回合结束时造成 3% 生命的毒系伤害（毒系精灵免疫）
+#       灼烧  回合结束时造成 2% 生命的火系伤害，并衰减一半层数（火系免疫）
+#       冻结  冻结 5% 生命，若当前生命低于冻结比例则力竭（冰系免疫）
+#       寄生  回合结束时，从寄生来源吸收 2% 生命（草系免疫）
 #
-#       function qkDamageSourceMeta(id) {
-#         const n = {20050010: "寄生", 20070010: "中毒",
-#                    20070011: "中毒印记", 20070020: "灼烧"};
-#         ...
-#       }
+#   BWIKI 的实测补了两条灼烧细节：
+#       · 每层灼烧最多 20 点（= 按 1000 血封顶）
+#       · 层数回合末衰减一半（向上取整）
 #
-#   所以「有哪些状态会造成持续伤害」是权威的，「每层扣多少」只能按社区
-#   公式（灼烧 = 敌方最大生命 × 层数 × 2%，上限按 1000 血算）去近似。
-#   真要精确，得从实盘日志里反推（见 docs/NIGHT_REPORT 的方法）。
+#   洛克PVP助手里那几个 id 只是"伤害来源"标记，没有百分比公式
+#   （真值由服务端下发），所以百分比以上面原文为准。
 STATUS_SOURCES = {
     20050010: "寄生",
     20070010: "中毒",
@@ -50,7 +50,18 @@ STATUS_SOURCES = {
     20070020: "灼烧",
 }
 
-STATUS_DOT = {"poison": 0.05, "burn": 0.08}
+# key -> (每层百分比, 免疫属性, 是否层数减半, 是否把伤害转给对手)
+STATUS_RULES = {
+    "poison": {"pct": 0.03, "immune": "毒", "halve": False, "leech": False},
+    "burn": {"pct": 0.02, "immune": "火", "halve": True, "leech": False,
+             "per_stack_cap": 20},
+    "freeze": {"pct": 0.05, "immune": "冰", "halve": False, "leech": False,
+               "lethal": True},
+    "parasite": {"pct": 0.02, "immune": "草", "halve": False, "leech": True},
+}
+
+# 兼容旧名
+STATUS_DOT = {k: v["pct"] for k, v in STATUS_RULES.items()}
 
 _CACHE = {"data": None}
 _SKIP = Counter()
@@ -325,20 +336,59 @@ def skill_fire(pet, foe, skill_name, timing, ctx=None):
     return _run(pet, foe, skill_rows(skill_name), {timing}, ctx)
 
 
-def status_tick(pet):
-    """回合末结算异常状态，返回事件文本。"""
+def status_tick(pet, foe=None):
+    """回合末结算异常状态，返回事件文本。
+
+    规则见 STATUS_RULES（游戏内原文）。要点：
+      · 中毒 3% / 灼烧 2%（层数减半，每层最多 20 点）/ 冻结 5%（血量不足则力竭）
+        / 寄生 2% 且**把伤害回给对手**
+      · 免疫：毒系免中毒、火系免灼烧、冰系免冻结、草系免寄生
+    """
     st = getattr(pet, "status", None)
     if not st:
         return []
     out = []
-    for key, pct in STATUS_DOT.items():
+    types = set(pet.types or [])
+    for key, rule in STATUS_RULES.items():
         n = int(st.get(key, 0) or 0)
         if n <= 0 or not pet.alive:
             continue
-        dmg = max(1, int(pet.max_hp * pct * min(n, 5)))
+        if rule["immune"] in types:
+            out.append("%s 是%s系，免疫%s" % (pet.name, rule["immune"], key))
+            st[key] = 0
+            continue
+        pct = rule["pct"] * min(n, 5)
+        dmg = max(1, int(pet.max_hp * pct))
+        cap = rule.get("per_stack_cap")
+        if cap:
+            dmg = min(dmg, cap * min(n, 5))
         pet.hp = max(0, pet.hp - dmg)
         out.append("%s 受到 %s 伤害 -%d（剩 %d/%d）"
                    % (pet.name, key, dmg, pet.hp, pet.max_hp))
+        if rule["leech"] and foe is not None and foe.alive:
+            before = foe.hp
+            foe.hp = min(foe.max_hp, foe.hp + dmg)
+            if foe.hp > before:
+                out.append("%s 从寄生吸取 +%d（剩 %d/%d）"
+                           % (foe.name, foe.hp - before, foe.hp, foe.max_hp))
+        if rule.get("halve") and n > 1:
+            st[key] = (n + 1) // 2          # 向上取整
         if not pet.alive:
             out.append("%s 倒下" % pet.name)
+            break
     return out
+
+
+def clear_buffs(pet):
+    """换人时清掉增益/减益（印记不清）。
+
+    游戏内原文：「增益和减益状态在更换精灵之后会被清除」「精灵下场后
+    印记不会消失」。异常状态按同一份原文属于「减益」，一并清掉。
+    """
+    pet.atk_buff = 0.0
+    pet.def_buff = 0.0
+    pet.trait_tmp_atk = 0.0
+    pet.trait_tmp_def = 0.0
+    pet.taken_mult = 1.0
+    pet.status = {}
+    pet.buffed = False
