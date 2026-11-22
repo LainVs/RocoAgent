@@ -1675,6 +1675,24 @@ class Bot:
             return
         if img is None or img.size == 0:
             return
+        # ---- 画面质量门（2026-11-22 深夜）
+        #
+        # 实测大量 `unknown bust` 是**非头像画面**：过场动画/黑屏时抓到的
+        # 纯色块。它们的灰度标准差极低：
+        #     _unknown_083340.png  std=1.9
+        #     _unknown_083555.png  std=1.6
+        #     _unknown_083502.png  std=0.0（纯黑）
+        # 真头像的 std 在 30~75。
+        #
+        # 不加这道门，这些帧会被当成"识别失败"计入统计，也会污染
+        # `_unknown_*.png` 样本库（后面拿它们当模板就全错了）。
+        try:
+            import cv2 as _cv
+            _std = float(_cv.cvtColor(img, _cv.COLOR_RGB2GRAY).std())
+        except Exception:
+            _std = 255.0
+        if _std < 12.0:
+            return
         name, sc, margin = self._identify_with_margin(img, box, m)
         # ---- 多帧投票（2026-11-22）
         #
