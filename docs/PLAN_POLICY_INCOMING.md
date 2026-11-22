@@ -70,3 +70,18 @@ incoming = max( 期望承伤, blend × 最坏承伤 )      blend 默认 0.75
    当回合实际掉血，若 `weighted/observed` 系统性 <0.8，把 blend 降到 0.6
 2. `switch_margin` / `buff_survive_floor` 这些依赖承伤的阈值可能要
    随新口径重新标定（它们原来是在 worst 口径下调出来的）
+
+---
+
+## 六、追加修复：换人 KO 加成打折（同日）
+
+端到端验证时发现健康满能量对位仍选换人（switch 0.37 vs attack 0.11）。
+根因不在承伤，而在**换人候选的 KO 加成**：`best_damage_from` 对替补
+整个可学技能池取 max（339≥300 → w_ko=+0.30），而 bench 的 4 个技能
+根本没揭晓 —— "池子幻想"。
+
+修复（`1b64ba0`）：`switch_kills = dmg≥foe_hp 且 dmg×0.6≥foe_hp`，
+系数外置 `switch_ko_discount`（默认 0.6）。中间试过 switch_margin
+门槛方案，挡不住 KO 级落差，弃用（推理留在代码注释里）。
+
+验证：健康满能量对位从 switch 纠正为 skill 1；全部策略回归 ALL PASS。
