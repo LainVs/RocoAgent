@@ -64,12 +64,19 @@ incoming = max( 期望承伤, blend × 最坏承伤 )      blend 默认 0.75
 - `test_decide` / `test_priority` / `test_pvp_meta` / `test_imports` ALL PASS
 - API 抽查：已知对位出 weighted 值，未知物种回落 worst（见上表）
 
-## 五、后续
+## 五、验证矩阵（2026-11-22 深夜定案，5 用例手推）
 
-1. 跑一晚后用 turns.jsonl 复盘：`incoming` 字段（weighted 值）vs
-   当回合实际掉血，若 `weighted/observed` 系统性 <0.8，把 blend 降到 0.6
-2. `switch_margin` / `buff_survive_floor` 这些依赖承伤的阈值可能要
-   随新口径重新标定（它们原来是在 worst 口径下调出来的）
+| 用例 | 局面 | 期望 | 实测 |
+|---|---|---|---|
+| A | 满血满能量，我卡 175 | attack | ✅ attack（KO 幻想已修） |
+| B | 我 120 血，承伤 134 必死，替补能扛 | switch | ✅ switch（安全语义保留） |
+| C | 我 150 血，承伤 134 不死，对面 350 血杀不掉 | attack | ✅ attack |
+| D | 我卡 100 杀不掉，替补 339×0.6=203≥150 真必杀 | switch | ✅ switch |
+| E | 我卡 175 ≥ 对面 150 当前血 | attack（直接杀，不换） | ✅ attack |
+
+D 用例的教训：第一次手推把"want"写错了——替补连六折都能杀、而我方
+卡杀不掉时，换人**就是对的**。策略没有错，是我的预期错了。
+（这组矩阵值得固化成 `test_policy_switch.py`，待办。）
 
 ---
 
