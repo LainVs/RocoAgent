@@ -42,19 +42,34 @@
 
 ## 三、执行计划
 
-### P0：官方效果链导入（本周期，最高收益）
+### P0：官方效果链导入（✅ 已完成 2026-11-22）
 
-1. **导出 buff 链** `scripts/export_rkpp_effects.py`
-   - `skill → skill_result[] → effect_id → buff(Group) → buff_base_ids → buffbase.editor_name`
-   - 产物 `data/external/rkpp-official/skill_effects.json`
-   - 预计覆盖 1037 个技能
-2. **接进 `opponent_model`**
-   - `a2 防御 / a3 状态` 的细分依据：效果的 buffbase 语义
-     （「物攻等级提升」「回复」「能量」分类）
-   - `foe_moves.note_observation()` 记录的技能自动标注类别
-3. **接进 `policy_v2`**
-   - 对面技能的 buff/回复/能量效果 → 期望值计算里加权重
-     （现在只有伤害，没有"这招会给自己加 buff"的评估）
+1. **导出 buff 链** ✅ `scripts/export_rkpp_effects.py`
+   - 产物 `skill_effects.json`（1392 技能带链，723 有明确 buff）、
+     `buffbase_names.json`（1879 条语义名）
+2. **新增 `src/skill_kind_official.py`** ✅
+   - `official_kind()` 按效果链分类 self_buff/enemy_debuff/heal
+   - **只信三类明确的**：初版把"有效果链"都标 control，会误导
+     （岩脉崩毁效果链只是"位置固定"，它是纯攻击技）
+3. **接进决策**（进行中）
+   - `skill_kind.info()` 已补注释，主类仍是 damage，附带效果单独查
+   - 待做：policy_v2 的 `w_energy`/`buff first` 分支接 official_kind
+   - 待做：opponent_model 用分类细分 a1/a2/a3
+
+### P0.5：官方 priority 语义（✅ 已完成，含纠错）
+
+- 官方分布 {5:1111, 1:520, 6:6, 10:3, 11:1} 证明 **5 是基准值不是脏数据**
+- 语义：>5 先手、=5 正常、<5 后手（后发制人=1、风隐=1）
+- `perceive._skill_meta` 已按官方语义归一
+- **修正夜报 bug 24 的结论**：那晚"以为每张卡都先手"是把官方 5 错当先手，
+  不是数据脏。教训：判断数据是否脏之前，先找官方基准对照
+
+### P0.6：官方技能池（✅ 数据已导，接入待做）
+
+- `pet_skill.id == species_id` 已验证（3071 音速犬 13 技）
+- `skillbanks.json` 16828 条，官方 skill_id 在我们库 100% 命中
+- 待做：接进 `pvp_meta`，「可能技能」从 169 套统计升级为官方池全集
+
 
 ### P1：官方技能池接入 `pvp_meta`
 
