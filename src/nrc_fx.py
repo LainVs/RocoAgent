@@ -82,6 +82,24 @@ STATUS_DOT = {k: v["pct"] for k, v in STATUS_RULES.items()}
 
 _CACHE = {"data": None}
 _DESC_FX = None
+_AUTH_FX = None
+
+
+def _authority_fx():
+    """authority_effects 消费表（data/authority_consumable.json），懒加载。
+
+    180 技的 buff_atk/buff_def/heal_pct/status/mark 等效果，来自
+    authority buff_desc 正则抽取。与 desc_fx 互补。
+    """
+    global _AUTH_FX
+    if _AUTH_FX is None:
+        try:
+            p = os.path.join(ROOT, "data", "authority_consumable.json")
+            with io.open(p, encoding="utf-8") as fh:
+                _AUTH_FX = json.load(fh).get("skills") or {}
+        except Exception:
+            _AUTH_FX = {}
+    return _AUTH_FX
 
 
 def _desc_fx():
@@ -166,8 +184,24 @@ def skill_rows(name):
 
 
 def desc_effects(name):
-    """技能描述抽取的效果（202 技能），与 nrc 表互补。"""
-    return _desc_fx().get(name) or {}
+    """技能效果合并查询：desc 抽取表（176）+ authority 消费表（180）。
+
+    返回合并后的效果 dict（authority 优先，desc 补充）。
+    两表加起来覆盖约 340 技的效果。
+    """
+    desc = _desc_fx().get(name) or {}
+    auth = _authority_fx().get(name) or {}
+    if not auth:
+        return desc
+    if not desc:
+        return auth
+    out = dict(desc)
+    for k, v in auth.items():
+        if k == "source":
+            continue
+        if k not in out:
+            out[k] = v
+    return out
 
 
 def has_trait(name):
