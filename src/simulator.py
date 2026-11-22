@@ -62,6 +62,26 @@ ENERGY_GAIN = 5
 _SKILL_DESC = None
 
 
+def _skill_desc_by_name(name):
+    """按技能名查描述（供 nrc_fx 的 desc 回退路径）。"""
+    global _SKILL_NAME_DESC
+    if _SKILL_NAME_DESC is None:
+        try:
+            import sqlite3
+            db = sqlite3.connect(str(paths.DB))
+            try:
+                _SKILL_NAME_DESC = {r[0]: (r[1] or "") for r in db.execute(
+                    "SELECT name, desc FROM skills")}
+            finally:
+                db.close()
+        except Exception:
+            _SKILL_NAME_DESC = {}
+    return _SKILL_NAME_DESC.get(name) or ""
+
+
+_SKILL_NAME_DESC = None
+
+
 def _skill_desc(skill_id):
     global _SKILL_DESC
     if _SKILL_DESC is None:
@@ -448,6 +468,10 @@ class Pet:
         self.charging = 0          # >0 = 蓄力中（下回合释放所选技能）
         self.charge_skill = None   # 蓄力的技能名
         self._burst_used = False   # 入场后首行动（迸发）已消耗
+        # S6.11：传动槽位（机械系技能会移动位置）——索引指向 moves
+        self.skill_slots = list(range(len(self.moves)))
+        # 传动叠加层数（回合开始时按「传动X」移动）
+        self._transmission = 0
 
     def panel(self):
         """六项面板（UI 展示用）。"""
@@ -765,11 +789,16 @@ class Battle:
         return gone
 
     def eff_cost(self, side, move):
-        """技能的实际能耗（湿润 -1 / 蓄势 +1，最低 0）。"""
+        """技能的实际能耗（湿润 -1 / 蓄势 +1 / 骑士敕令能耗操纵，最低 0）。"""
         import battle_fx
         base = int((move or {}).get("cost") or 0)
         d = battle_fx.mark_cost_delta(self.marks.get(side) or {})
-        return max(0, base + d)
+        # 骑士敕令/瞬间零度的能耗操纵（跨回合，_cost_up_next 由应对挂上）
+        cost_up = 0
+        cu = getattr(self, "_cost_up_next", None)
+        if cu:
+            cost_up += cu.get(side, 0)
+        return max(0, base + d + cost_up)
 
     def eff_spe(self, side, pet):
         """实际速度（减速印记 -10 / 特性 speed_buff）。"""
@@ -968,6 +997,9 @@ class Battle:
 
         # 打断标记（应对判定在下面，这里先声明）
         interrupted = {"a": False, "b": False}
+        # 能耗操纵（骑士敕令/瞬间零度：应对成功时挂上，**本回合内**的
+        # 消费走局部；跨回合的部分挂 self._cost_up_next）
+        enemy_cost_up = {"a": 0, "b": 0}
 
         # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
         skill_a = me.moves[pa] if (ka == "skill" and pa is not None
@@ -1085,15 +1117,30 @@ class Battle:
                 (foe, me, skill_b, skill_a, "b")):
             if mv is None or omv is None:
                 continue
+            _ctx = {}
             evs, hit = nrc_fx.counter_fire(owner, other,
-                                           mv.get("name") or "", omv)
+                                           mv.get("name") or "", omv,
+                                           _ctx)
             for e in evs:
                 events.append(e)
+            # 能耗操纵（骑士敕令/瞬间零度）：应对成功 → 对方**下一回合**
+            # 技能能耗+N（挂 self._cost_up_next，begin_turn 时转入本回合）
+            if hit and _ctx.get("enemy_cost_up"):
+                if not hasattr(self, "_cost_up_next"):
+                    self._cost_up_next = {"a": 0, "b": 0}
+                self._cost_up_next["b" if side == "a" else "a"] = \
+                    _ctx["enemy_cost_up"]
             if hit:
                 counter_first[side] = True
                 # 打断：我方技能描述含「打断」→ 对方本回合效果作废
                 _desc_txt = (_skill_desc(mv.get("id"))
                              if mv.get("id") else "") or ""
+                # 能耗操纵：骑士敕令/瞬间零度（敌方本回合技能能耗+3）
+                import re as _re
+                m_up = _re.search(r"能耗\s*\+\s*(\d+)", _desc_txt)
+                if m_up:
+                    enemy_cost_up["b" if side == "a" else "a"] = \
+                        int(m_up.group(1))
                 import cond_fx as _cf
                 if (mv.get("name") in _cf.interrupt_skills(self.dex)
                         or "打断" in _desc_txt):
@@ -1295,12 +1342,13 @@ class Battle:
                               % getattr(me, "charge_skill", "?"))
             else:
                 mv = me.moves[pa]
-                cost = self.eff_cost("a", mv)
+                cost = self.eff_cost("a", mv) + enemy_cost_up.get("a", 0)
                 if cost <= me.energy:
                     me.energy -= cost
                     acts.append((self.eff_spe("a", me), "a", me, foe, mv))
                 else:
-                    events.append("我方能量不足，%s 没放出来" % mv["name"])
+                    events.append("我方能量不足（含能耗操纵 +%.0f），%s 没放出来"
+                                  % (enemy_cost_up.get("a", 0), mv["name"]))
         if (not switched_b and not skip_act["b"] and kb == "skill"
                 and pb is not None and pb < len(foe.moves)):
             if getattr(foe, "charging", 0) == 1 and not charge_release["b"]:
@@ -1308,12 +1356,13 @@ class Battle:
                               % getattr(foe, "charge_skill", "?"))
             else:
                 mv = foe.moves[pb]
-                cost = self.eff_cost("b", mv)
+                cost = self.eff_cost("b", mv) + enemy_cost_up.get("b", 0)
                 if cost <= foe.energy:
                     foe.energy -= cost
                     acts.append((self.eff_spe("b", foe), "b", foe, me, mv))
                 else:
-                    events.append("对方能量不足，%s 没放出来" % mv["name"])
+                    events.append("对方能量不足（含能耗操纵 +%.0f），%s 没放出来"
+                                  % (enemy_cost_up.get("b", 0), mv["name"]))
         # 迅捷技追加到 acts（优先于所有普通出手 —— 原文：入场立即使用）
         acts.extend(swift_acts)
         # 出手顺序：**应对成功方必定先手**（无视速度），其次看技能先手度

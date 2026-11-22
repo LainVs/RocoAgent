@@ -67,6 +67,10 @@ STATUS_RULES = {
             "note": "层数作为标记；每层-10%全属性为近似（见 test 断言）"},
 }
 
+# 状态中文名（统一播报）
+STATUS_CN = {"poison": "中毒", "burn": "灼烧", "freeze": "冻结",
+             "parasite": "寄生", "moe": "萌化", "moisture": "湿润"}
+
 # 兼容旧名
 STATUS_DOT = {k: v["pct"] for k, v in STATUS_RULES.items()}
 
@@ -442,7 +446,29 @@ def counter_fire(pet, foe, skill_name, foe_move, ctx=None):
         return [], False
     hit = False
     out = []
-    for r in skill_rows(skill_name):
+    rows = skill_rows(skill_name)
+    # desc 回退（S6.11）：骑士敕令/瞬间零度等能耗操纵技不在 nrc 表，
+    # 应对类别和「能耗+N」全在 desc 里 —— 从 desc 解析。
+    if not rows:
+        import simulator as _S
+        desc = _S._skill_desc_by_name(skill_name) or ""
+        want = None
+        for kw, cc in (("应对攻击", "attack"), ("应对防御", "defense"),
+                       ("应对状态", "status")):
+            if kw in desc:
+                want = cc
+                break
+        if want and want == cat:
+            hit = True
+            out.insert(0, "%s 应对成功（对方是%s技能）"
+                       % (pet.name, {"attack": "攻击", "defense": "防御",
+                                     "status": "状态"}[cat]))
+            import re as _re
+            m = _re.search(r"能耗\s*\+\s*(\d+)", desc)
+            if m:
+                ctx["enemy_cost_up"] = int(m.group(1))
+        return out, hit
+    for r in rows:
         if r.get("timing") != "ON_COUNTER":
             continue
         want = (r.get("filters") or {}).get("category")
