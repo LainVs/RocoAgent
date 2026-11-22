@@ -191,6 +191,17 @@
 - [x] trait_lib 覆盖更新：traits 268 / with_rules 128 / usable 30
 - [x] authority_consumable 移除特性条目 3 条（剩 127 技）
 
+## 本轮（S7.7）
+
+- [x] **STEAL_ALL_ENEMY_ENERGY**：按 nrc 数据 amount=N 每回合偷 N 点
+      （毒蘑菇 amount=1，幻影灵菇端到端验证；修掉了早期"偷全部"的错误语义）
+- [x] **ON_SKILL_ELEMENT_BUFF**：ctx["mv_type"] 过滤系别
+      （助燃/爆燃：火系技能后双攻 +20%/+30%；非火系不触发）
+- [x] **ENERGY_COST_CONDITION_BUFF**：ctx["mv_cost"] 过滤能耗
+      （鼓气/三鼓作气：能耗3技能后双攻双防 +20%；能耗2不触发）
+- [x] Battle.step 的 ON_USE_SKILL ctx 携带 mv_type/mv_cost
+- [x] nrc HANDLERS 25 个
+
 ## 未实现（按批次）
 
 | 批次 | 缺什么 | 卡在哪 |
