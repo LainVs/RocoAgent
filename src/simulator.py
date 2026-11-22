@@ -634,6 +634,15 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
     import trait_lib
     stab = 1.25 if move["type"] in attacker.types else 1.0
     eff = S.type_effect(move["type"], defender.types)
+    # S9 闪焰爆发：威力**乘法**通道（原文「威力提升150%」= ×2.5）。
+    # 应对状态的 +150% 是加法（desc「威力+150%」——愿力冲击的写法），
+    # 两者口径不同，分开传。
+    _fire_mult = 1.0
+    _battle = getattr(attacker, "_battle", None)
+    if _battle is not None and \
+            getattr(attacker, "_fire_burst_turn", None) == \
+            getattr(_battle, "turn", -1):
+        _fire_mult = 2.5
     if power_mult is None or power_bonus is None:
         try:
             foe_cost = sum(int(m.get("cost") or 0) for m in defender.moves)
@@ -646,8 +655,9 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
         self_damage_pct = float(mods.get("self_damage_pct") or 0)
     else:
         self_damage_pct = 0.0
-    power = max(0, int(int(move["power"]) * float(power_mult)
-                       + int(power_bonus) + int(extra_power_bonus)))
+    power = max(0, int((int(move["power"]) * float(power_mult)
+                        + int(power_bonus) + int(extra_power_bonus))
+                       * _fire_mult))
     # 天气 + 印记（2026-11-22）：两者都作用在**威力**上，和 roco-cal 的
     # effective_power 一致。天气/印记挂在 Battle 上，通过 pet._battle 取；
     # 拿不到就当没有（策略单独调用 calc_damage 时也是这个行为）。
@@ -1205,41 +1215,128 @@ class Battle:
         # 能耗操纵（骑士敕令/瞬间零度：应对成功时挂上，**本回合内**的
         # 消费走局部；跨回合的部分挂 self._cost_up_next）
         enemy_cost_up = {"a": 0, "b": 0}
+        # S8/S9 本回合威力加成通道：应对状态（愿力冲击 +150%）、
+        # 闪焰爆发（+150%）。魔法分派在其声明之后写这里，故先声明。
+        counter_power_bonus = {"a": 0, "b": 0}
 
         # 取出双方本回合选的技能对象（buff 精确值要用它的名字）
-        # S8 愿力强化："magic" 动作 → 本回合第一格替换为血脉愿力冲击。
-        # 替换发生在取技能对象**之前**，这样 nrc ON_USE_SKILL / 应对判定 /
-        # 出手全走愿力冲击这一招（与游戏语义一致）。
+        # S8/S9 共鸣魔法："magic" 动作按队伍携带的魔法分派。
+        # ⚠ 行动模型：施放魔法的当回合精灵**仍然出手**（愿力强化原文
+        #   「本回合被替换…持续1回合」；三个增益魔法同模型）——
+        #   payload = 精灵本回合用的技能下标（愿力强化忽略，固定第一格）。
         for side, kind, pet in (("a", ka, me), ("b", kb, foe)):
             if kind != "magic":
                 continue
+            _who = "我方" if side == "a" else "对方"
+            spell = self.team_magic.get(side)
+            if not spell:
+                events.append("%s 没有携带共鸣魔法" % _who)
+                continue
             st = self.magic_state[side]
             if st["used"] >= 2:
-                events.append("%s 愿力强化已用完 2 次" %
-                              ("我方" if side == "a" else "对方"))
+                events.append("%s %s已用完 2 次" % (_who, spell))
                 continue
             if st["cd"] > 0:
-                events.append("%s 愿力强化冷却中（还剩 %d 回合）" %
-                              ("我方" if side == "a" else "对方", st["cd"]))
+                events.append("%s %s冷却中（还剩 %d 回合）"
+                              % (_who, spell, st["cd"]))
                 continue
-            bl = getattr(pet, "bloodline", None)
-            tid = _type_id_by_name(self.dex, bl) if bl else None
-            ymv = self.dex.yuanli_move(tid) if tid is not None else None
-            if ymv is None:
-                events.append("%s 没有可用血脉，愿力强化落空" %
-                              ("我方" if side == "a" else "对方"))
+            if spell == "\u613f\u529b\u5f3a\u5316":
+                # ---- 愿力强化（S8）：第一格替换为血脉愿力冲击 ----
+                bl = getattr(pet, "bloodline", None)
+                tid = _type_id_by_name(self.dex, bl) if bl else None
+                ymv = self.dex.yuanli_move(tid) if tid is not None else None
+                if ymv is None:
+                    events.append("%s 没有可用血脉，愿力强化落空" % _who)
+                    continue
+                st["used"] += 1
+                st["cd"] = 3
+                pet._yuanli_turn = self.turn
+                pet._yuanli_mv = ymv
+                events.append("%s 愿力强化！本回合第一格替换为 %s系愿力冲击"
+                              % (_who, ymv.get("type") or "?"))
+            elif spell == "\u5149\u5408\u6cbb\u6108":
+                # ---- 光合治愈（S9）：草系或草血脉 → 回复 50% max_hp ----
+                types = set(pet.types or [])
+                if "\u8349" not in types and \
+                        getattr(pet, "bloodline", None) != "\u8349":
+                    events.append("%s %s 不是草系/草血脉，光合治愈落空"
+                                  % (_who, pet.name))
+                    continue
+                st["used"] += 1
+                st["cd"] = 3
+                _heal = max(1, int(pet.max_hp * 0.5))
+                _before = pet.hp
+                pet.hp = min(pet.max_hp, pet.hp + _heal)
+                events.append("%s 光合治愈！%s 回复 %d（%d/%d）"
+                              % (_who, pet.name, pet.hp - _before,
+                                 pet.hp, pet.max_hp))
+            elif spell == "\u95ea\u7130\u7206\u53d1":
+                # ---- 闪焰爆发（S9）：火系或火血脉 → 本回合威力 +150% ----
+                types = set(pet.types or [])
+                if "\u706b" not in types and \
+                        getattr(pet, "bloodline", None) != "\u706b":
+                    events.append("%s %s 不是火系/火血脉，闪焰爆发落空"
+                                  % (_who, pet.name))
+                    continue
+                st["used"] += 1
+                st["cd"] = 3
+                pet._fire_burst_turn = self.turn
+                events.append("%s 闪焰爆发！%s 本回合技能威力提升150%%"
+                              % (_who, pet.name))
+            elif spell == "\u8282\u6d41\u672f":
+                # ---- 节流术（S9）：水系或水血脉 → 本回合免能耗 ----
+                types = set(pet.types or [])
+                if "\u6c34" not in types and \
+                        getattr(pet, "bloodline", None) != "\u6c34":
+                    events.append("%s %s 不是水系/水血脉，节流术落空"
+                                  % (_who, pet.name))
+                    continue
+                st["used"] += 1
+                st["cd"] = 3
+                pet._thrift_turn = self.turn
+                events.append("%s 节流术！%s 本回合技能不扣能耗"
+                              % (_who, pet.name))
+            else:
+                # S10 进化之力：首领血脉 + 战斗中进化，独立批次
+                events.append("%s 共鸣魔法 %s 尚未实现（S10）"
+                              % (_who, spell))
+        # S9 落空的魔法（没扣次数）→ 转普通技能动作，精灵照常出手
+        skill_a = None
+        skill_b = None
+        for side, kind, pet, p_idx in (("a", ka, me, pa),
+                                       ("b", kb, foe, pb)):
+            if kind != "magic":
                 continue
-            st["used"] += 1
-            st["cd"] = 3
-            pet._yuanli_turn = self.turn
-            pet._yuanli_mv = ymv
-            events.append("%s 愿力强化！本回合第一格替换为 %s系愿力冲击"
-                          % ("我方" if side == "a" else "对方",
-                             ymv.get("type") or "?"))
+            _spell = self.team_magic.get(side)
+            _spent = (
+                (_spell == "\u613f\u529b\u5f3a\u5316"
+                 and getattr(pet, "_yuanli_turn", None) == self.turn)
+                or (_spell == "\u5149\u5408\u6cbb\u6108"
+                    and self.magic_state[side]["cd"] == 3
+                    and self.magic_state[side]["used"] > 0)
+                or (_spell == "\u95ea\u7130\u7206\u53d1"
+                    and getattr(pet, "_fire_burst_turn", None) == self.turn)
+                or (_spell == "\u8282\u6d41\u672f"
+                    and getattr(pet, "_thrift_turn", None) == self.turn))
+            if _spent and _spell != "\u613f\u529b\u5f3a\u5316" \
+                    and p_idx is not None:
+                # S9 增益魔法成功 → 精灵用 payload 指定的技能出手
+                if 0 <= p_idx < len(pet.moves):
+                    if side == "a":
+                        skill_a = pet.moves[p_idx]
+                    else:
+                        skill_b = pet.moves[p_idx]
+            elif not _spent and p_idx is not None:
+                # 落空（次数用完/CD/目标不符）→ 出手 payload 指定的技能
+                if 0 <= p_idx < len(pet.moves):
+                    if side == "a":
+                        skill_a = pet.moves[p_idx]
+                    else:
+                        skill_b = pet.moves[p_idx]
         skill_a = me.moves[pa] if (ka == "skill" and pa is not None
-                                   and pa < len(me.moves)) else None
+                                   and pa < len(me.moves)) else skill_a
         skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
-                                    and pb < len(foe.moves)) else None
+                                    and pb < len(foe.moves)) else skill_b
         # S8 裁决类特性：第一格持久替换为该系愿力冲击
         # （优先级低于本回合的愿力强化替换——后者直接覆盖）
         if ka == "skill" and pa == 0 and \
@@ -1259,11 +1356,14 @@ class Battle:
         if kb == "skill" and pb == 0 and \
                 getattr(foe, "_yuanli_turn", None) == self.turn:
             skill_b = foe._yuanli_mv
-        # magic 动作本身：精灵当回合出手 = 第一格（已替换为愿力冲击）
-        if ka == "magic":
-            skill_a = getattr(me, "_yuanli_mv", None)
-        if kb == "magic":
-            skill_b = getattr(foe, "_yuanli_mv", None)
+        # magic 动作：愿力强化 → 第一格（已替换为愿力冲击）；
+        # S9 增益魔法 → payload 指定的技能（上面已赋 skill_a/skill_b）。
+        if ka == "magic" and \
+                getattr(me, "_yuanli_turn", None) == self.turn:
+            skill_a = me._yuanli_mv
+        if kb == "magic" and \
+                getattr(foe, "_yuanli_turn", None) == self.turn:
+            skill_b = foe._yuanli_mv
 
         # nrc-ai 手写的**技能效果**（139 个技能）与**特性 ON_USE_SKILL**。
         # 属性增益优先走官方数值（skill_buff），nrc 只补它没有的东西：
@@ -1420,9 +1520,7 @@ class Battle:
         # 打断（S6.8）：应对成功时，若我方技能带「打断」→ 敌方本回合
         # 技能作废（含 buff/状态效果）。
         counter_first = {"a": False, "b": False}
-        # S8 应对状态威力加成（愿力冲击：应对状态：本次威力+150%）。
-        # desc 里「应对…威力+N%」→ 应对成功的那一手威力 +N%。
-        counter_power_bonus = {"a": 0, "b": 0}
+        # S8/S9 的 counter_power_bonus 已在方法开头声明（魔法分派要用）
         for owner, other, mv, omv, side in (
                 (me, foe, skill_a, skill_b, "a"),
                 (foe, me, skill_b, skill_a, "b")):
@@ -1694,6 +1792,9 @@ class Battle:
                     pass
                 else:
                     cost = self.eff_cost("a", mv) + enemy_cost_up.get("a", 0)
+                    # S9 节流术：本回合免能耗
+                    if getattr(me, "_thrift_turn", None) == self.turn:
+                        cost = 0
                     if cost <= me.energy:
                         me.energy -= cost
                         acts.append((self.eff_spe("a", me), "a", me, foe, mv))
@@ -1710,6 +1811,9 @@ class Battle:
                     pass
                 else:
                     cost = self.eff_cost("b", mv) + enemy_cost_up.get("b", 0)
+                    # S9 节流术：本回合免能耗
+                    if getattr(foe, "_thrift_turn", None) == self.turn:
+                        cost = 0
                     if cost <= foe.energy:
                         foe.energy -= cost
                         acts.append((self.eff_spe("b", foe), "b", foe, me, mv))

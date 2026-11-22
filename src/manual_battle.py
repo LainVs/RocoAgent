@@ -97,8 +97,12 @@ class Session:
     def new(self, team_a, cfg_a=None, opponent_mode="lineups",
             team_b=None, cfg_b=None, policy_b="smart", seed=0,
             weather="none", marks=None, marks_b=None, dex=None,
-            skip_starter=False):
-        """skip_starter=True 时不开局选首发（批量测试用）。"""
+            skip_starter=False, team_magic_a="愿力强化"):
+        """skip_starter=True 时不开局选首发（批量测试用）。
+
+        team_magic_a：我方共鸣魔法（S9）——"愿力强化"/"光合治愈"/
+        "闪焰爆发"/"节流术"，None = 不带。
+        """
         with self.lock:
             dex = dex or SIM.Dex()
             ta = [str(x) for x in (team_a or [])][:6]
@@ -127,9 +131,8 @@ class Session:
                              "author": "", "source": ""}
 
             self.seed = int(seed or 0)
-            # S8 血脉缺省：cfg 未配 bloodline 的精灵回退主系
-            # （实战玩家用秘药改血脉，主系是最常见缺省；显式配置覆盖）
-            # 必须在 Battle 构造前填好——血脉门控发生在 Pet 构造时。
+            # S8/S9：血脉缺省回退主系（秘药改血脉前最常见状态）；
+            # 共鸣魔法 team_magic_a 缺省愿力强化
             ca = list(cfg_a or [])
             while len(ca) < len(ta):
                 ca.append(None)
@@ -140,10 +143,9 @@ class Session:
                     if sp and sp.get("types"):
                         c["bloodline"] = sp["types"][0]
                 ca[i] = c
-            # S8：共鸣魔法（我方默认带愿力强化——血脉已配置的队才有意义）
             self.bt = SIM.Battle(dex, ta, tb, cfg_a=ca, cfg_b=cb,
                                  seed=self.seed,
-                                 magic_kind_a="愿力强化")
+                                 magic_kind_a=team_magic_a)
             self.pol_b = POLICIES.get(policy_b, SIM.SmartPolicy)()
             # 天气 / 印记（2026-11-22）：开局时设定，整局有效
             self.bt.set_weather(str(weather or "none"))
@@ -257,18 +259,33 @@ class Session:
                 payload = None
                 self.actions.append({"turn": self.bt.turn, "kind": "buff"})
             elif kind == "magic":
-                # S8 愿力强化（共鸣魔法）：payload = 0。
-                # 精灵本回合第一格替换为血脉愿力冲击并出手。
+                # S8/S9 共鸣魔法：payload = 本回合技能下标
+                # （愿力强化固定第一格，见 Battle.step；增益魔法用 payload 技能出手）
+                spell = self.bt.team_magic.get("a")
+                if not spell:
+                    return {"error": "我方没有携带共鸣魔法"}
                 st = self.bt.magic_state["a"]
                 if st["used"] >= 2:
-                    return {"error": "愿力强化每场只能用 2 次"}
+                    return {"error": "%s每场只能用 2 次" % spell}
                 if st["cd"] > 0:
-                    return {"error": "愿力强化冷却中（还剩 %d 回合）" % st["cd"]}
-                if not getattr(me, "_yuanli_mv", None) and \
-                        not getattr(self.bt.me, "bloodline", None):
-                    return {"error": "我方精灵没有配置血脉（bloodline）"}
-                payload = 0
-                self.actions.append({"turn": self.bt.turn, "kind": "magic"})
+                    return {"error": "%s冷却中（还剩 %d 回合）"
+                                     % (spell, st["cd"])}
+                if spell == "愿力强化":
+                    if not getattr(self.bt.me, "bloodline", None):
+                        return {"error": "我方精灵没有配置血脉（bloodline）"}
+                    payload = 0
+                else:
+                    # 增益魔法：payload = 本回合照常出的技能
+                    try:
+                        payload = int(action.get("i"))
+                    except (TypeError, ValueError):
+                        return {"error": "技能下标非法"}
+                    if not (0 <= payload < len(me.moves)):
+                        return {"error": "技能下标越界"}
+                self.actions.append({"turn": self.bt.turn, "kind": "magic",
+                                     "spell": spell})
+                self.actions.append({"turn": self.bt.turn, "kind": "magic",
+                                     "spell": spell})
             else:
                 return {"error": "未知动作 %s" % kind}
 
@@ -333,16 +350,15 @@ class Session:
                               "alive": bool(p.alive)}
                              for i, p in enumerate(bt.b)],
                 "meta": self.meta,
-                # S8 愿力强化（共鸣魔法）状态：UI 按钮用
+                # S8/S9 共鸣魔法状态：UI 按钮用
                 "magic": {
                     "name": bt.team_magic.get("a") or "",
                     "used": bt.magic_state["a"]["used"],
                     "max_uses": 2,
                     "cd": bt.magic_state["a"]["cd"],
-                    "usable": (bt.team_magic.get("a") == "愿力强化"
+                    "usable": (bool(bt.team_magic.get("a"))
                                and bt.magic_state["a"]["used"] < 2
-                               and bt.magic_state["a"]["cd"] == 0
-                               and bool(getattr(bt.me, "bloodline", None))),
+                               and bt.magic_state["a"]["cd"] == 0),
                 },
                 "events": events or [],
                 "log": self.log[-MAX_LOG:],
