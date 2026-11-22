@@ -314,9 +314,16 @@ class Bot:
         The 15:45 match produced 0 actions and the log contained only heartbeat
         lines, so there was no way to tell which condition blocked it. This makes
         the gate self-explaining without flooding the log.
+
+        ⚠ 2026-11-22：1 秒太频繁。实测 `energy held: not my turn yet`
+        在 5 分钟内刷了 54 次（每帧都拦、每秒都记），把真正重要的
+        信息（决策、换人、力竭）淹掉了。
+        现在改成 8 秒一次；**换了原因**则立刻记一次（原因切换是有信息量的）。
         """
-        if now - self.gate_logged_at < 1.0:
+        if (reason == getattr(self, "_gate_reason", None)
+                and now - self.gate_logged_at < 8.0):
             return
+        self._gate_reason = reason
         self.gate_logged_at = now
         log("GATE %s" % reason)
 
