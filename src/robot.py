@@ -1479,6 +1479,23 @@ class Bot:
             dmg = s.get("value")
             if dmg is None:
                 dmg = _est_value(s)
+            # ---- 自算伤害交叉校验（2026-11-22 深夜，用户提问驱动）
+            #
+            # 卡面读数会漏首位（"107" 读成 "07" = 7），实测 7.2% 的读数
+            # 严重偏低，直接导致"明明有更优解却选其次"。
+            # 我们自己会算伤害，所以：**卡面可信用卡面，离谱用自算**。
+            _calc = self._calc_card_dmg(
+                s.get("skill_name"), foe_name,
+                getattr(self, "foe_types", None))
+            if _calc:
+                if dmg is None:
+                    dmg = _calc
+                    log("CARD %d 无读数 -> 用自算 %d"
+                        % (s["index"], _calc))
+                elif not (0.35 <= dmg / float(_calc) <= 2.5):
+                    log("CARD %d 读数 %d 与自算 %d 偏差过大 -> 用自算"
+                        % (s["index"], dmg, _calc))
+                    dmg = _calc
             # 合理性过滤：卡面伤害不可能超过对面最大血量的 1.2 倍。
             #
             # 实测 2026-11-22 02:24：对面雪影冰灵（max≈400）读出 700，
@@ -2879,6 +2896,81 @@ class Bot:
         if not base:
             return None
         return base * pct / 100.0
+
+    def _calc_card_dmg(self, skill_name, foe_name, foe_types):
+        """自算这张卡对当前敌方的伤害。算不出返回 None。
+
+        为什么要自己算（2026-11-22 深夜，用户提问）
+        ----------------------------------------
+        用户指出："我们不是知道我方技能、也知道对面精灵吗，为什么还看卡面数字？"
+
+        对，而且实测**自算与卡面高度吻合**：
+
+            银月狼王 vs 寂灭骨龙
+              slot1 岩脉崩毁 120 幽 x1.00 -> 122   （卡面 128）
+              slot2 月蚀     130 幽 x1.00 -> 132   （卡面 162）
+              slot3 撞鬼     120 幽 x2.00 -> 244   （卡面 300）
+              slot4 荆棘      80 幽 x0.50 ->  40   （卡面  40）
+
+        卡面读数本身更准（含 buff / 暴击 / 精确面板），但它会读错 ——
+        实测 **7.2%** 的读数严重偏低，典型是 "107" 漏掉首位 "1" 读成 7
+        （`extract_glyphs` 按连通域切分，"1" 笔画太细被面积阈值滤掉）。
+
+        所以策略是 **卡面可信就用卡面，离谱就用自算**，两者互补。
+        """
+        if not skill_name or not foe_name:
+            return None
+        try:
+            import sqlite3
+            import statmodel as _S
+            import pvp_engine as _E
+            from portrait_db import DB_PATH
+            db = sqlite3.connect(DB_PATH)
+            try:
+                r = db.execute(
+                    "SELECT power, type_name FROM skills WHERE name=? "
+                    "ORDER BY power DESC LIMIT 1", (skill_name,)).fetchone()
+            finally:
+                db.close()
+            if not r:
+                return None
+            power, stype = (r[0] or 0), (r[1] or "")
+            if power <= 0 or not stype:
+                return None
+
+            # 我方攻击：优先用 my_team 的实测面板，否则按种族值+PvP 个体算
+            atk = None
+            try:
+                import team_db
+                for t in team_db.dump_team():
+                    if t.get("name") == self.my_name and t.get("atk"):
+                        atk = int(t["atk"])
+                        break
+            except Exception:
+                atk = None
+            if not atk:
+                p = _E.pet(self.my_name) if self.my_name else None
+                if p:
+                    atk = _S.calc_real_stat(
+                        int(p["stats"]["attack"]), _S.IV_PVP, 1.0,
+                        is_hp=False)
+            if not atk:
+                return None
+
+            # 对面物防：同上
+            dfe = None
+            p = _E.pet(foe_name)
+            if p:
+                dfe = _S.calc_real_stat(
+                    int(p["stats"]["defense"]), _S.IV_PVP, 1.0, is_hp=False)
+            if not dfe:
+                return None
+
+            mult = _S.type_effect(stype, foe_types or [])
+            dmg = _S.damage(atk, dfe, power, type_eff=mult, stab=1.0)
+            return int(round(dmg)) if dmg else None
+        except Exception:
+            return None
 
     def _shadow_choice(self, st):
         """不动手，只算"如果交给机器人，它会选什么"。"""
