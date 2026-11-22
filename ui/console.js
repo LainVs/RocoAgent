@@ -2150,7 +2150,7 @@ function playActsHtml(st) {
     </button>`).join('');
   h += `<button class="act-btn" data-kind="energy">
       <div class="an">聚能</div>
-      <div class="am"><span>能量 +2</span><span>当前 ${me.energy}/10</span></div>
+      <div class="am"><span>能量 +${st.energy_gain || 5}</span><span>当前 ${me.energy}/10</span></div>
     </button>`;
   (st.bench || []).forEach((b, k) => {
     h += `<button class="act-btn" data-kind="switch" data-i="${k}"

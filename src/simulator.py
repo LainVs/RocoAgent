@@ -385,6 +385,11 @@ class Pet:
         self.trait_atk_buff += a
         self.trait_def_buff += d
         self._trait_first_done = False
+        # nrc-ai 手写效果表用到的状态（异常状态 + 本回合威力修正）
+        self.status = {}
+        self.nrc_power_mult = 1.0
+        self.nrc_power_bonus = 0
+        self._nrc_entered = False
 
     def panel(self):
         """六项面板（UI 展示用）。"""
@@ -448,6 +453,9 @@ def calc_damage(attacker, defender, move, power_mult=None, power_bonus=None,
             (getattr(battle, "marks", {}) or {}).get(side or "a") or {},
             move.get("name") or "", elem, first_attack=first)
         power = max(0, int(power * wm * mm["power_mult"] + mm["power_bonus"]))
+    # nrc-ai 手写特性的常驻威力修正（`目空` / `破空` 这类 PASSIVE）
+    power = max(0, int(power * getattr(attacker, "nrc_power_mult", 1.0)
+                       + getattr(attacker, "nrc_power_bonus", 0)))
     atk = attacker.atk * (1.0 + attacker.atk_buff
                           + getattr(attacker, "trait_atk_buff", 0.0)
                           + getattr(attacker, "trait_tmp_atk", 0.0))
@@ -642,6 +650,7 @@ class Battle:
         import battle_fx
         self.weather = "none"
         self.marks = {"a": {}, "b": {}}
+        self.pending = []          # begin_turn 里产生的待播报事件
         for side, team in (("a", self.a), ("b", self.b)):
             for p in team:
                 p._battle = self
@@ -752,6 +761,25 @@ class Battle:
             p.trait_tmp_atk += a
             p.trait_tmp_def += d
             p._trait_first_done = True
+        # nrc-ai 手写效果（ON_ENTER / ON_BATTLE_START / PASSIVE），
+        # 每只精灵只触发一次。roco-cal 有可用规则的特性不重复应用。
+        import nrc_fx
+        other = {"a": self.b, "b": self.a}
+        for p in (self.me, self.foe):
+            if p is None or getattr(p, "_nrc_entered", False):
+                continue
+            p._nrc_entered = True
+            if trait_lib.supported_rules(getattr(p, "trait", None)):
+                continue
+            foe = (self.foe if p is self.me else self.me)
+            ctx = {}
+            evs = (nrc_fx.trait_fire(p, foe, "ON_ENTER", ctx)
+                   + nrc_fx.trait_fire(p, foe, "ON_BATTLE_START", ctx)
+                   + nrc_fx.trait_fire(p, foe, "PASSIVE", ctx))
+            p.nrc_power_mult *= ctx.get("power_mult", 1.0)
+            p.nrc_power_bonus += ctx.get("power_bonus", 0)
+            for e in evs:
+                self.pending.append("T%d %s" % (self.turn, e))
         return True
 
     def step(self, ka, pa, kb, pb):
@@ -762,9 +790,13 @@ class Battle:
         """
         events = []
         import trait_lib
+        import nrc_fx
         me, foe = self.me, self.foe
         if me is None or foe is None:
             return events
+        if self.pending:
+            events.extend(self.pending)
+            self.pending = []
         # 把「本回合生效的特性增益」写进战报：`专注力` 这类只在入场首回合
         # 有效的东西，如果界面上只有一个忽高忽低的伤害数字，很容易被
         # 误认为"一直有加倍 buff"（2026-11-22 用户就是这样报的）。
@@ -781,6 +813,25 @@ class Battle:
                                    and pa < len(me.moves)) else None
         skill_b = foe.moves[pb] if (kb == "skill" and pb is not None
                                     and pb < len(foe.moves)) else None
+
+        # nrc-ai 手写的**技能效果**（139 个技能）与**特性 ON_USE_SKILL**。
+        # 属性增益优先走官方数值（skill_buff），nrc 只补它没有的东西：
+        # 回血 / 回能 / 异常状态 / 印记 / 减伤。
+        #
+        # ⚠ 这里**不**处理「本手威力倍率」类原语（POWER_DYNAMIC 要 应对判定、
+        #   ENTRY_BUFF_PER_SKILL_COUNT 要携带技能统计），它们只在专门的
+        #   时机算得准，硬塞进这一手只会算错。
+        for owner, other, mv in ((me, foe, skill_a), (foe, me, skill_b)):
+            if mv is None:
+                continue
+            ctx = {}
+            if not trait_lib.supported_rules(getattr(owner, "trait", None)):
+                events.extend(nrc_fx.trait_fire(owner, other, "ON_USE_SKILL",
+                                                ctx))
+            events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
+                                            "PRE_USE", ctx))
+            events.extend(nrc_fx.skill_fire(owner, other, mv.get("name") or "",
+                                            "ON_USE", ctx))
 
         # 处理聚能
         if ka == "energy":
@@ -842,8 +893,7 @@ class Battle:
                           % ((skill_b or {}).get("name", "蓄力"),
                              100 * foe.atk_buff, 100 * foe.def_buff))
 
-        # 变化技能（power=0）：批量策略不会选（伤害最低 1 点），
-        # 但**手操窗口玩家会点**，所以必须正确处理。
+        # 变化技能（power=0）：批量策略不会选（伤害最低 1 点），        # 但**手操窗口玩家会点**，所以必须正确处理。
         #
         # 真实游戏里 power=0 是「变化技能」：加攻/加防/回血/上印记。
         # 本模拟器只建模了**攻击增益**（skill_buff_pct 的官方精确值）；
@@ -934,6 +984,16 @@ class Battle:
         for p in list(self.a) + list(self.b):
             p.trait_tmp_atk = 0.0
             p.trait_tmp_def = 0.0
+
+        # 回合末：异常状态结算 + 特性 ON_TURN_END（回血/回能）
+        for p, other in ((me, foe), (foe, me)):
+            if p is None:
+                continue
+            for e in nrc_fx.status_tick(p):
+                events.append(e)
+            if not trait_lib.supported_rules(getattr(p, "trait", None)):
+                for e in nrc_fx.trait_fire(p, other, "ON_TURN_END"):
+                    events.append(e)
 
         if not any(p.alive for p in self.a):
             self._finish("b", self.turn, 0, sum(p.hp for p in self.b))

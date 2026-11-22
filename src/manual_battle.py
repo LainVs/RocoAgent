@@ -219,6 +219,7 @@ class Session:
             return {
                 "turn": bt.turn,
                 "max_turn": SIM.MAX_TURNS,
+                "energy_gain": SIM.ENERGY_GAIN,
                 "done": bt.done,
                 "result": ("win" if bt.done == "a"
                            else "lose" if bt.done == "b" else None),
