@@ -62,7 +62,7 @@ k = int(round((cy - pills[0]["box"][1]) / 180.0))   # 自己算格子
 代码注释写着"`_slots` 返回的槽位 dict 没有 box" —— 这条注释是错的，
 实测有。结果：白扔了更准的拟合结果，还用 180 硬编码把槽位排错。
 
-## 缺陷 3：外卖接口用"数量"判断，会静默死锁
+## 缺陷 3：外卖接口比数量，会静默死锁 + 索引错位
 
 ```python
 boxes = _P.skill_pill_boxes(self.screen)
@@ -79,6 +79,37 @@ if len(boxes) < len(pending):
 
 另外 `_band_scan_at` 只在换精灵时清零，**每只精灵每次上场只给一次机会**，
 一次没读全就整场放弃。
+
+## 缺陷 4（真正的 0 日志根因）：`pet_at` 被每 0.5 秒无条件刷新
+
+上面三条修完后实测**仍然 0 条 BAND 日志**，说明还有更上游的阻塞。
+逐条核对 `_maybe_band_scan` 的前置条件后发现是这一行：
+
+```python
+# _check_active_pet，每 0.5s 跑一次（_pet_poll_at 节流）
+self.active_pet = _nm
+self.pet_at = now          # ← 无条件赋值
+```
+
+而 BAND 的门槛正是 `if now - getattr(self, "pet_at", 0.0) < 1.2: return`。
+`pet_at` 每 0.5s 被刷成当前时间，`now - pet_at` **最大只有 0.5s**，
+永远小于 1.2 —— 函数在 try 块之前就 return，连一行日志都不会留下。
+
+`pet_at` 的语义应该是"这只精灵**上场**的时刻"，只在身份**变化**时更新。
+
+**同一缺陷的第二个受害者**（`robot.py:3465`，首领变身）：
+
+```python
+if now - getattr(self, "pet_at", 0.0) < 1.2:
+    return False
+```
+
+首领化（恶魔狼变身）也被这条永久挡住 —— 变身不占回合，一直没触发过。
+
+三处 `pet_at = now`（ONNX 主通道 1880、avatar 次通道 1931、旧模板 1994）
+中，第三处本来就在 `if name != self.active_pet:` 里，是正确的；
+前两处无条件赋值。修法统一为"身份变化才更新"，并顺带重置
+`_band_scan_at/_band_tries`。
 
 ## 修法
 

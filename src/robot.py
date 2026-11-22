@@ -1876,8 +1876,16 @@ class Bot:
                                 % (sp, _conf,
                                    "" if in_team else " [不在 my_team，表可能过期]"))
                             self.my_name = sp
+                        # ⚠ pet_at 是"这只精灵**上场**的时刻"，只在身份变化时
+                        # 更新。旧代码在这里无条件赋值，而本函数每 0.5s 跑一次
+                        # —— 于是 `now - pet_at` 永远 < 1.2s，下游两个 1.2s
+                        # 稳定窗口（BAND 扫描、4453 处）**永远不成立**。
+                        # 这是"整场 0 条 BAND 日志"的真正根因。
+                        if _nm != self.active_pet:
+                            self.pet_at = now
+                            self._band_scan_at = 0.0
+                            self._band_tries = 0
                         self.active_pet = _nm
-                        self.pet_at = now
                         self.my_score = float(_conf)
                         if self.cur_slot:
                             self.slot_species[self.cur_slot] = sp
@@ -1919,8 +1927,12 @@ class Bot:
                         log("PET -> %s (avatar %.2f) -> 采纳"
                             % (a0["name"], a0["score"]))
                         self.my_name = a0["name"]
+                    was = self.active_pet
                     self.active_pet = a0["name"]
-                    self.pet_at = now
+                    if a0["name"] != was:      # 换精灵才重置上场时刻（同 1884）
+                        self.pet_at = now
+                        self._band_scan_at = 0.0
+                        self._band_tries = 0
                     self.my_score = float(a0["score"])
                     if self.cur_slot:
                         self.slot_species[self.cur_slot] = a0["name"]
