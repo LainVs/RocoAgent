@@ -54,20 +54,36 @@ def section_winrate(lines):
     if not rows:
         lines.append("- 暂无战绩记录（机器人还没进过大厅读段位）")
         return
-    c = collections.Counter(r.get("result") for r in rows)
-    decided = c.get("win", 0) + c.get("loss", 0)
-    rate = 100.0 * c.get("win", 0) / decided if decided else 0.0
-    lines.append("- 总计 %d 场：胜 %d / 负 %d / 平 %d → **%.1f%%**"
-                 % (len(rows), c.get("win", 0), c.get("loss", 0),
-                    c.get("flat", 0), rate))
-    # 最近 20 场
-    recent = rows[-20:]
-    rc = collections.Counter(r.get("result") for r in recent)
-    rd = rc.get("win", 0) + rc.get("loss", 0)
-    if rd:
-        lines.append("- 最近 20 场：**%.1f%%**（胜 %d / 负 %d）"
-                     % (100.0 * rc.get("win", 0) / rd,
-                        rc.get("win", 0), rc.get("loss", 0)))
+    # ★ 2026-11-22：results.jsonl 有两种口径
+    #   带 mid   = record.py 读历史战绩面板（权威，无 flat 噪声）
+    #   不带 mid = 段位徽章 delta（42 行里 29 行 flat 卡死，污染率 69%）
+    # 两口径混算会把 50% 的徽章噪声拉低真实胜率。分开展示，以 mid 为准。
+    with_mid = [r for r in rows if r.get("mid")]
+    no_mid = [r for r in rows if not r.get("mid")]
+
+    def _rate(rs):
+        c = collections.Counter(r.get("result") for r in rs)
+        d = c.get("win", 0) + c.get("loss", 0)
+        return (100.0 * c.get("win", 0) / d if d else None), c, d
+
+    if with_mid:
+        rate, c, d = _rate(with_mid)
+        lines.append("- 历史面板口径（权威）%d 场：胜 %d / 负 %d → **%.1f%%**"
+                     % (len(with_mid), c.get("win", 0), c.get("loss", 0), rate))
+        recent = with_mid[-20:]
+        rate20, c20, d20 = _rate(recent)
+        if d20:
+            lines.append("- 最近 20 场：**%.1f%%**（胜 %d / 负 %d）"
+                         % (rate20, c20.get("win", 0), c20.get("loss", 0)))
+    if no_mid:
+        rate0, c0, d0 = _rate(no_mid)
+        lines.append("- 徽章 delta 口径 %d 场：胜 %d / 负 %d / 平 %d"
+                     "（flat 占 %.0f%%，参考价值低）"
+                     % (len(no_mid), c0.get("win", 0), c0.get("loss", 0),
+                        c0.get("flat", 0),
+                        100.0 * c0.get("flat", 0) / len(no_mid)))
+    if not with_mid and not no_mid:
+        lines.append("- 暂无战绩记录")
     lines.append("")
 
 
