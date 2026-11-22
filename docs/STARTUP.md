@@ -245,3 +245,27 @@ USB CDC 可用  ->  transport = usb:COMx
 - 日志目录可写
 
 返回码 0 = 可以启动；1 = 有 FAIL，先按提示修。
+
+
+## 网络代理（git push/fetch 失败的根因，2026-11-22 实测）
+
+环境变量把三套代理指到 17894/17896，但**只有 17896（socks5）能通 GitHub**：
+
+    HTTP_PROXY  = http://127.0.0.1:17894   <- 对 github.com TLS 直接断
+    HTTPS_PROXY = http://127.0.0.1:17894   <-（unexpected eof while reading）
+    ALL_PROXY   = socks5://127.0.0.1:17896 <- 这个是好的
+
+libcurl 对代理的优先级是 **环境变量 > git 配置**，所以光在 repo 里配
+http.proxy 没用；必须把 git 配置指向 socks5 的 17896（或清掉环境变量）。
+
+已修复（repo 级配置）：
+
+    git config http.proxy  socks5h://127.0.0.1:17896
+    git config https.proxy socks5h://127.0.0.1:17896
+
+（socks5h = 域名解析也走代理，比 socks5 更稳。）
+验证：`git fetch origin` rc=0、`git ls-remote origin` rc=0。
+曾因这个断口积压了 353 个 commit 未推送（2026-11-22 已补推）。
+
+---
+
