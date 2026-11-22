@@ -17,8 +17,12 @@ import tempfile
 import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, r"D:\Tools")
+import paths as _paths_mod  # noqa: E402
+_paths_mod.use_tools()
 
 FAIL = []
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def check(name, cond, detail=""):
@@ -102,6 +106,50 @@ def main():
             os.remove(tmp)
         except OSError:
             pass
+
+
+        # 9. 实机帧 ROI 回归（bar_partial_204511.png 存在时）：
+        #    锁住"名字在胶囊下缘 +5..+95"的标定，防止再回退到旧浅 ROI。
+        fixture = os.path.join(ROOT, "logs", "bar_partial_204511.png")
+        if os.path.exists(fixture):
+            import cv2 as _cv2
+            import digitread as _dr
+            img = _cv2.imdecode(np.fromfile(fixture, np.uint8),
+                               _cv2.IMREAD_COLOR)
+            pills = [p for p in _dr.find_pills(
+                img, (0, 0, img.shape[1], img.shape[0])) if p.get("box")]
+            found_names = set()
+            for p in pills:
+                xa, ya, xb, yb = (int(v) for v in p["box"])
+                roi = img[ya + 5:yb + 95,
+                          max(0, xa - 90):min(img.shape[1], xb + 90)]
+                if roi.shape[0] < 20:
+                    continue
+                big = _cv2.resize(roi, None, fx=2.0, fy=2.0,
+                                 interpolation=_cv2.INTER_CUBIC)
+                try:
+                    import ability_read as AR
+                    res, _ = AR._engine()(
+                        _cv2.cvtColor(big, _cv2.COLOR_RGB2BGR))
+                except Exception:
+                    continue
+                raw = " ".join(r[1] for r in (res or [])).strip()
+                if raw:
+                    import ocr_cn
+                    import sqlite3 as _sq
+                    _db = _sq.connect(os.path.join(ROOT, "data", "roco.sqlite3"))
+                    vocab = [r[0] for r in _db.execute(
+                        "SELECT DISTINCT name FROM skills WHERE name IS NOT NULL")]
+                    _db.close()
+                    nm, _sc = ocr_cn.Ocr.match(raw, vocab)
+                    if nm:
+                        found_names.add(nm)
+            known = {"力量增效", "跌落", "火云车"}
+            hit = found_names & known
+            check("live frame ROI reads skill names",
+                  len(hit) >= 2, "found=%r" % sorted(found_names)[:5])
+        else:
+            print("  skip 实机帧 ROI（fixture 不存在）")
 
     print()
     if FAIL:
