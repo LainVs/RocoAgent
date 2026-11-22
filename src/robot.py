@@ -1825,6 +1825,96 @@ class Bot:
             _std = 255.0
         if _std < 12.0:
             return
+
+        # ---- 第一通道：ONNX HUD 头像分类（主通道，2026-11-23 调整）
+        #
+        # 为什么把 ONNX 提到主通道
+        # ----------------------
+        # 实测（本机 31 帧我方 HUD）：
+        #     avatar 模板（pet_avatars）在 HUD 小图上 score 中位仅 **0.413**，
+        #     high 档（≥0.60+margin≥0.03）只命中 3/31 —— 精度不够当主通道。
+        #     `portrait_onnx` 在 HUD 头像上实测 conf≥0.90 占 70%，中位 0.99。
+        #
+        # 原模板库（assets/portraits）标签是错的（音速犬.png 实为冰钻布鲁斯），
+        # 所以它降为第三通道，只在前两者都不给答案时兜底。
+        #
+        # 所有通道都必须命中 my_team —— 我方不可能出现队伍外的精灵。
+        if now - getattr(self, "_self_onnx_at", 0.0) >= 1.5:
+            self._self_onnx_at = now
+            try:
+                import portrait_onnx as _PO
+                if _PO.available():
+                    res = _PO.predict_region(self.screen, "self", topk=3)
+                    self._self_onnx_top = [(n, round(float(c), 3))
+                                           for n, c in (res or [])[:3]]
+                    for _nm, _conf in (res or [])[:3]:
+                        if _conf < 0.85:
+                            break
+                        sp = self._portrait_species(_nm, "self")
+                        if not sp:
+                            continue
+                        in_team = self._in_my_team(sp)
+                        # 在队伍里 -> 直接采纳；不在队伍里但置信度很高（>=0.97）
+                        # -> 也采纳并记日志（用户临时换队，表过期）
+                        if not in_team and _conf < 0.97:
+                            continue
+                        if sp != self.my_name:
+                            log("PET -> %s (ONNX %.2f)%s"
+                                % (sp, _conf,
+                                   "" if in_team else " [不在 my_team，表可能过期]"))
+                            self.my_name = sp
+                        self.active_pet = _nm
+                        self.pet_at = now
+                        self.my_score = float(_conf)
+                        if self.cur_slot:
+                            self.slot_species[self.cur_slot] = sp
+                            self.bench_names[self.cur_slot] = sp
+                        return
+            except Exception as e:
+                log("PET -> onnx failed: %s: %s" % (type(e).__name__, e))
+
+        # ---- 第二通道：官方头像库 avatar_ident（交叉校验 / ONNX 无答案时兜底）
+        #
+        # 实测池内 score 中位 0.413，所以门槛下调到 0.50 + margin 0.02，
+        # 且只在 ONNX 没给出答案时使用（避免低精度通道覆盖高精度通道）。
+        if now - getattr(self, "_self_avatar_at", 0.0) >= 1.5:
+            self._self_avatar_at = now
+            try:
+                import avatar_ident as _AV
+                team = []
+                try:
+                    import team_db as _TD
+                    team = [t.get("name") for t in _TD.dump_team()
+                            if t.get("name")]
+                except Exception:
+                    team = []
+                avs = _AV.identify(img, side="self", candidates=team or None,
+                                   is_rgb=True, topk=3) if team else []
+            except Exception as e:
+                avs = []
+                log("PET -> avatar failed: %s: %s" % (type(e).__name__, e))
+            if avs:
+                self._self_avatar_top = [(r["name"], r["score"])
+                                         for r in avs[:3]]
+                a0 = avs[0]
+                # 池内标定：score>=0.50 且 margin>=0.02（实测中位 0.413，
+                # 0.50 已高于中位一个量级差）
+                if (a0["score"] >= 0.50
+                        and (a0.get("margin") or 0) >= 0.02
+                        and self._in_my_team(a0["name"])):
+                    if a0["name"] != self.my_name:
+                        log("PET -> %s (avatar %.2f) -> 采纳"
+                            % (a0["name"], a0["score"]))
+                        self.my_name = a0["name"]
+                    self.active_pet = a0["name"]
+                    self.pet_at = now
+                    self.my_score = float(a0["score"])
+                    if self.cur_slot:
+                        self.slot_species[self.cur_slot] = a0["name"]
+                        self.bench_names[self.cur_slot] = a0["name"]
+                    return
+
+        # ---- 第三通道：旧模板库（标签不可靠，只兜底）
         name, sc, margin = self._identify_with_margin(img, box, m)
         # ---- 多帧投票（2026-11-22）
         #
@@ -1872,49 +1962,6 @@ class Bot:
         # 过线、且 species 能查出来就采纳（形态选错无害，
         # `_portrait_species()` 会归一到种族名）。
         _ok = (name is not None and sc >= 0.55)
-        if not _ok:
-            # ---- ONNX 立绘模型兜底（2026-11-22 深夜）
-            #
-            # 模板匹配受限于"模板库质量"（清理后 p50 只有 0.57），
-            # 实测识别率停在 58%。而 `portrait_onnx` 在 HUD 头像上：
-            #
-            #     60 张真实抓帧：conf>=0.90 占 70%，中位 conf=0.99
-            #     耗时：首次 368ms，之后 16ms（模型常驻）
-            #
-            # 它认的是**立绘**，不是名字 —— 用户改名不影响。
-            #
-            # ⚠ 不做 `my_team` 白名单过滤：
-            #   实测实盘队伍可能**不在 my_team 表里**（用户会临时换精灵，
-            #   之前也见过"表里 5 只 60 级、实际打的是冥古龙 89 级"）。
-            #   用白名单会把真实的当前精灵挡掉。
-            #   改为要求：conf >= 0.90 **且** 名字能查到种族。
-            if now - getattr(self, "_self_onnx_at", 0.0) >= 3.0:
-                self._self_onnx_at = now
-                try:
-                    import portrait_onnx as _PO
-                    if _PO.available():
-                        res = _PO.predict_region(self.screen, "self", topk=3)
-                        for _nm, _conf in (res or [])[:3]:
-                            if _conf < 0.90:
-                                break
-                            sp = self._portrait_species(_nm, "self")
-                            if not sp:
-                                continue
-                            log("PET -> %s (ONNX %.2f) -> %s"
-                                % (_nm, _conf, sp))
-                            name, sc = _nm, _conf
-                            self.active_pet = _nm
-                            self.pet_at = now
-                            self.my_score = _conf
-                            if sp != self.my_name:
-                                self.my_name = sp
-                                log("PET -> species %s (ONNX)" % sp)
-                            if self.cur_slot:
-                                self.slot_species[self.cur_slot] = sp
-                                self.bench_names[self.cur_slot] = sp
-                            return
-                except Exception as e:
-                    log("PET -> ONNX failed: %s: %s" % (type(e).__name__, e))
         if _ok:
             if name != self.active_pet:
                 log("PET -> %s (%.2f)" % (name, sc))
@@ -2241,6 +2288,22 @@ class Bot:
                         % (sc, os.path.basename(path)))
             except Exception:
                 pass
+
+    def _in_my_team(self, name):
+        """这个名字是不是我方队伍里的（`my_team` 表）。
+
+        我方不可能出现队伍外的精灵，所以 avatar 通道的答案必须过这一关。
+        表过期时（用户临时换队）会返回 False —— 那时退回模板/ONNX 通道，
+        不会误采纳。
+        """
+        if not name:
+            return False
+        try:
+            import team_db
+            return name in {t.get("name") for t in team_db.dump_team()
+                            if t.get("name")}
+        except Exception:
+            return False
 
     def _identify_with_margin(self, img, box, m, lib=None):
         """返回 (名字, 最佳分, 与第二名的分差)。"""

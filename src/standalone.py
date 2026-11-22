@@ -198,6 +198,37 @@ def identify(now=None, foe_hp_pct=None):
         except Exception:
             pass
 
+    # ---- 我方兜底 0.5：ONNX HUD 头像（**主通道**，2026-11-23 实测）
+    #
+    # 为什么提到 ONNX 优先
+    # -------------------
+    # 实测 31 帧我方 HUD：
+    #     avatar 模板（pet_avatars）池内 score **中位 0.413**，high 档只 3/31
+    #     ONNX 在 HUD 头像上 conf>=0.90 占 70%，中位 0.99
+    # 且旧模板库（assets/portraits）标签是错的（音速犬.png 实为冰钻布鲁斯），
+    # 所以 ONNX 提到最前，模板降为最末兜底。
+    #
+    # 约束：命中 my_team 直接采纳；不在表里但 conf>=0.97 也采纳
+    # （用户临时换队时表会过期）。
+    if _ident.get("self") is None:
+        try:
+            import portrait_onnx as PO
+            if PO.available():
+                for name, conf in (PO.predict_region(_scr, "self", topk=3)
+                                   or [])[:3]:
+                    if conf < 0.85:
+                        break
+                    if not _in_my_team(name) and conf < 0.97:
+                        continue
+                    _ident["self"] = name
+                    _ident["self_conf"] = float(conf)
+                    _log("SELF -> %s (onnx %.2f)%s"
+                         % (name, conf,
+                            "" if _in_my_team(name) else " [表可能过期]"))
+                    break
+        except Exception as e:
+            _log("SELF onnx failed: %s: %s" % (type(e).__name__, e))
+
     # ---- 我方兜底 1：血条绝对值（"162/345" 的分母）
     if _ident.get("self") is None:
         try:
@@ -249,7 +280,7 @@ def identify(now=None, foe_hp_pct=None):
         except Exception:
             pass
 
-    # 我方兜底 3：立绘 ONNX（必须和 my_team 里某只对得上）
+    # 我方兜底 3：立绘 ONNX（**已提到 0.5 步作为主通道**，这里只保留旧逻辑作兼容）
     if _ident.get("self") is None:
         try:
             import portrait_onnx as PO
@@ -695,7 +726,7 @@ def available():
 
 
 def warmup():
-    """后台预热：把首次请求的 24 秒冷启动挪到启动时。
+    """后台预热：把首次请求的冷启动挪到启动时。
 
     ★ 实测（2026-11-21，真实游戏画面）
     -----------------------------------
@@ -704,39 +735,91 @@ def warmup():
         第 3 次            450ms
         第 4 次            240ms
 
-    前三秒的 24 秒卡顿来自三件事的叠加：
-      1. ONNX 模型冷加载（首次 785ms，之后 140ms）
-      2. foe_hp.species() 首次查库（之后缓存）
-      3. ONNX 输入裁剪的首次图像处理（JIT / 内存分配）
+    ★ 2026-11-23：实测变成 **40 秒**，根因两处
+    ------------------------------------------
+    1. 后台采样线程 `_snap_loop` 此时已在跑，它每 0.45s 调一次
+       `_observe_once()`，而 `_observe_once()` 内部会调 `identify()`。
+       warmup 又把 `_ident["at"]` 清零强制重跑完整 OCR —— 两条线程
+       抢 `_lock` + GIL，40 秒就是这么堆出来的。
+    2. `identify()` 是一整个 RapidOCR（单侧 4.7~6.4s）+ 属性图标匹配。
 
-    如果这段跑在 HTTP 请求里，前端第一次拉 /api/state 会超时
-    （ui_server 的 handler 默认没有超时保护，浏览器 6 秒就放弃了）。
-
-    所以在服务启动时用后台线程预热，请求进来时已经是热的。
+    修法：
+      · warmup 期间**暂停采样线程**（把 demand 打点清 0 → 线程 idle）
+      · 只预热**引擎**（OCR/ONNX 模型加载）和**数据层**（查库/头像银行），
+        不强制跑完整识别 —— 真正的识别交给采样线程按节流跑
+      · 分段计时打日志，哪一步慢一目了然
     """
     if not available():
         return False
     try:
         t0 = time.perf_counter()
+        staged = {}
+
+        # ---- 0. 暂停采样线程：避免 warmup 与它抢锁抢 GIL
+        _SNAP_DEMAND["at"] = 0.0
+        time.sleep(0.6)          # 让它把手上那轮跑完并进入 idle
+
         _scr, perc = _get()
-        perc.observe()
-        # 头像银行：首次构建 2.8s，必须挪到预热里，否则第一次 /api/state
-        # 会卡在 foe_ident 的 avatar 通道上。
+        staged["_get"] = (time.perf_counter() - t0) * 1000
+
+        # ---- 1. 图像层：一次 observe（技能栏/血条，不含身份识别）
+        t = time.perf_counter()
+        try:
+            perc.observe()
+        except Exception:
+            pass
+        staged["perceive"] = (time.perf_counter() - t) * 1000
+
+        # ---- 2. OCR 引擎（RapidOCR 模型加载 1~2s，只做一次）
+        t = time.perf_counter()
+        try:
+            import ability_read as _AR
+            _AR._engine()
+        except Exception:
+            pass
+        staged["ocr_engine"] = (time.perf_counter() - t) * 1000
+
+        # ---- 3. ONNX 分类器（785ms 冷加载）
+        t = time.perf_counter()
+        try:
+            import portrait_onnx as _PO
+            _PO.available() and _PO._session()
+        except Exception:
+            pass
+        staged["onnx"] = (time.perf_counter() - t) * 1000
+
+        # ---- 4. 头像银行（首次构建 2.8s）
+        t = time.perf_counter()
         try:
             import avatar_ident as _av
             _av.bank("foe")
         except Exception:
             pass
-        # 再跑一次 identify（它内部有 1.5s 节流，这里强制重置）
-        _ident["at"] = 0.0
-        identify(now=time.time())
+        staged["avatar_bank"] = (time.perf_counter() - t) * 1000
+
+        # ---- 5. 数据层（species/技能表首次查库）
+        t = time.perf_counter()
+        try:
+            import foe_hp as _FH
+            for nm in ("音速犬", "冰钻布鲁斯", "卡瓦重", "恶魔狼"):
+                _FH.species(nm)
+                _FH.hp_band(nm)
+        except Exception:
+            pass
+        staged["foe_hp"] = (time.perf_counter() - t) * 1000
+
         _cache["state"] = None
+        _SNAP["state"] = None
         dt = (time.perf_counter() - t0) * 1000
         try:
             import config
-            config.log("standalone warmup: %.0fms" % dt)
+            config.log("standalone warmup: %.0fms (%s)"
+                       % (dt, " ".join("%s=%.0f" % (k, v)
+                                       for k, v in staged.items())))
         except Exception:
             pass
+        # 预热完立刻恢复"有人看"状态，让采样线程按需开始工作
+        note_demand()
         return True
     except Exception:
         return False
