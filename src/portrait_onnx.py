@@ -345,7 +345,25 @@ def identify_fused(hud_result, portrait_result, hud_conf=0.0,
     out = {"name": None, "conf": 0.0, "source": None, "conflict": False,
            "hud": hud_result, "hud_conf": round(hud_conf, 3),
            "portrait": p_name, "portrait_conf": round(p_conf, 3),
-           "kept": False}
+           "kept": False, "ambiguous": None}
+
+    # ---- 同族歧义标记（2026-11-23 实盘：异色独角兽被认成同族兄弟）
+    #
+    # 「八匹马」实为**异色白金独角兽**，ONNX 先给 白金独角兽 1.00、
+    # 后又给 彩虹独角兽 0.96 —— 两者共享后缀「独角兽」，Top-1/Top-2
+    # 分差小。异色/炫彩变体的配色与普通模板差很远，ONNX 容易在
+    # 同族兄弟间摇摆。这里只做**标记**，不改变决策，供日志与 UI 提示
+    # "可能是异色"；真正的修复是给变体补模板（见 portrait_db）。
+    if p_name and len(portrait_result) >= 2:
+        p2_name, p2_conf = portrait_result[1]
+        if p2_name and p2_name != p_name and (p_conf - p2_conf) < 0.15:
+            n = 0
+            while (n < min(len(p_name), len(p2_name))
+                   and p_name[-1 - n] == p2_name[-1 - n]):
+                n += 1
+            if n >= 2:
+                out["ambiguous"] = [p_name, round(p_conf, 3),
+                                    p2_name, round(p2_conf, 3)]
 
     # 1. ONNX 高置信 + 稳定 -> 优先（定标 96.6%，比模板通道高一个量级）
     if p_name and p_conf >= auth and stable_count >= 2:

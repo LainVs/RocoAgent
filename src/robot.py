@@ -2009,6 +2009,12 @@ class Bot:
             log("FOE -> id conflict hud=%s(%.2f) portrait=%s(%.2f) -> use %s"
                 % (fused["hud"], fused["hud_conf"],
                    fused["portrait"], fused["portrait_conf"], fused["source"]))
+        # 同族歧义（异色/炫彩变体的典型表现）：只提示，不改变判定
+        if fused.get("ambiguous"):
+            a = fused["ambiguous"]
+            log("FOE -> ambiguous same-family: %s(%.2f) vs %s(%.2f) "
+                "-> 可能是异色/变体，需要确认"
+                % (a[0], a[1], a[2], a[3]))
         if (fused["source"] or "").startswith("portrait") and fused["name"]:
             # ONNX 通道给的是种族名（不带编号），可直接当 foe_name 用。
             #
