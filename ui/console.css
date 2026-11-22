@@ -1352,6 +1352,12 @@ input:focus-visible,
   background: #FBF4EC; border-color: rgba(136,64,39,.28);
 }
 .sim-ed-moves label.mv-extra .mv-pow { color: #884027; }
+/* 形态变体标签：S5 里 `卡瓦重` 按形态分条目，并集展示时必须标出来，
+   否则看不出扬沙 / 跺地为什么同时存在 */
+.sim-ed-moves .mv-var {
+  font-size: 9px; color: #8A877F; background: #EDEAE2;
+  border-radius: 4px; padding: 0 4px; margin-left: 4px; white-space: nowrap;
+}
 .sim-ed-moves .mv-pow {
   margin-left: auto; font-size: 10px; color: #8A877F;
   font-variant-numeric: tabular-nums;

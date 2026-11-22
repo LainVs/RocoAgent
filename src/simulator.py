@@ -238,7 +238,7 @@ class Dex:
                 "type": row["type_name"]}
 
     def skills_for(self, name, with_meta=False):
-        """某只精灵的**完整**可学技能表（S5 优先）。
+        """某只精灵的**完整**可学技能表（S5 优先，形态变体取并集）。
 
         为什么不用 moves()（2026-11-22，用户指出两件事）
         ------------------------------------------------
@@ -253,22 +253,40 @@ class Dex:
         而 S5（roco-cal 权威源，`254冰钻布鲁斯.json`）正好相反 ——
         用户点名了这个错。
 
-        所以这里优先读 `data/s5_skills.json`
-        （scripts/build_s5_skills.py 从 roco-cal 生成，659 只 / 29163 条），
-        查不到再退回 moves()。返回按威力降序，power=0 的排最后，
-        和游戏里的技能面板顺序一致。
+        ★ 形态变体兜底（2026-11-22 第二轮，用户指出卡瓦重）
+        ---------------------------------------------------
+        roco-cal 把「卡瓦重」的四个形态算成同一只（id 046），S5 里只有：
+
+            卡瓦重（沙地附近的样子）   扬沙✗ 跺地✓
+            卡瓦重（火山附近的样子）   扬沙✗ 跺地✓
+            卡瓦重（草地附近的样子）   扬沙✗ 跺地✓
+            卡瓦重（雪山附近的样子）   扬沙✓ 跺地✗     <- 冰系那只是因为 S5 改过
+
+        而图鉴里的**本体名** `卡瓦重` 在 S5 里没有条目，于是退回旧表
+        （有跺地、没扬沙），用户看到的还是老技能组。
+
+        这里对没直接命中的名字，取所有 `本体（形态）` 条目的**并集**，
+        并给每个技能标上 `variant` —— 只挑一个形态等于凭空删技能；
+        标出形态名才能让人自己选对（UI 会显示「扬沙 · 雪山附近的样子」）。
         """
         out = []
         seen = set()
-        s5 = _s5_pets().get(name)
-        if s5:
-            for s in s5.get("skills") or []:
+        s5 = _s5_pets()
+        if name in s5:
+            variants = [(name, s5[name])]
+        else:
+            variants = [(k, v) for k, v in s5.items()
+                        if k.startswith(name) and ("（" in k or "(" in k)]
+        for vn, v in variants:
+            for s in v.get("skills") or []:
                 mv = self.resolve_skill(s.get("name"))
                 if not mv or mv["id"] in seen:
                     continue
                 seen.add(mv["id"])
                 if with_meta:
                     mv = dict(mv, unlock=s.get("unlock") or "")
+                    if len(variants) > 1:
+                        mv["variant"] = vn
                 out.append(mv)
         if not out:
             sp = self.species(name)

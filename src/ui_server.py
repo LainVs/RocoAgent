@@ -1315,6 +1315,30 @@ def sim_lineup_list():
     return {"items": items, "stats": flat}
 
 
+def sim_skills_by_ids(ids):
+    """按 id 批量取技能详情（编辑器里「外部技能」显示名字用）。
+
+    为什么需要（2026-11-22）：队伍配置里的技能 id 可能**不在该精灵的
+    S5 技能表里**（真实阵容带的、或者换赛季后被删的技能）。前端手里只有
+    id，之前就退化成显示「技能#7080110」——
+    实测那个 id 正是**扬沙**，只是它不在那只卡瓦重的形态技能表里。
+
+    一次请求拿全部，前端不再需要从 lineup 的 skill_names 里对下标
+    （那条路一旦有技能解析失败就会整排错位）。
+    """
+    out = {}
+    try:
+        import simulator as _SIM
+        dex = _SIM.Dex()
+        for x in ids:
+            mv = dex.resolve_skill(x)
+            if mv:
+                out[str(mv["id"])] = mv
+    except Exception:
+        pass
+    return {"items": out}
+
+
 def sim_lineup_get(i):
     """一套阵容的完整 cfg。
 
@@ -2392,6 +2416,10 @@ class Handler(SimpleHTTPRequestHandler):
 
         if path == "/api/sim/species":
             return self._json(sim_species_detail(q.get("name") or ""))
+
+        if path == "/api/sim/skills":
+            return self._json(sim_skills_by_ids(
+                [x for x in (q.get("ids") or "").split(",") if x.strip()]))
 
         if path == "/api/sim/presets":
             return self._json(sim_preset_list())

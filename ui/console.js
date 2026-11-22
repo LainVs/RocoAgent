@@ -1909,24 +1909,50 @@ async function simLoadMoves(name, checked, names) {
       `种族 HP${o.base.hp} 攻${o.base.patk} 魔${o.base.matk} ` +
       `防${o.base.pdef} 魔${o.base.mdef} 速${o.base.spd}`;
     const want = new Set(checked);
+    // 形态变体提示：`卡瓦重` 在 S5 里只有四个形态条目，这里是并集，
+    // 所以标出这条技能属于哪个形态（不然看不出扬沙/跺地为什么都在）。
+    const vlabel = (v) => (v ? v.replace(/^[^（(]*[（(]/, '').replace(/[)）]$/, '') : '');
     $('simEdMoveLab').textContent =
       `技能（可学 ${(o.moves || []).length} 个 · 勾 4 个 · 顺序=卡槽顺序）`;
     let html = (o.moves || []).map((m) => `
-      <label title="${(m.type || '')}${m.unlock ? ' · ' + m.unlock : ''}"><input type="checkbox" data-mid="${m.id}"
+      <label title="${(m.type || '')}${m.unlock ? ' · ' + m.unlock : ''}">
+        <input type="checkbox" data-mid="${m.id}"
         ${want.has(m.id) ? 'checked' : ''}>
-        ${m.name}<span class="mv-pow">${m.power || 0}/${m.cost}</span>
+        ${m.name}${m.variant
+          ? `<span class="mv-var">${vlabel(m.variant)}</span>` : ''}
+        <span class="mv-pow">${m.power || 0}/${m.cost}</span>
       </label>`).join('');
-    // 真实玩家阵容里的技能不一定在这只精灵的学法表里（外部数据的技能名
-    // 是玩家实际配的）。这些必须**照样列出来并保持勾选**，否则打开编辑器
-    // 再保存就会把它们悄悄丢掉。
-    const known = new Set((o.moves || []).map((m) => m.id));
-    checked.forEach((id, k) => {
-      if (known.has(id)) return;
-      const nm = (names || [])[k] || ('技能#' + id);
-      html += `<label class="mv-extra"><input type="checkbox" data-mid="${id}" checked>
-        ${nm}<span class="mv-pow">外部</span></label>`;
-    });
     mvWrap.innerHTML = html;
+
+    // 真实阵容带的技能不一定在这只精灵的 S5 技能表里（换赛季被删、或
+    // 玩家配的技能）。这些必须**照样列出并保持勾选**，否则打开编辑器
+    // 再保存就会悄悄丢掉。
+    //
+    // ★ 名字由服务端按 id 查（/api/sim/skills），不再依赖 lineup 的
+    //   skill_names 下标 —— 那条路一旦有技能解析失败就整排错位，
+    //   表现就是「技能#7080110」（实测那正是扬沙）。
+    const known = new Set((o.moves || []).map((m) => m.id));
+    const extras = checked.filter((id) => !known.has(id));
+    if (extras.length) {
+      const paint = (items) => {
+        mvWrap.insertAdjacentHTML('beforeend', extras.map((id) => {
+          const m = items[String(id)] || {};
+          const nm = m.name || ('技能#' + id);
+          const pw = (m.power == null) ? '?' : m.power;
+          const cs = (m.cost == null) ? '?' : m.cost;
+          return `<label class="mv-extra" title="不在该精灵的技能表里">
+            <input type="checkbox" data-mid="${id}" checked>
+            ${nm}<span class="mv-pow">${pw}/${cs} · 外部</span></label>`;
+        }).join(''));
+      };
+      try {
+        const r2 = await fetch(API + '/api/sim/skills?ids=' +
+          extras.join(','), { cache: 'no-store' });
+        paint((await r2.json()).items || {});
+      } catch (e) {
+        paint({});
+      }
+    }
     simUpdatePanel();
   } catch (e) {
     mvWrap.innerHTML = '拉取失败：' + e;
