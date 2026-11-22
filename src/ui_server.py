@@ -1771,9 +1771,15 @@ def start_bot(supervisor=True, minutes=0):
     env_log = open(BOT_LOG, "a", encoding="utf-8")
     try:
         if supervisor:
-            sup = os.path.join(os.environ.get("ROCO_TOOLS", ""), "botsup.py")
+            # ★ 2026-11-22：改用 paths.TOOLS（config/paths.local.json 的
+            # tools 字段）。原来读环境变量 ROCO_TOOLS——ui_server 从桌面
+            # 快捷方式启动时不带这个变量，导致 UI 点"启动"永远报
+            # "找不到守护进程 botsup.py"。paths.TOOLS = D:\Tools。
+            sup = os.path.join(str(_paths.TOOLS), "botsup.py")
             if not os.path.exists(sup):
-                return {"ok": False, "msg": "找不到守护进程 botsup.py"}
+                return {"ok": False,
+                        "msg": "找不到守护进程 botsup.py（paths.TOOLS=%s）"
+                               % _paths.TOOLS}
             cmd = [py, "-W", "ignore", "-u", sup,
                    "--seconds", str(int(minutes) * 60) if minutes else "0"]
             cwd = os.path.dirname(sup)
