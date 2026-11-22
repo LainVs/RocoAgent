@@ -1296,9 +1296,31 @@ def sim_run(body):
 #
 # 正解：悬浮窗是独立进程（src/overlay.py），有自己的单实例锁
 # （logs/overlay.pid）和「已运行就不重复启动」逻辑。
-# 这里做两个动作：
-#   1. 没在跑 -> Popen 启动（detached，不随 ui_server 退出）
-#   2. 已在跑 -> 用 Win32 找到它的窗口，SW_SHOW + 前台（它可能被折叠/隐藏）
+#
+# ★ 2026-11-22 二次修复：toggle 必须**真的能关**
+# ------------------------------------------
+# 用户反馈："点那个悬浮窗只显示悬浮窗已经打开"。
+# 原因：第一版只在"没跑"时启动，"在跑"时只把窗口拉前台 —— 没有关闭路径。
+# 而且 FindWindowW 的标题我写成了"RocoAgent · 对战悬浮窗"，
+# 实际 create_window 的 title 是 **"RocoOverlay"**（overlay.py L1320），
+# 所以前台唤起也从来没生效过。
+#
+# 现在的语义：
+#   没跑        -> 启动
+#   在跑且可见  -> **关闭**（WM_CLOSE 让它走正常退出流程，
+#                  overlay.py 的 finally 会清 pid 文件）
+#   在跑但隐藏  -> 唤到前台
+def _overlay_hwnd():
+    """悬浮窗主窗口句柄（标题 RocoOverlay，overlay.py L1320）。"""
+    import ctypes
+    return ctypes.windll.user32.FindWindowW(None, "RocoOverlay")
+
+
+def _overlay_visible(hwnd):
+    import ctypes
+    return bool(ctypes.windll.user32.IsWindowVisible(hwnd))
+
+
 def overlay_status():
     pid = 0
     pf = os.path.join(ROOT, "logs", "overlay.pid")
@@ -1309,12 +1331,22 @@ def overlay_status():
         pid = 0
     alive = False
     if pid > 0:
-        try:
-            os.kill(pid, 0)
-            alive = True
-        except OSError:
-            alive = False
-    return {"pid": pid if alive else 0, "running": alive}
+        # ⚠ Windows 探活三坑（2026-11-22 实测）
+        #   1. os.kill(pid,0) 抛 OSError(WinError 87)，不能用
+        #   2. OpenProcess 需同完整性级别；ui_server 若被提权/降权启动
+        #      会打不开悬浮窗进程 -> 用 PROCESS_QUERY_LIMITED_INFORMATION
+        #   3. WM_CLOSE 后 pywebview 收尾要几秒：进程在但窗口已销毁，
+        #      这时悬浮窗**已经不可用** —— 所以「有窗口」才是唯一标准
+        import ctypes
+        hwnd = _overlay_hwnd()
+        if hwnd:
+            owner = ctypes.c_uint()
+            ctypes.windll.user32.GetWindowThreadProcessId(
+                hwnd, ctypes.byref(owner))
+            alive = (owner.value == pid)
+    hwnd = _overlay_hwnd()
+    return {"pid": pid if alive else 0, "running": alive,
+            "hwnd": hwnd or 0, "visible": bool(hwnd and _overlay_visible(hwnd))}
 
 
 def overlay_toggle():
@@ -1333,14 +1365,17 @@ def overlay_toggle():
             return {"ok": True, "action": "started"}
         except Exception as e:
             return {"ok": False, "msg": "%s: %s" % (type(e).__name__, e)}
-    # 已在跑：找到它的窗口并唤到前台
-    hwnd = ctypes.windll.user32.FindWindowW(None, "RocoAgent · 对战悬浮窗")
-    if not hwnd:
-        # 标题可能带变化，退而求其次按进程枚举太重；先提示
-        return {"ok": True, "action": "running",
-                "msg": "悬浮窗已在运行（pid %d），若看不到请看任务栏" % st["pid"]}
+    # 在跑：可见 -> 关；隐藏 -> 显示
+    if st["visible"]:
+        hwnd = st["hwnd"]
+        UD = ctypes.windll.user32
+        UD.ShowWindow(hwnd, 0)   # 先隐藏，视觉上立即响应
+        # WM_CLOSE：overlay 走 webview 正常退出 + finally 清 pid 文件
+        UD.PostMessageW(hwnd, 0x0010, 0, 0)
+        return {"ok": True, "action": "closed"}
+    hwnd = st["hwnd"]
     UD = ctypes.windll.user32
-    UD.ShowWindow(hwnd, 5)          # SW_SHOW
+    UD.ShowWindow(hwnd, 5)
     UD.SetForegroundWindow(hwnd)
     return {"ok": True, "action": "shown"}
 
