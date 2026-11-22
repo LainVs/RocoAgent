@@ -327,6 +327,11 @@
               <option value="smart">smart</option>
               <option value="buff">buff</option>
             </select>
+            <span>对手来源</span>
+            <select id="simOpp">
+              <option value="fixed">固定（对方队伍）</option>
+              <option value="lineups">随机真实阵容（158 套）</option>
+            </select>
             <span>局数</span>
             <input id="simGames" type="number" value="20" min="1" max="200" style="width:64px">
             <button class="btn primary" id="btnSimRun">开始模拟</button>
@@ -341,7 +346,7 @@
           <div class="metrics" id="simMetrics"></div>
           <div class="tbl-wrap">
             <table class="tbl" id="simTbl">
-              <thead><tr><th>局</th><th>胜方</th><th>回合</th><th>我方余血</th><th>对方余血</th></tr></thead>
+              <thead><tr><th>局</th><th>胜方</th><th>对手</th><th>回合</th><th>我方余血</th><th>对方余血</th></tr></thead>
               <tbody></tbody>
             </table>
           </div>

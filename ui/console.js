@@ -1897,7 +1897,7 @@ function bindSimUI() {
 async function runSim() {
   const btn = $('btnSimRun');
   const st = $('simStatus');
-  const pick = (side) => simTeams[side].filter(Boolean);
+  const oppMode = $('simOpp').value;
   const body = {
     team_a: simTeams.a.filter(Boolean).map((p) => p.name),
     team_b: simTeams.b.filter(Boolean).map((p) => p.name),
@@ -1905,11 +1905,16 @@ async function runSim() {
     cfg_b: simTeams.b.filter(Boolean),
     policy_a: $('simPolA').value,
     policy_b: $('simPolB').value,
+    opponent_mode: oppMode,
     games: Math.max(1, Math.min(200, parseInt($('simGames').value, 10) || 20)),
     seed: 0,
   };
-  if (!body.team_a.length || !body.team_b.length) {
-    st.textContent = '两边都要至少 1 只精灵';
+  if (!body.team_a.length) {
+    st.textContent = '我方至少要 1 只精灵';
+    return;
+  }
+  if (oppMode === 'fixed' && !body.team_b.length) {
+    st.textContent = '固定对手模式：对方也要至少 1 只精灵';
     return;
   }
   btn.disabled = true;
@@ -1924,8 +1929,11 @@ async function runSim() {
     if (o.error) { st.textContent = '失败：' + o.error; return; }
     st.textContent = `完成（${o.games} 局）`;
     $('simResultCard').hidden = false;
+    const oppLabel = o.opponent_mode === 'lineups'
+      ? `随机真实阵容（${Object.keys(o.opponents || {}).length} 套）`
+      : (o.team_b || []).join('/');
     $('simResultSub').textContent =
-      `${o.team_a.join('/')} (${o.policy_a}) vs ${o.team_b.join('/')} (${o.policy_b})`;
+      `${o.team_a.join('/')} (${o.policy_a}) vs ${oppLabel} (${o.policy_b})`;
     $('simMetrics').innerHTML =
       metricHtml('A 胜率', `${o.win_rate_a}%`, '', '',
         o.win_rate_a >= 55 ? 'win' : o.win_rate_a >= 45 ? 'warn' : 'lose') +
@@ -1937,6 +1945,7 @@ async function runSim() {
       <tr>
         <td>${x.game}</td>
         <td>${x.winner === 'a' ? '我方' : x.winner === 'b' ? '对方' : '平'}</td>
+        <td>${x.opponent || (x.team_b || []).join('/') || '—'}</td>
         <td>${x.turns}</td><td>${x.hp_a}</td><td>${x.hp_b}</td>
       </tr>`).join('');
   } catch (e) {

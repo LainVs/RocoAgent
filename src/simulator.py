@@ -482,9 +482,16 @@ def run_match(dex, team_a, team_b, pol_a, pol_b, seed=None,
     rnd = random.Random(seed)
 
     def build(team, cfg):
+        # cfg 可能比 team 短（UI 只给已填的槽位，手写测试也可能只给前几只），
+        # 必须补齐，否则 `(cfg or ...)[i]` 直接 IndexError。
+        # 实测 2026-11-22：/api/sim/run 传 3 只精灵 + 1 条 cfg 就崩在
+        # `c = (cfg or [None] * len(team))[i] or {}`。
+        cfg = list(cfg or [])
+        if len(cfg) < len(team):
+            cfg += [None] * (len(team) - len(cfg))
         pets = []
         for i, n in enumerate(team):
-            c = (cfg or [None] * len(team))[i] or {}
+            c = cfg[i] or {}
             p = Pet(dex, n, iv=c.get("iv", 60),
                     nature=c.get("nature"),
                     invest=c.get("invest"))

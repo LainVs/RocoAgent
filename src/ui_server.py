@@ -1315,10 +1315,16 @@ def sim_run(body):
     """跑一场模拟对局（POST /api/sim/run）。
 
     请求：{"team_a": [名...], "team_b": [名...], "policy_a": "smart",
-           "policy_b": "greedy", "games": 20, "seed": 0}
+           "policy_b": "greedy", "games": 20, "seed": 0,
+           "opponent_mode": "fixed" | "lineups"}
 
     返回：{"games": N, "wins_a": x, "wins_b": y, "draws": z,
            "avg_turns": f, "median_turns": f, "examples": [每局摘要]}
+
+    `opponent_mode="lineups"` 时每局从 158 套真实玩家阵容里随机抽对手，
+    team_b 被忽略。这个游戏 PVP **没有伤害波动**（见 sim_runner 里的
+    长注释），固定对手跑 N 局等于同一局重复 N 次，胜率没有概率含义；
+    对手多样性是唯一能让胜率有意义的维度。
 
     为什么走子进程而不是进程内调用：
     simulator 导入时要建 sqlite 连接和缓存；HTTP 线程里反复跑
@@ -1329,8 +1335,13 @@ def sim_run(body):
     sys_exe = sys.executable or "python"
     team_a = [str(x) for x in (body.get("team_a") or [])][:6]
     team_b = [str(x) for x in (body.get("team_b") or [])][:6]
-    if not team_a or not team_b:
-        return {"error": "team_a/team_b 不能为空"}
+    mode = body.get("opponent_mode") or "fixed"
+    if mode not in ("fixed", "lineups"):
+        mode = "fixed"
+    if not team_a:
+        return {"error": "team_a 不能为空"}
+    if mode == "fixed" and not team_b:
+        return {"error": "固定对手模式需要 team_b"}
     games = max(1, min(int(body.get("games") or 20), 500))
     seed = int(body.get("seed") or 0)
     pol_a = body.get("policy_a") or "smart"
@@ -1341,6 +1352,7 @@ def sim_run(body):
                         "sim_runner.py"),
            "--team-a", ",".join(team_a),
            "--team-b", ",".join(team_b),
+           "--opponent-mode", mode,
            "--policy-a", pol_a, "--policy-b", pol_b,
            "--games", str(games), "--seed", str(seed)]
     ca = body.get("cfg_a")
