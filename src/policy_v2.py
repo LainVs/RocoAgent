@@ -203,6 +203,72 @@ def decide(state):
 
     cands = []
 
+    # ---- S22 新机制决策（进化之力 / 共鸣魔法）-------------------------
+    #
+    # evolve：首领形态严格更优（种族值↑+新特性）且不占行动 → 可用即进。
+    # magic：按队伍共鸣魔法名分派，条件保守（宁缺勿滥）。
+    # state 缺字段（robot 未接线/旧调用方）→ 完全跳过，行为不变。
+    _evo = state.get("evolution") or {}
+    if _evo.get("usable") and not _evo.get("used"):
+        _best_i, _best_dmg = 0, -1
+        for _s in me.get("skills") or []:
+            if _s.get("kind") == "num" and _s.get("lit", True) \
+                    and (_s.get("dmg") or 0) > _best_dmg:
+                _best_i, _best_dmg = _s["i"], _s.get("dmg")
+        return (("evolve", _best_i),
+                "evolution available: leader form strictly better "
+                "(stats up + new trait), payload skill %d attacks"
+                % _best_i, {})
+    _mg = state.get("magic") or {}
+    if _mg.get("usable") and not _mg.get("used"):
+        _mg_name = _mg.get("name") or ""
+        my_types = set(me.get("types") or [])
+        foe_types = set(foe.get("types") or [])
+        if _mg_name == "\u95ea\u7130\u7206\u53d1":       # 闪焰爆发
+            if ("\u706b" in my_types
+                    or me.get("bloodline") == "\u706b"):
+                _best_i, _best_dmg = 0, 0
+                for _s in me.get("skills") or []:
+                    if _s.get("kind") == "num" and _s.get("lit", True) \
+                            and (_s.get("dmg") or 0) > _best_dmg:
+                        _best_i, _best_dmg = _s["i"], _s.get("dmg")
+                if _best_dmg >= 80:
+                    return (("magic", _best_i),
+                            "fire burst: best attack %d dmg x2.5"
+                            % _best_dmg, {})
+        elif _mg_name == "\u5149\u5408\u6cbb\u6108":     # 光合治愈
+            if ("\u8349" in my_types
+                    or me.get("bloodline") == "\u8349") \
+                    and my_hp <= 0.4 * my_max:
+                return (("magic", 0),
+                        "photosynthesis heal: hp %d/%d <= 40%%"
+                        % (my_hp, my_max), {})
+        elif _mg_name == "\u8282\u6d41\u672f":           # 节流术
+            if ("\u6c34" in my_types
+                    or me.get("bloodline") == "\u6c34") \
+                    and energy <= 2:
+                _best_i, _best_dmg = 0, -1
+                for _s in me.get("skills") or []:
+                    if _s.get("kind") == "num" and _s.get("lit", True) \
+                            and (_s.get("dmg") or 0) > _best_dmg:
+                        _best_i, _best_dmg = _s["i"], _s.get("dmg")
+                if _best_i is not None:
+                    return (("magic", _best_i),
+                            "thrift: energy %d low, best attack free"
+                            % energy, {})
+        elif _mg_name == "\u613f\u529b\u5f3a\u5316":     # 愿力强化
+            bl = me.get("bloodline")
+            if bl:
+                try:
+                    import statmodel as _sm
+                    _eff = _sm.type_effect(bl, list(foe_types))
+                except Exception:
+                    _eff = 1.0
+                if _eff >= 2.0 and foe_hp > 0.4 * foe_max:
+                    return (("magic", 0),
+                            "yuanli: %s bloodline x%.1f vs foe, "
+                            "foe hp high" % (bl, _eff), {})
+
     # ---- 必死保护：这回合一定会死，且换人/治疗能活 -------------------
     #
     # 实测（2026-11-21 03:20 T27）：我血 66/366（18%），对面 367，
