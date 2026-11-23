@@ -129,6 +129,18 @@ def _incoming(foe_name, my_name, my_max):
     dmg, src = E.weighted_incoming(
         foe_name, my_name,
         blend=weights().get("incoming_blend", 0.75))
+    # S24 承伤侧校准：per-foe incoming 系数（data/
+    # foe_incoming_calibration.json，S24 脚本生成）。保守 clamp
+    # [0.5, 2.0]——单观测噪声大（残差 p75 75%），防过校正。
+    if dmg:
+        try:
+            import foe_calib
+            _kin = foe_calib.k_in(foe_name)
+            if _kin != 1.0:
+                _kin = max(0.5, min(2.0, _kin))
+                dmg = dmg * _kin
+        except Exception:
+            pass
     if dmg:
         return dmg, src
     pct = weights().get("unknown_incoming_pct", 0.35)

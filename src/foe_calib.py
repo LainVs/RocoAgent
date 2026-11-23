@@ -38,6 +38,29 @@ def k(foe_name):
     return float(v)
 
 
+def k_in(foe_name):
+    """对手输出系数（对手打我方的伤害 × k_in ≈ 实盘）。
+
+    数据：data/foe_incoming_calibration.json（S24 脚本，opponent_actions
+    的 my_pct 差分 vs weighted_incoming 预测）。未知对手 → 1.0。
+    """
+    p = os.path.join(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))), "data",
+        "foe_incoming_calibration.json")
+    try:
+        with io.open(p, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return 1.0
+    entry = data.get(foe_name)
+    if not entry:
+        return 1.0
+    v = entry.get("k_median")
+    if not isinstance(v, (int, float)) or v <= 0:
+        return 1.0
+    return float(v)
+
+
 def reload():
     global _CACHE
     _CACHE = None
