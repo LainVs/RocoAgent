@@ -3,6 +3,17 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S24 承伤侧校准（2026-11-23，commit cab59f9）
+
+- [x] **incoming 系数**：93 观测（opponent_actions 的 my_pct 差分 vs
+      weighted_incoming 预测）→ 38 对手校准
+      （data/foe_incoming_calibration.json）
+- [x] 精度：校准后残差中位 **19%**（未校准 51%）——p75 134%→75%
+- [x] policy_v2._incoming × k_in(foe)，保守 clamp [0.5, 2.0]
+      （单观测噪声大，防过校正）
+- [x] 与 S19 对称：双向伤害校准完成（我方伤害 k / 对方伤害 k_in）
+- [x] `foe_calib.k_in()` 加载器
+
 ## S23 探测工具 + 覆盖率刷新（2026-11-23，commit e10a31a）
 
 - [x] `scripts/probe_game_state.py`：对战窗口 UI 数据采集
