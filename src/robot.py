@@ -245,6 +245,19 @@ class Bot:
         self.active_pet = None
         self.pet_at = 0.0
         self._self_onnx_conf = 0.0    # 最近一次 ONNX 我方身份的置信度
+        # 身份是否已确认（BAND 用错词表的防线，见 _maybe_band_scan）
+        #
+        # 为什么需要：实测 09:46 那场——ONNX 在 09:46:14 认出音速犬后
+        # 连续 9 次 unknown bust，期间场上换过精灵（09:48:58 FORCED
+        # SWITCH），而 my_name 一直卡在"音速犬"。BAND 于是用音速犬的
+        # 技能池去校验新精灵的卡面（读到「叠浪」，水系，音速犬学不了），
+        # 连拒三次。更糟的是槽2/槽4 "碰巧"读到了音速犬也有的技能，
+        # 差点把错配数据写进 session_moves。
+        #
+        # 不能简单用"距离上次成功识别多久"来判（实测识别间隔中位 103s，
+        # 90% 超过 20s，时间门禁会误伤 90% 的正常机会）。改用**换人信号**：
+        # 换人时置 False，下次成功识别才置 True。
+        self._ident_confirmed = True
         self._pet_poll_at = 0.0
         self._pet_unknown_at = 0.0
         self._foe_poll_at = 0.0
@@ -874,6 +887,10 @@ class Bot:
                         # Per-match tally: a lifetime counter made the panel
                         # log read "dead=9" for a six-pet team.
                         self.dead_count = 0
+                        # 新对局：身份还没确认过，BAND 等第一帧识别再放开
+                        self._ident_confirmed = False
+                        self._band_tries = 0
+                        self._band_scan_at = 0.0
                         # 对手行为记录器：每局重置（数据用于 opponent_model）
                         try:
                             import opponent_log
@@ -1879,6 +1896,7 @@ class Bot:
                             self.my_name = sp
                         # 记下 ONNX 的置信度，avatar 次通道靠它判断能否覆盖
                         self._self_onnx_conf = float(_conf)
+                        self._ident_confirmed = True   # BAND 词表可信
                         # ⚠ pet_at 是"这只精灵**上场**的时刻"，只在身份变化时
                         # 更新。旧代码在这里无条件赋值，而本函数每 0.5s 跑一次
                         # —— 于是 `now - pet_at` 永远 < 1.2s，下游两个 1.2s
@@ -1958,6 +1976,7 @@ class Bot:
                         self.pet_at = now
                         self._band_scan_at = 0.0
                         self._band_tries = 0
+                    self._ident_confirmed = True   # BAND 词表可信
                     self.my_score = float(a0["score"])
                     if self.cur_slot:
                         self.slot_species[self.cur_slot] = a0["name"]
@@ -2499,6 +2518,21 @@ class Bot:
         if tries >= self.BAND_TRIES:
             self._band_blocked(now, "tries exhausted (%d/%d)"
                                % (tries, self.BAND_TRIES))
+            return
+        # ★ 换人后身份未确认 -> 不做 BAND（2026-11-23）
+        #
+        # 为什么：实测 09:46 那场，ONNX 认出音速犬后连续 9 次 unknown bust，
+        # 期间场上换过精灵（09:48:58 FORCED SWITCH），my_name 卡在"音速犬"。
+        # BAND 用音速犬（火系）的词表去校验新精灵的卡面（读到「叠浪」，
+        # 水系，属主仅 9 只），连拒三次；更险的是槽2/槽4 "碰巧"读到音速犬
+        # 也有的技能，差点把错配数据写进 session_moves 污染策略。
+        #
+        # 判据用**换人信号**而不是时间：实测我方识别间隔中位 103s、
+        # 90% 超过 20s（ONNX 在战斗中本就稀疏），时间门禁会误伤 90%。
+        # 换人时置 False，下次成功识别才置 True —— 代价只有换人后 1~3 秒，
+        # 而那正是 pet_at 的 1.2s 窗口本来也会跳过的区间。
+        if not getattr(self, "_ident_confirmed", True):
+            self._band_blocked(now, "identity unconfirmed after switch")
             return
         # 同一轮两次尝试至少隔 1.5s，别在同一帧上反复烧 OCR
         if tries and now - getattr(self, "_band_scan_at", 0.0) < 1.5:
@@ -4025,6 +4059,12 @@ class Bot:
                 self.last_switch_turn = self.turn
                 self.cur_slot = action[1]
                 self.switch_fail_streak = 0
+                # ★ 换人了 -> 身份未确认，BAND 暂停（见 _maybe_band_scan）
+                # 主动换人后 my_name 还是换之前那只，用它的词表校验新卡面
+                # 必然错。等 ONNX 认出新的再放开。
+                self._ident_confirmed = False
+                self._band_tries = 0
+                self._band_scan_at = 0.0
             else:
                 # 换人没生效（点击/空格被吞）。记一次失败，下一轮不要再选同一只，
                 # 否则会"想换→换不掉→再想换"无限循环，实测卡了 4 个回合。
@@ -4773,6 +4813,10 @@ class Bot:
         slot, why = self._pick_switch_slot(pool, st)
         log("FAINT -> switch slot %d (%s, attempt %d)"
             % (slot, why, self.switch_attempt))
+        # ★ 强制换人也是换人：身份未确认，BAND 暂停（同 4026 处）
+        self._ident_confirmed = False
+        self._band_tries = 0
+        self._band_scan_at = 0.0
         self.switch_tried_at = now
         self.switch_pending = slot
 
