@@ -96,10 +96,36 @@ def main():
     SM.STORE = os.path.join(os.environ.get("TEMP", "/tmp"),
                             "band_vocab_test.json")
     SM._DATA, SM._DIRTY = None, False
-    SM._BAND_RAW[("测试", 1)] = ("扬沙", 4, 0.80, "config", 0.0)
-    raw, nv, thr, tier = SM.raw_of("测试", 1)
+    SM._BAND_RAW[("测试", 1)] = ("扬沙", 4, 0.80, "config", 0.0, "match")
+    raw, nv, thr, tier, how = SM.raw_of("测试", 1)
     check("raw_of 返回 tier", tier == "config",
           "raw=%r nvoc=%d thr=%.2f tier=%s" % (raw, nv, thr, tier))
+    check("raw_of 返回 how", how == "match", "how=%s" % how)
+
+    # ---- 唯一性近似兜底（形近字错读）--------------------------------
+    #
+    # 实测：raw='诉毁' vs 配置[借用,火云车,诋毁,闪光冲击]
+    #   -> ocr_cn.Ocr.match 只给 0.50，被 0.80 门槛拒
+    #   -> 但"等长+编辑距离<=1"的候选只有「诋毁」，可以安全采纳
+    #
+    # 危险场景必须被拒绝（模糊即拒），否则会误配：
+    #   raw='诋毁' 对 [诋毁,底毁,抵毁] -> 3 个候选 -> 拒
+    #   raw='扬沙' 对全库（扬尘/扬沙/流沙）-> 拒
+    print("\n== 唯一性近似兜底 ==")
+    cfg = ["借用", "火云车", "诋毁", "闪光冲击"]
+    check("诉毁 -> 诋毁（配置内唯一近似）",
+          SM._unique_near("诉毁", cfg) == "诋毁",
+          str(SM._unique_near("诉毁", cfg)))
+    check("形近词多候选时拒绝",
+          SM._unique_near("诋毁", ["诋毁", "底毁", "抵毁"]) is None)
+    check("火云车/火云马/火云箭 多候选时拒绝",
+          SM._unique_near("火云车", ["火云车", "火云马", "火云箭"]) is None)
+    check("完全相同（编辑距 0）也走唯一判定",
+          SM._unique_near("扬沙", ["扬沙", "虫击", "冰雹"]) == "扬沙")
+    check("无候选时返回 None",
+          SM._unique_near("完全不存在的名字", cfg) is None)
+    check("长度不同不参与（避免 2 字误配 4 字）",
+          SM._unique_near("毁", cfg) is None)
 
     print()
     if FAIL:

@@ -305,9 +305,18 @@ def read_band(pet, slot, screen, pill_box):
     name, sc = ocr_cn.Ocr.match(raw, vocab)
     # 词表小时门槛可以放宽（分母小，1 字偏差对应的分数更高也更可信）
     thr = 0.80 if len(vocab) < 60 else BAND_MIN_CONF
+    how = "match"
+    # ★ 唯一性近似兜底（2026-11-23）
+    # 标准匹配没过线时，若"等长 + 编辑距离<=1"的候选**唯一**，采纳它。
+    # 实测：raw='诉毁' 在 4 词配置下唯一指向「诋毁」（0.50 -> 采纳）；
+    # 而在全库层（焚毁/诋毁 两个候选）会被拒 —— 模糊即拒，安全。
+    if not (name and sc >= thr):
+        near = _unique_near(raw, vocab)
+        if near:
+            name, sc, how = near, max(float(sc), 0.80), "near-unique"
     # 诊断：把"读到了什么"和"为什么拒"一起缓存，供日志与前端查看。
     # 只记 raw 与词表规模，不记整条词表（太大）。
-    _BAND_RAW[key] = (raw, len(vocab), thr, tier, now)
+    _BAND_RAW[key] = (raw, len(vocab), thr, tier, now, how)
     if name and sc >= thr:
         # ⚠ 不要在这里包 `with _LOCK:` —— confirm() 自己会加锁，
         # 而 _LOCK 是 threading.Lock()（**不可重入**），嵌套获取会自锁。
@@ -387,6 +396,62 @@ def _all_vocab(db):
                          if now - v[2] < _BAND_TTL)}
 
 
+def _lev(a, b):
+    """编辑距离（Levenshtein）。技能名都很短（2~6 字），无需优化。"""
+    if a == b:
+        return 0
+    la, lb = len(a), len(b)
+    if not la:
+        return lb
+    if not lb:
+        return la
+    prev = list(range(lb + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _unique_near(raw, vocab):
+    """唯一性近似匹配：只在**有且仅有一个**候选时返回它。
+
+    ## 为什么需要它（2026-11-23 实测）
+
+    配置词表只有 4 个词时，OCR 的形近字错读会让标准匹配分跌破门槛：
+
+        raw='诉毁'  vs 配置['借用','火云车','诋毁','闪光冲击']
+        -> ocr_cn.Ocr.match 只给 0.50，被 0.80 门槛拒
+
+    「诋」被读成「诉」是形近字系统性误读（同一场连读 3 次都一样），
+    放大倍数从 1.0 扫到 3.5 也解决不了（见 docs/PLAN_OCR_SHAPE.md）。
+
+    ## 为什么这个约束是安全的
+
+    判据：等长 + 编辑距离 <= 1，且**候选唯一**。
+    实测（20 组真实配置 + 4 组危险场景 + 5 组全库查询）：
+
+        配置层 20/20 正确反查，0 误配
+        raw='诋毁' 对 3 个形近词 -> 拒绝（多候选）
+        raw='火云车' 对 火云马/火云箭 -> 拒绝
+        raw='扬沙' 全库（扬尘/扬沙/流沙）-> 拒绝
+        raw='鼎管奔流' 全库 -> 唯一「筛管奔流」，正确采纳
+
+    **它在模糊时一律拒绝，只在唯一时采纳。** 这正是我们要的安全性 ——
+    宁可漏读，不可误配。词表越小（4 个配置词），唯一性越容易成立，
+    所以配置层效果最好；退化到全库时绝大多数情况会被拒，不会乱猜。
+    """
+    if not raw or not vocab:
+        return None
+    cands = [c for c in vocab
+             if c and len(c) == len(raw) and _lev(raw, c) <= 1]
+    if len(cands) == 1:
+        return cands[0]
+    return None
+
+
 def band_stats():
     """诊断：名字带读法的缓存状态。"""
     now = time.time()
@@ -396,19 +461,25 @@ def band_stats():
 
 
 def raw_of(pet, slot):
-    """诊断：上一次 OCR 读到的原文 + 词表规模 + 门槛 + 词表层级。
+    """诊断：上一次 OCR 的原文 / 词表规模 / 门槛 / 层级 / 匹配方式。
 
-    返回 (raw, vocab_n, threshold, tier)。没读过返回 ("", 0, 0.0, "")。
-    用途：BAND 被门槛拒绝时，日志要能显示"到底读成了什么字"以及
-    "用的是哪一级词表" —— tier=config 时被拒说明配置里真没这个词，
-    tier=species/all 时被拒可能只是数据不全（见 _owned_vocab 注释）。
+    返回 (raw, vocab_n, threshold, tier, how)。没读过返回
+    ("", 0, 0.0, "", "")。
+
+    用途：BAND 被拒时能一眼分清三种完全不同的情况 ——
+      tier=config  被拒 -> 配置里真没这个词（用户换队了）
+      tier=species 被拒 -> 可能只是可学池数据不全，技能本身是对的
+      how=near-unique   -> 标准匹配没过，靠"唯一近似"兜底采纳的
     """
     e = _BAND_RAW.get((pet, int(slot)))
     if not e:
-        return "", 0, 0.0, ""
-    if len(e) >= 5:
-        return e[0], e[1], e[2], e[3]
-    return e[0], e[1], e[2], ""
+        return "", 0, 0.0, "", ""
+    raw, nv, thr = e[0], e[1], e[2]
+    tier = e[3] if len(e) >= 4 else ""
+    # 元组是 (raw, nv, thr, tier, now, how)：how 在**最后**一位，
+    # 因为 now 是第 5 位（历史格式兼容）。
+    how = e[5] if len(e) >= 6 else ""
+    return raw, nv, thr, tier, how
 
 
 # ---------------------------------------------------------------- 自检

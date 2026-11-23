@@ -2534,9 +2534,14 @@ class Bot:
                     continue
                 name, conf = SM.read_band(my, slot, self.screen, boxes[idx])
                 if name:
-                    log("BAND -> %s 槽%d = %s (%.2f)" % (my, slot, name, conf))
+                    # how=near-unique 时注明"靠唯一近似兜底"，
+                    # 便于事后审计这个兜底有没有误配。
+                    _, _, _, _, how = SM.raw_of(my, slot)
+                    log("BAND -> %s 槽%d = %s (%.2f%s)"
+                        % (my, slot, name, conf,
+                           ", " + how if how and how != "match" else ""))
                 else:
-                    raw, nvoc, thr, tier = SM.raw_of(my, slot)
+                    raw, nvoc, thr, tier, _how = SM.raw_of(my, slot)
                     # 带上 OCR 原文、门限和**词表层级**：
                     # tier=config 说明配置里真没这个词（用户换队了）；
                     # tier=species 说明是可学池拒的（可能数据不全）。
