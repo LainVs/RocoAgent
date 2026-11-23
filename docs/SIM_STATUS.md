@@ -3,6 +3,17 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S26 决策层×引擎全闭环集成测试（2026-11-23，测试批次）
+
+- [x] `battle_to_state(bt)`：从 Battle 提取 policy_v2 state 的参考实现
+      （robot 实盘接线的模板）——skills dmg 用 calc_damage 现算
+- [x] 闭环验证：policy 发 ("magic", i)/("evolve", i) → 引擎真实执行
+      （闪焰爆发事件 / 火神→烈火战神变身+特性切换）
+- [x] 低血续命（光合治愈 30% 触发）
+- [x] 单元素动作容错（("energy",) 无 payload）
+- 测试：`src/test_s26_loop.py`（8 断言）；基线 15/15 零变化
+- 计划：docs/PLAN_S26_LOOP.md
+
 ## S24 承伤侧校准（2026-11-23，commit cab59f9）
 
 - [x] **incoming 系数**：93 观测（opponent_actions 的 my_pct 差分 vs
