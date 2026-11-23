@@ -24,39 +24,9 @@ def check(cond, msg):
 
 
 def battle_to_state(bt):
-    """Battle → policy_v2 state（robot 接线的参考实现）。"""
-    me, foe = bt.me, bt.foe
-    skills = []
-    for i, m in enumerate(me.moves):
-        dmg = 0
-        if (m.get("power") or 0) > 0:
-            try:
-                dmg = SIM.calc_damage(me, foe, m)
-            except Exception:
-                dmg = 0
-        skills.append({"i": i, "dmg": dmg, "cost": int(m.get("cost") or 0),
-                       "kind": "num" if (m.get("power") or 0) > 0
-                       else "self_buff", "lit": True})
-    return {
-        "me": {"name": me.name, "hp": int(me.hp), "hp_max": int(me.max_hp),
-               "energy": int(me.energy), "types": list(me.types or []),
-               "bloodline": getattr(me, "bloodline", None),
-               "skills": skills},
-        "foe": {"name": foe.name, "hp": int(foe.hp),
-                "hp_max": int(foe.max_hp), "types": list(foe.types or [])},
-        "bench": [{"name": p.name, "hp": int(p.hp), "hp_max": int(p.max_hp),
-                   "alive": p.alive}
-                  for p in (bt.a if True else bt.b) if p is not me],
-        "magic": {"name": bt.team_magic.get("a") or "",
-                  "used": bt.magic_state["a"]["used"],
-                  "max_uses": 2, "cd": bt.magic_state["a"]["cd"],
-                  "usable": (bool(bt.team_magic.get("a"))
-                             and bt.magic_state["a"]["used"] < 2
-                             and bt.magic_state["a"]["cd"] == 0)},
-        "evolution": {"used": bool(bt.evolution_used.get("a")),
-                      "usable": not bt.evolution_used.get("a")
-                      and getattr(bt.me, "bloodline", None) == "首领"},
-    }
+    """Battle → policy_v2 state（S27 提升为正式模块 src/policy_state.py）。"""
+    from policy_state import battle_to_state as _bts
+    return _bts(bt)
 
 
 def run_loop(bt, max_turns=12):
