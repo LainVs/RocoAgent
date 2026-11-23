@@ -3,6 +3,15 @@
 > 这份文件是"我做到哪了"的唯一事实来源。每批改动后必须更新。
 > 计划见 `docs/PLAN_FULL_SIM.md`，机制出处见那里。
 
+## S27 state 提取器模块化 + docs 索引（2026-11-23，commit 38ca8e1）
+
+- [x] `src/policy_state.py`：battle_to_state 从测试文件提升为正式模块
+      （robot P4.5 实盘接线直接 import）
+- [x] `docs/INDEX.md`：20+ 文档的导航索引（状态/覆盖率/校准/计划档案/
+      工具/运维）
+- [x] test_s26_loop 改 import（行为不变，全过）
+- 计划：docs/PLAN_S27_DOCS.md
+
 ## S26 决策层×引擎全闭环集成测试（2026-11-23，测试批次）
 
 - [x] `battle_to_state(bt)`：从 Battle 提取 policy_v2 state 的参考实现
