@@ -2536,11 +2536,13 @@ class Bot:
                 if name:
                     log("BAND -> %s 槽%d = %s (%.2f)" % (my, slot, name, conf))
                 else:
-                    raw, nvoc, thr = SM.raw_of(my, slot)
-                    # 带上 OCR 原文和门限：0.79 与 0.80 这种差一口气的情况
-                    # 必须能看到"到底读成了什么"才能判断是字错还是漏字。
-                    log("BAND -> %s 槽%d 未识别 (conf %.2f < %.2f) raw=%r vocab=%d"
-                        % (my, slot, conf, thr, raw, nvoc))
+                    raw, nvoc, thr, tier = SM.raw_of(my, slot)
+                    # 带上 OCR 原文、门限和**词表层级**：
+                    # tier=config 说明配置里真没这个词（用户换队了）；
+                    # tier=species 说明是可学池拒的（可能数据不全）。
+                    log("BAND -> %s 槽%d 未识别 (conf %.2f < %.2f) "
+                        "raw=%r vocab=%d(%s)"
+                        % (my, slot, conf, thr, raw, nvoc, tier or "?"))
         except Exception as e:
             log("BAND scan failed: %s: %s" % (type(e).__name__, e))
             self._band_tries = self.BAND_TRIES     # 出错也别每帧重试

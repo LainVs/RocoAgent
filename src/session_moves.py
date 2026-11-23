@@ -277,24 +277,29 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     db = sqlite3.connect(DB)
     try:
-        # ★ 2026-11-23：候选词优先限定**这只精灵自己的技能池**。
+        # ★ 2026-11-23 两级词表（优先级：用户配置 > 可学池 > 全库）
         #
-        # 为什么（实机实测）
-        # ----------------
-        # 全库 1269 个技能词表里匹配，实机 4:3 缩放后字更小，实测；
-        #     正确技能读成"岩脉崩段" -> 0.750（被 0.90 门槛拒绝）
-        #     单个字"月" -> 拉去"月蚀" 0.830（可能误配）
-        # 而 my_team 里这只精灵只有 4 个技能，词表缩到 4 个后：
-        #     任何 1 字偏差都更容易识别（分母小），且**不可能配到别的精灵的技能**。
+        # 为什么把 `my_team` 配置放第一位 —— 实机铁证：
+        #   卡瓦重槽2 卡面写着「扬沙」（--band-dump 落盘图目视确认），
+        #   配置也是「扬沙」，但 BAND 三次拒掉（conf 0.00），因为
+        #   species_skills 认为卡瓦重学不了扬沙（该表不全）。
         #
-        # 策略：先用"这只精灵可学技能"当词表（几十个），匹配不到再退全库。
-        own = [r[0] for r in db.execute(
-            """SELECT DISTINCT s.name FROM species_skills ss
-               JOIN species sp ON sp.id = ss.species_id
-               JOIN skills s ON s.id = ss.skill_id
-               WHERE sp.name = ? AND s.name IS NOT NULL""", (pet,))]
-        vocab = own or [r[0] for r in db.execute(
-            "SELECT DISTINCT name FROM skills WHERE name IS NOT NULL")]
+        # 为什么不能简单放宽门槛：门槛降到 0.30 会引入误配，
+        # 「扬沙」在全库 1045 个技能里有大量近邻。安全性不能换。
+        #
+        # 为什么配置优先既安全又有效：
+        #   - 只有 4 个候选词 -> 分母极小，1 字偏差的分数很高
+        #   - 不可能配到别的精灵的技能（硬约束）
+        #   - 它是用户亲手配的，权威性高于任何推导出来的池子
+        own = _owned_vocab(db, pet)
+        if own:
+            vocab, tier = own, "config"
+        else:
+            own = _learnable_vocab(db, pet)
+            if own:
+                vocab, tier = own, "species"
+            else:
+                vocab, tier = _all_vocab(db), "all"
     finally:
         db.close()
     name, sc = ocr_cn.Ocr.match(raw, vocab)
@@ -302,7 +307,7 @@ def read_band(pet, slot, screen, pill_box):
     thr = 0.80 if len(vocab) < 60 else BAND_MIN_CONF
     # 诊断：把"读到了什么"和"为什么拒"一起缓存，供日志与前端查看。
     # 只记 raw 与词表规模，不记整条词表（太大）。
-    _BAND_RAW[key] = (raw, len(vocab), thr, now)
+    _BAND_RAW[key] = (raw, len(vocab), thr, tier, now)
     if name and sc >= thr:
         # ⚠ 不要在这里包 `with _LOCK:` —— confirm() 自己会加锁，
         # 而 _LOCK 是 threading.Lock()（**不可重入**），嵌套获取会自锁。
@@ -317,6 +322,71 @@ def read_band(pet, slot, screen, pill_box):
     return None, float(sc)
 
 
+def _owned_vocab(db, pet):
+    """第一级词表：这只精灵在 `my_team` 里的 4 个技能。
+
+    为什么把配置放第一位（2026-11-23 实机铁证）
+    -------------------------------------------
+    卡瓦重槽2 的卡面清楚写着「扬沙」（`--band-dump` 落盘图已目视确认），
+    `my_team` 配置也是「扬沙」，但 BAND 三次都拒了它（conf 0.00）：
+
+        BAND -> 卡瓦重 槽2 未识别 (conf 0.00 < 0.80) raw='扬沙'
+
+    因为 `species_skills` 认为卡瓦重学不了扬沙 —— 而该表**数据不全**：
+    `species` 表里「卡瓦重」有 4 个同名 id（3042/3294/3295/3296），
+    按名字查会跨这 4 行取并集，即便如此仍缺「扬沙」（游戏里确实带着）。
+
+    `my_team.moves` 是**用户亲手配的**，比任何推导出来的池子都可信，
+    而且只有 4 个词 —— 词表小到不可能误配。
+    """
+    try:
+        row = db.execute(
+            "SELECT moves FROM my_team WHERE species_id IN "
+            "(SELECT id FROM species WHERE name=?) ORDER BY slot LIMIT 1",
+            (pet,)).fetchone()
+    except Exception:
+        return []
+    if not row or not row[0]:
+        return []
+    try:
+        ids = json.loads(row[0])
+    except Exception:
+        return []
+    out = []
+    for i in ids:
+        r = db.execute("SELECT name FROM skills WHERE id=?", (int(i),)).fetchone()
+        if r and r[0]:
+            out.append(r[0])
+    return out
+
+
+def _learnable_vocab(db, pet):
+    """第二级词表：这只精灵可学技能池（species_skills，几十个）。
+
+    ⚠ 已知不全（见 `_owned_vocab` 的注释）。它比全库好得多（小分母 +
+    不会配到别的精灵的技能），但不能当作完备集合。
+    同名多 id 会取并集 —— 这会混入别的变种的技能，是可接受的代价：
+    这些变体通常是同一只精灵的不同形态，技能高度重叠。
+    """
+    rows = db.execute(
+        """SELECT DISTINCT s.name FROM species_skills ss
+           JOIN species sp ON sp.id = ss.species_id
+           JOIN skills s ON s.id = ss.skill_id
+           WHERE sp.name = ? AND s.name IS NOT NULL""", (pet,))
+    return [r[0] for r in rows]
+
+
+def _all_vocab(db):
+    """第三级词表：全库（约 1045 个）。只在上面两级都拿不到时用。"""
+    return [r[0] for r in db.execute(
+        "SELECT DISTINCT name FROM skills WHERE name IS NOT NULL")]
+    """诊断：名字带读法的缓存状态。"""
+    now = time.time()
+    return {"cached": len(_BAND_LAST),
+            "fresh": sum(1 for v in _BAND_LAST.values()
+                         if now - v[2] < _BAND_TTL)}
+
+
 def band_stats():
     """诊断：名字带读法的缓存状态。"""
     now = time.time()
@@ -326,16 +396,19 @@ def band_stats():
 
 
 def raw_of(pet, slot):
-    """诊断：上一次 OCR 读到的原文 + 词表规模 + 当时的门槛。
+    """诊断：上一次 OCR 读到的原文 + 词表规模 + 门槛 + 词表层级。
 
-    返回 (raw, vocab_n, threshold)。没读过返回 ("", 0, 0.0)。
-    用途：BAND 被门槛拒绝时，日志要能显示"到底读成了什么字" ——
-    0.79 与 0.80 只差 0.01，必须分清是错别字还是漏字。
+    返回 (raw, vocab_n, threshold, tier)。没读过返回 ("", 0, 0.0, "")。
+    用途：BAND 被门槛拒绝时，日志要能显示"到底读成了什么字"以及
+    "用的是哪一级词表" —— tier=config 时被拒说明配置里真没这个词，
+    tier=species/all 时被拒可能只是数据不全（见 _owned_vocab 注释）。
     """
     e = _BAND_RAW.get((pet, int(slot)))
     if not e:
-        return "", 0, 0.0
-    return e[0], e[1], e[2]
+        return "", 0, 0.0, ""
+    if len(e) >= 5:
+        return e[0], e[1], e[2], e[3]
+    return e[0], e[1], e[2], ""
 
 
 # ---------------------------------------------------------------- 自检

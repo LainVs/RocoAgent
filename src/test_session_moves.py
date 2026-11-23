@@ -170,6 +170,15 @@ def main():
 
             sb = SkillBoxScreen(img)
             names = []
+            # ⚠ 精灵名必须是**不在 my_team 里**的虚构名。
+            #
+            # 2026-11-23 两级词表上线后：如果传真实精灵名（如"音速犬"），
+            # read_band 会优先用 my_team 的 4 个配置技能当词表，而 fixture
+            # 里印的是「力量增效」「跌落」——它们不在音速犬的配置里，
+            # 于是被正确拒绝。那是新逻辑的**预期行为**，不是 bug。
+            #
+            # 用一个虚构名可以走到 species -> all 兜底层，覆盖 ROI 本身。
+            PET = "测试精灵_不存在"
             for k, p in enumerate(pills[:6]):
                 xa, ya, xb, yb = (int(v) for v in p["box"])
                 # 传裁图内坐标（read_band 会自己加 SKILL_BOX 偏移）。
@@ -177,10 +186,10 @@ def main():
                 # 同一个 key 第二次调用会直接命中上次的空结果。
                 # 注意：裁图里 6 个胶囊中有些是副图标（下方没有名字带），
                 # 读到空是正常现象，所以只要求"至少一只读对"。
-                nm, _sc = SM.read_band("音速犬", k + 1, sb, (xa, ya, xb, yb))
+                nm, _sc = SM.read_band(PET, k + 1, sb, (xa, ya, xb, yb))
                 if nm:
                     names.append(nm)
-            SM.clear("音速犬")
+            SM.clear(PET)
             known = {"力量增效", "跌落", "火云车"}
             hit = set(names) & known
             check("live frame ROI reads skill names",
