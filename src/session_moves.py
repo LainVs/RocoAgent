@@ -40,6 +40,17 @@ STORE = os.path.join(ROOT, "data", "session_moves.json")
 
 # 采纳门槛：OCR + 封闭词表匹配分数
 BAND_MIN_CONF = 0.90
+# BAND 名字带专用门槛（2026-11-23）
+#
+# 为什么与 BAND_MIN_CONF 分开：BAND 的候选词表是"配置 ∪ 可学池"
+# （几十个），而 Ocr.match 的分数是逐候选算分、**与词表规模无关**。
+# 旧代码按 `len(vocab) < 60` 切换 0.80/0.90，会在词表跨 60 的瞬间
+# 让同一个匹配从采纳变拒绝 —— 这是个只会静默出错的边界陷阱。
+#
+# 0.80 的依据：实测精确匹配 1.00；1 字偏差 0.50~0.87；
+# Ocr.match 对"包含关系"（t in c）会提到 0.85。
+# 所以 0.80 能放过包含关系，又挡住单字误配。
+BAND_MIN_CONF_BAND = 0.80
 # 校验环：连续 N 次观测矛盾 -> 撤销确认
 REVOTE_LIMIT = 2
 
@@ -277,43 +288,37 @@ def read_band(pet, slot, screen, pill_box):
         return None, 0.0
     db = sqlite3.connect(DB)
     try:
-        # ★ 2026-11-23 两级词表（优先级：用户配置 > 可学池 > 全库）
+        # ★ 2026-11-23 候选词表 = my_team 配置 ∪ species_skills 可学池
         #
-        # 为什么把 `my_team` 配置放第一位 —— 实机铁证：
-        #   卡瓦重槽2 卡面写着「扬沙」（--band-dump 落盘图目视确认），
-        #   配置也是「扬沙」，但 BAND 三次拒掉（conf 0.00），因为
-        #   species_skills 认为卡瓦重学不了扬沙（该表不全）。
-        #
-        # 为什么不能简单放宽门槛：门槛降到 0.30 会引入误配，
-        # 「扬沙」在全库 1045 个技能里有大量近邻。安全性不能换。
-        #
-        # 为什么配置优先既安全又有效：
-        #   - 只有 4 个候选词 -> 分母极小，1 字偏差的分数很高
-        #   - 不可能配到别的精灵的技能（硬约束）
-        #   - 它是用户亲手配的，权威性高于任何推导出来的池子
-        own = _owned_vocab(db, pet)
-        if own:
-            vocab, tier = own, "config"
-        else:
-            own = _learnable_vocab(db, pet)
-            if own:
-                vocab, tier = own, "species"
-            else:
-                vocab, tier = _all_vocab(db), "all"
+        # 并集而非二选一，因为两个来源漏的地方相反：
+        #   「扬沙」配置有/池内无 -> 需要配置补
+        #   「吞噬」配置无(过期)/池内有 -> 需要池补
+        # 详见 _band_vocab 的 docstring。
+        vocab, tier = _band_vocab(db, pet)
     finally:
         db.close()
     name, sc = ocr_cn.Ocr.match(raw, vocab)
-    # 词表小时门槛可以放宽（分母小，1 字偏差对应的分数更高也更可信）
-    thr = 0.80 if len(vocab) < 60 else BAND_MIN_CONF
+    # ★ 门槛不依赖词表规模（2026-11-23 修正）
+    #
+    # 旧写法 `0.80 if len(vocab) < 60 else 0.90` 有个陷阱：词表规模
+    # 跨过 60 时门槛会**突然**从 0.80 跳到 0.90，而 Ocr.match 的分数
+    # 是逐候选算分、**与词表规模无关** —— 于是同一个匹配会在词表变大
+    # 的瞬间从"采纳"变成"拒绝"。现在并集最大 59（卡瓦重），暂时安全，
+    # 但只要队伍换个技能就可能跨线。
+    #
+    # 统一用 0.80：实测精确匹配都给 1.00，1 字偏差给 0.50~0.87。
+    # 0.80 能放过"包含关系"（Ocr.match 对 t in c 会提到 0.85），
+    # 又挡住单字误配。唯一性兜底有自己的安全保证，不受这个门槛约束。
+    thr = BAND_MIN_CONF_BAND
     how = "match"
     # ★ 唯一性近似兜底（2026-11-23）
     # 标准匹配没过线时，若"等长 + 编辑距离<=1"的候选**唯一**，采纳它。
-    # 实测：raw='诉毁' 在 4 词配置下唯一指向「诋毁」（0.50 -> 采纳）；
-    # 而在全库层（焚毁/诋毁 两个候选）会被拒 —— 模糊即拒，安全。
+    # 实测：raw='诉毁' 唯一指向「诋毁」；raw='香噬' 唯一指向「吞噬」；
+    # 而在多候选时（诋毁/底毁/抵毁）一律拒绝 —— 模糊即拒，安全。
     if not (name and sc >= thr):
         near = _unique_near(raw, vocab)
         if near:
-            name, sc, how = near, max(float(sc), 0.80), "near-unique"
+            name, sc, how = near, max(float(sc), thr), "near-unique"
     # 诊断：把"读到了什么"和"为什么拒"一起缓存，供日志与前端查看。
     # 只记 raw 与词表规模，不记整条词表（太大）。
     _BAND_RAW[key] = (raw, len(vocab), thr, tier, now, how)
@@ -331,11 +336,60 @@ def read_band(pet, slot, screen, pill_box):
     return None, float(sc)
 
 
-def _owned_vocab(db, pet):
-    """第一级词表：这只精灵在 `my_team` 里的 4 个技能。
+def _band_vocab(db, pet):
+    """BAND 的候选词表：`my_team` 配置 ∪ `species_skills` 可学池。
 
-    为什么把配置放第一位（2026-11-23 实机铁证）
-    -------------------------------------------
+    ## 为什么是并集，不是二选一（2026-11-23 两次实机教训）
+
+    两个数据源各自都有**确定的漏**，而且漏的地方相反：
+
+    | 场景 | 配置有? | 可学池有? | 只有配置能救 | 只有池能救 |
+    |------|---------|-----------|--------------|------------|
+    | 「扬沙」卡瓦重 | ✅ | ❌ | ✅ | |
+    | 「吞噬」音速犬 | ❌（表过期） | ✅ | | ✅ |
+
+    - 「扬沙」：`species_skills` 漏了（`species` 里「卡瓦重」有 4 个
+      同名 id 3042/3294/3295/3296，跨行取并集仍缺）。需要配置补。
+    - 「吞噬」：配置过期（用户实机把槽1 从「借用」换掉了），4 个词
+      里没有它。需要可学池补。
+
+    先写成"配置优先独占"时，第二种场景被卡死 —— 实测 `raw='香噬'`
+    （「吞噬」的形近误读）连拒三次，因为配置层根本没有「吞噬」。
+
+    ## 为什么并集是安全的
+
+    - `ocr_cn.Ocr.match` 逐候选算分取最高，**与词表规模无关**，
+      并入更多词不会稀释已有词的分数
+    - 实测 5 个精灵并集规模 44~59，**都没跨 60**，门槛稳定
+    - 唯一性兜底在更大词表下更容易"多候选 -> 拒绝"，只会更保守
+
+    ## 返回
+
+    (vocab, tier)。tier 用于日志诊断：
+      "config+species" 两级都有
+      "config"         只有配置（该精灵不在 species 表里）
+      "species"        只有可学池（不在 my_team 里）
+      "all"            全库兜底
+    """
+    own = _owned_vocab(db, pet)
+    learn = _learnable_vocab(db, pet)
+    if own or learn:
+        vocab = list(dict.fromkeys(list(own) + list(learn)))
+        if own and learn:
+            tier = "config+species"
+        elif own:
+            tier = "config"
+        else:
+            tier = "species"
+        return vocab, tier
+    return _all_vocab(db), "all"
+
+
+def _owned_vocab(db, pet):
+    """这只精灵在 `my_team` 里的 4 个技能（`_band_vocab` 的一级来源）。
+
+    为什么配置是**最强证据**（2026-11-23 实机铁证）
+    ----------------------------------------------
     卡瓦重槽2 的卡面清楚写着「扬沙」（`--band-dump` 落盘图已目视确认），
     `my_team` 配置也是「扬沙」，但 BAND 三次都拒了它（conf 0.00）：
 
@@ -345,8 +399,11 @@ def _owned_vocab(db, pet):
     `species` 表里「卡瓦重」有 4 个同名 id（3042/3294/3295/3296），
     按名字查会跨这 4 行取并集，即便如此仍缺「扬沙」（游戏里确实带着）。
 
-    `my_team.moves` 是**用户亲手配的**，比任何推导出来的池子都可信，
-    而且只有 4 个词 —— 词表小到不可能误配。
+    配置是用户亲手配的，权威性最高；但它**可能过期**（用户实机换技能
+    后没跑 team_db），所以只能作为并集的一半，不能独占。
+
+    注意「吞噬」正好相反：它在音速犬的可学池里、不在配置里。
+    单靠配置会漏掉它——见 `_band_vocab` 的说明。
     """
     try:
         row = db.execute(

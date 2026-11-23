@@ -60,14 +60,36 @@ def main():
     check("_owned_vocab(卡瓦重) 返回 4 个", len(own) == 4, str(own))
     check("配置词表含「扬沙」（实机确实带着）", "扬沙" in own, str(own))
 
-    # 2) 第二级（species_skills）不含扬沙 —— 这就是需要第一级的原因
+    # 2) 第二级（species_skills）不含扬沙 —— 这就是需要配置的原因
     learn = SM._learnable_vocab(db, "卡瓦重")
     check("species_skills 不含「扬沙」（数据不全的证据）",
           "扬沙" not in learn, "共 %d 个" % len(learn))
     check("species_skills 非空（否则不该退化）", len(learn) > 10,
           "共 %d 个" % len(learn))
 
-    # 3) 不在 my_team 的精灵走第二级
+    # ---- 2b) 并集：两个来源漏的地方相反，必须都保留 ---------------
+    #
+    # 「扬沙」配置有/池内无  -> 需要配置
+    # 「吞噬」配置无(过期)/池内有 -> 需要池
+    # 单用任一份都会漏掉另一半。
+    uv, utier = SM._band_vocab(db, "卡瓦重")
+    check("并集含「扬沙」（配置来源）", "扬沙" in uv, utier)
+    check("并集 tier = config+species", utier == "config+species", utier)
+    check("并集规模 < 60（否则门槛会跳变）", len(uv) < 60,
+          "%d 个" % len(uv))
+
+    uv2, _t2 = SM._band_vocab(db, "音速犬")
+    check("音速犬并集含「吞噬」（可学池来源，配置里没有）",
+          "吞噬" in uv2, "配置=%s" % SM._owned_vocab(db, "音速犬"))
+    check("音速犬配置里确实没有「吞噬」",
+          "吞噬" not in SM._owned_vocab(db, "音速犬"))
+
+    # 所有队伍精灵的并集规模都不该跨 60
+    for pet in ("音速犬", "卡瓦重", "冰钻布鲁斯", "银月狼王", "恶魔狼"):
+        v, _ = SM._band_vocab(db, pet)
+        check("并集规模 <60: %s" % pet, len(v) < 60, "%d 个" % len(v))
+
+    # 3) 不在 my_team 的精灵只走可学池
     check("不在 my_team 的精灵配置为空", SM._owned_vocab(db, "棋绮后") == [])
     check("但它的 species_skills 非空",
           len(SM._learnable_vocab(db, "棋绮后")) > 10)
@@ -77,20 +99,33 @@ def main():
           "%d 个" % len(SM._all_vocab(db)))
     db.close()
 
-    # 5) 核心判据：扬沙在配置词表下能过，在可学池下不能过
+    # 5) 核心判据：并集下扬沙能过
     import ocr_cn
-    nm_c, sc_c = ocr_cn.Ocr.match("扬沙", own)
-    check("配置词表下「扬沙」匹配 >= 0.80", sc_c >= 0.80,
+    nm_c, sc_c = ocr_cn.Ocr.match("扬沙", uv)
+    check("并集下「扬沙」匹配 >= 0.80", sc_c >= 0.80,
           "-> %r %.2f" % (nm_c, sc_c))
     nm_l, sc_l = ocr_cn.Ocr.match("扬沙", learn)
-    check("可学池下「扬沙」匹配 < 0.80（旧行为，说明修复必要）",
+    check("仅可学池下「扬沙」匹配 < 0.80（说明配置这一份必要）",
           (nm_l is None) or sc_l < 0.80, "-> %r %.2f" % (nm_l, sc_l))
 
-    # 6) 不引入误配
-    for bad in ("火焰切割", "岩脉崩毁", "吞噬"):
-        nm, sc = ocr_cn.Ocr.match(bad, own)
-        check("配置词表拒绝配置外的「%s」" % bad,
-              nm is None or sc < 0.80, "-> %r %.2f" % (nm, sc))
+    # 6) 不引入误配：真正无关的词仍被拒。
+    #
+    # ⚠ 断言要挑**两个来源都没有**的词。第一版用了「岩脉崩毁」，
+    # 而它恰好在卡瓦重的可学池里（可学池很宽松，40k 行）——
+    # 并集接受它是**正确**的，不是误配。用它会测出假失败。
+    for bad in ("火焰切割", "完全不存在的技能名"):
+        nm, sc = ocr_cn.Ocr.match(bad, uv)
+        near = SM._unique_near(bad, uv)
+        check("并集拒绝无关词「%s」" % bad,
+              (nm is None or sc < 0.80) and near is None,
+              "-> %r %.2f near=%r" % (nm, sc, near))
+
+    # 并集确实让"配置外但池内"的词变得可接受（这是本轮的修复目标）
+    _db2 = sqlite3.connect(SM.DB)
+    check("「岩脉崩毁」不在卡瓦重配置里、但在可学池里",
+          "岩脉崩毁" not in SM._owned_vocab(_db2, "卡瓦重")
+          and "岩脉崩毁" in SM._learnable_vocab(_db2, "卡瓦重"))
+    _db2.close()
 
     # 7) raw_of 必须带 tier
     SM.STORE = os.path.join(os.environ.get("TEMP", "/tmp"),
