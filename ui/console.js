@@ -2130,6 +2130,10 @@ function playPetCard(p, mine) {
       <div style="min-width:0">
         <div class="pw-name">${p.name}</div>
         <div class="pw-sub">${types}${extra}${trait}</div>
+        ${(p.bloodline || p.cond_mods) ? `<div class="pw-sub">
+          ${p.bloodline ? `<span title="血脉">🩸 ${p.bloodline}</span>` : ''}
+          ${p.cond_mods ? `<span title="活跃条件规则">◈ 条件</span>` : ''}
+        </div>` : ''}
       </div>
     </div>
     <div class="pw-hp ${playHpClass(p.pct)}"><i style="width:${Math.max(0, Math.min(100, p.pct))}%"></i></div>
@@ -2159,6 +2163,27 @@ function playActsHtml(st) {
       <div class="am"><span>${b.hp}/${b.max_hp}</span><span>槽位 ${b.slot}</span></div>
     </button>`;
   });
+  // S8/S9 共鸣魔法按钮（愿力强化/光合治愈/闪焰爆发/节流术）
+  const mg = st.magic || {};
+  if (mg.name) {
+    h += `<button class="act-btn ${mg.usable ? 'buff' : ''}"
+      data-kind="magic" ${mg.usable ? '' : 'disabled'}
+      title="共鸣魔法 · CD ${mg.cd} · 已用 ${mg.used}/${mg.max_uses}">
+      <div class="an">✦ ${mg.name}</div>
+      <div class="am"><span>共鸣魔法</span>
+        <span>${mg.used}/${mg.max_uses}${mg.cd ? ' · CD' + mg.cd : ''}</span></div>
+    </button>`;
+  }
+  // S10 进化之力按钮（首领血脉）
+  const evo = st.evolution || {};
+  if (evo.usable || evo.used) {
+    h += `<button class="act-btn ${evo.usable ? 'buff' : ''}"
+      data-kind="evolve" ${evo.usable ? '' : 'disabled'}
+      title="进化之力 · 每场 1 次 · 需首领血脉">
+      <div class="an">⚡ 进化之力</div>
+      <div class="am"><span>首领化</span><span>${evo.used ? '已用' : '可用'}</span></div>
+    </button>`;
+  }
   return h;
 }
 
